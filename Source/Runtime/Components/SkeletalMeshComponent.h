@@ -17,6 +17,10 @@ extern bool GShowSkeletalRootDebug;
 class UAnimationAsset;
 class UAnimSingleNodeInstance;
 class UAnimGraphInstance;
+class UPhysicsAsset;
+struct FConstraintInstance;
+struct FHitResult;
+struct FRay;
 
 UCLASS()
 class USkeletalMeshComponent : public USkinnedMeshComponent
@@ -36,6 +40,21 @@ public:
 	UAnimInstance* GetAnimInstance() const { return AnimInstance; }
 	void BeginPlay() override;
 	void TickComponent(float DeltaTime) override;
+	void SetPhysicsAsset(UPhysicsAsset* InAsset);
+	UPhysicsAsset* GetPhysicsAsset() const;
+	bool StartRagdoll();
+	void StopRagdoll();
+	bool IsRagdollActive() const { return bRagdollActive; }
+	bool HasArticulatedBodies() const { return !Bodies.IsEmpty(); }
+	FBodyInstance* GetBodyInstance(const FString& BoneName) const;
+	void AddImpulseToBone(const FString& BoneName, const FVector& Impulse, bool bVelocityChange = false);
+	void SetRagdollLinearVelocity(const FVector& Velocity);
+	bool SetBodySimulatePhysics(const FString& BoneName, bool bSimulate);
+	bool SetAllBodiesBelowSimulatePhysics(const FString& BoneName, bool bSimulate);
+	bool IsAnyBodySimulatingPhysics() const;
+	void SyncPhysicsToBones();
+	bool RaycastPhysicsBodies(const FRay& WorldRay, FHitResult& OutHit) const;
+	bool SweepPhysicsBodies(const FRay& WorldRay, float MaxDistance, float Radius, FHitResult& OutHit) const;
 
 	const TArray<FBoneInfo>& GetBones() const;
 	int32 FindBoneIndex(const FString& Name) const;
@@ -93,6 +112,10 @@ public:
 	bool IsPreviewDissolveActive() const { return bPreviewDissolveActive; }
 
 protected:
+	bool ShouldCreatePhysicsState() const override;
+	void OnCreatePhysicsState() override;
+	void OnDestroyPhysicsState() override;
+	void OnUnregister() override;
 	// 단일 애니메이션 에셋 경로/루프/재생 속도를 씬에 저장·복원한다 (Serialize에서 부른다)
 	void SerializeSingleAnimation(FStructuredArchive::FRecord& Record);
 
@@ -100,6 +123,16 @@ protected:
 	void OnSkeletalMeshChanged() override;
 
 private:
+	bool InitArticulated();
+	void TermArticulated();
+	void UpdateKinematicBonesToAnim();
+	FBodyInstance* FindArticulatedBody(const FString& BoneName) const;
+
+	UPhysicsAsset* PhysicsAssetOverride = nullptr;
+	TArray<FBodyInstance*> Bodies;
+	TArray<FConstraintInstance*> Constraints;
+	TArray<int32> BodyBoneIndices;
+	bool bRagdollActive = false;
     UPROPERTY()
     FString AnimBlueprintPath;
 

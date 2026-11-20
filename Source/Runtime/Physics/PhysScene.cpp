@@ -10,6 +10,7 @@
 #include "PhysicsCore.h"
 #include "PhysicsSettings.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 FPhysScene::FPhysScene(UWorld* InOwner)
 	: Owner(InOwner)
@@ -118,6 +119,20 @@ void FPhysScene::EndFrame()
 	}
 	bPhysXSceneExecuting = false;
 	SyncComponentsToBodies();
+	for (USkeletalMeshComponent* Component : SimulatingSkeletalMeshes)
+		if (Component && Component->IsRegistered())
+			Component->SyncPhysicsToBones();
+}
+
+void FPhysScene::RegisterSimulatingSkeletalMesh(USkeletalMeshComponent* Component)
+{
+	if (Component && !SimulatingSkeletalMeshes.Contains(Component))
+		SimulatingSkeletalMeshes.Add(Component);
+}
+
+void FPhysScene::UnregisterSimulatingSkeletalMesh(USkeletalMeshComponent* Component)
+{
+	SimulatingSkeletalMeshes.Remove(Component);
 }
 
 void FPhysScene::SyncComponentsToBodies()
@@ -127,7 +142,7 @@ void FPhysScene::SyncComponentsToBodies()
 	for (physx::PxU32 i = 0; i < Num; ++i)
 	{
 		auto* Body = static_cast<FBodyInstance*>(Actors[i]->userData);
-		if (Body && Body->OwnerComponent)
+		if (Body && Body->OwnerComponent && !Body->bIsSkeletalBody)
 		{
 			Body->OwnerComponent->SyncComponentToRBPhysics();
 		}

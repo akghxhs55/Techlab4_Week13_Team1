@@ -115,7 +115,7 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 		KRS_LOG(Error, "[PhysX] createRigidDynamic failed");
 		return;
 	}
-	Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics);
+	Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics); // 두번째 인자가 true면 물리에 의해 움직임, false면 게임 로직에 의해 움직임
 
 	if (CreateShapes(*Dynamic, InBodySetup->AggGeom, WorldTransform.Scale, CollisionEnabled) == 0)
 	{
@@ -132,8 +132,8 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 		PxRigidBodyExt::updateMassAndInertia(*Dynamic, DefaultDensity);
 	}
 
-	Dynamic->setLinearDamping(LinearDamping);
-	Dynamic->setAngularDamping(AngularDamping);
+	Dynamic->setLinearDamping(LinearDamping); // 선속도 감쇠 계수
+	Dynamic->setAngularDamping(AngularDamping); // 각속도 감쇠 계수
 	Dynamic->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, !bEnableGravity);
 
 	Dynamic->userData = this;

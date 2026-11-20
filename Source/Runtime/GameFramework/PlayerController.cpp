@@ -2,6 +2,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Character.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/SwordCharacter.h"
 #include "GameFramework/TestCharacter.h"
 #include "GameFramework/GameMode.h"
@@ -119,6 +120,12 @@ void APlayerController::InputKey(int32 Key, bool bDown)
 	{
 		if (ASwordCharacter* SwordCharacter = Cast<ASwordCharacter>(PossessedPawn))
 			SwordCharacter->CastBeam();
+	}
+	// Physics Asset이 있는 캐릭터의 바디를 물리 시뮬레이션으로 전환한다.
+	if (Key == static_cast<int32>(EKeyCode::F9) && bJustPressed && bInputAllowed && Character)
+	{
+		if (Character->GetSkeletalMeshComponent()->IsRagdollActive()) Character->StopRagdoll();
+		else Character->StartRagdoll();
 	}
 	if (!bInputAllowed)
 		return;

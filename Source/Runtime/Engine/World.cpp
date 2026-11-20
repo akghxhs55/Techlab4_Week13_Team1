@@ -26,6 +26,7 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkinnedMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 #include "Math/Frustum.h"
 #include "Math/BVH.h"
@@ -612,6 +613,18 @@ bool UWorld::SweepSingle(const FRay& WorldRay, float MaxDistance, float Radius, 
 			AActor* Owner = Component->GetOwner();
 			if (!Component->IsRegistered() || Component->GetWorld() != this || !Component->bBlockComponent ||
 				!Owner || Owner == IgnoreActor || !Owner->GetActorEnableCollision()) continue;
+			if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Component);
+				Skeletal && Skeletal->HasArticulatedBodies())
+			{
+				FHitResult BodyHit;
+				if (Skeletal->SweepPhysicsBodies(WorldRay, NearestT, Radius, BodyHit))
+				{
+					NearestT = BodyHit.Distance;
+					OutHit = BodyHit;
+					OutHit.Time = NearestT / MaxDistance;
+				}
+				continue;
+			}
 			if (!Cast<UShapeComponent>(Component) && !Component->GetMeshData()) continue;
 
 			const FBox Bounds = Component->CalcBounds();
@@ -666,6 +679,16 @@ bool UWorld::SweepSingle(const FRay& WorldRay, float MaxDistance, float Radius, 
 				return false;
 			if (!Proxy->GetMesh())
 			{
+				if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Component);
+					Skeletal && Skeletal->HasArticulatedBodies())
+				{
+					FHitResult BodyHit;
+					if (!Skeletal->SweepPhysicsBodies(WorldRay, InOutNearestT, Radius, BodyHit)) return false;
+					OutHit = BodyHit;
+					OutHit.Time = OutHit.Distance / MaxDistance;
+					InOutNearestT = OutHit.Distance;
+					return true;
+				}
 				const FMatrix& WorldToLocal = Proxy->GetWorldToLocal();
 				const FRay LocalRay{
 					.Origin = WorldToLocal.TransformPosition(WorldRay.Origin),
@@ -828,6 +851,16 @@ bool UWorld::LineTraceSingle(const FRay& WorldRay, FHitResult& OutHit,
 
 			if (!Component || !Component->IsVisible())
 				return false;
+			if (USkeletalMeshComponent* Skeletal = Cast<USkeletalMeshComponent>(Component);
+				Skeletal && Skeletal->HasArticulatedBodies())
+			{
+				FHitResult BodyHit;
+				if (!Skeletal->RaycastPhysicsBodies(WorldRay, BodyHit) || BodyHit.Distance >= InOutNearestT)
+					return false;
+				OutHit = BodyHit;
+				InOutNearestT = BodyHit.Distance;
+				return true;
+			}
 
 			if (UBillboardComponent* Billboard = Cast<UBillboardComponent>(Component))
 			{

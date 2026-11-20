@@ -80,7 +80,7 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
         ReloadAnimBlueprint();
     }
 
-	if (AnimInstance && GetSkeletalMesh())
+	if (!bRagdollActive && AnimInstance && GetSkeletalMesh())
 	{
         bUpdatingAnimation = true;
 		if (UAnimSingleNodeInstance* Instance = Cast<UAnimSingleNodeInstance>(AnimInstance))
@@ -108,6 +108,8 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
 	}
 	UpdatePreviewDissolve(DeltaTime);
 	Super::TickComponent(DeltaTime);
+	if (!bRagdollActive)
+		UpdateKinematicBonesToAnim();
 }
 
 const TArray<FBoneInfo>& USkeletalMeshComponent::GetBones() const
@@ -397,10 +399,13 @@ void USkeletalMeshComponent::SerializeSingleAnimation(FStructuredArchive::FRecor
 
 void USkeletalMeshComponent::OnSkeletalMeshChanged()
 {
+	TermArticulated();
     bBlueprintReloadRequested = !AnimBlueprintPath.empty();
 	BoneSpaceTransforms.Reset();
 	for (const FBoneInfo& Bone : GetBones())
 		BoneSpaceTransforms.Add(Bone.LocalBindPose);
+	if (IsRegistered())
+		InitArticulated();
 }
 UAnimSingleNodeInstance* USkeletalMeshComponent::GetSingleNodeInstance() const
 {
@@ -575,6 +580,7 @@ USkeletalMeshComponent::USkeletalMeshComponent()
 
 USkeletalMeshComponent::~USkeletalMeshComponent()
 {
+	TermArticulated();
     if (ManagedAnimGraph)
     {
         if (AnimInstance == ManagedAnimGraph.get())

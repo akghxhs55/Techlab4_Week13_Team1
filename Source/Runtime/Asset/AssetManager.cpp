@@ -29,6 +29,8 @@
 #include "Animation/BlendSpaceFile.h"
 #include "Particles/ParticleSystem.h"
 #include "Particles/ParticleSystemFile.h"
+#include "Physics/PhysicsAsset.h"
+#include "Physics/PhysicsAssetFile.h"
 #include "Asset/AssetUtils.h"
 
 #include "Render/ImageLoader.h"
@@ -524,6 +526,7 @@ void UAssetManager::Shutdown()
 		delete Pair.second;
 	}
 	Get().ParticleSystemMap.Empty();
+	Get().PhysicsAssetMap.Empty();
 }
 
 
@@ -670,6 +673,9 @@ URenderAsset* UAssetManager::LoadFbxMesh(const FString& Path, FString& OutError)
 		if (!ResolvedFile.empty())
 		{
 			SkelMesh->LoadSocketsFromFile(ResolvedFile + ".sockets.json");
+			const FString PhysicsAssetFile = ResolvedFile + ".physicsasset";
+			if (std::filesystem::exists(PhysicsAssetFile))
+				SkelMesh->SetPhysicsAsset(LoadPhysicsAsset(PhysicsAssetFile));
 		}
 	}
 	return Asset;
@@ -695,6 +701,28 @@ UAnimSequence* UAssetManager::LoadAnimSequence(const FString& Path)
 
 	Get().AnimSequenceMap[Key] = Sequence;
 	return Sequence;
+}
+
+UPhysicsAsset* UAssetManager::LoadPhysicsAsset(const FString& Path)
+{
+	const FString Key = FAssetUtils::GetAssetKey(Path);
+	if (UPhysicsAsset** Found = Get().PhysicsAssetMap.Find(Key))
+		return *Found;
+
+	const FString Resolved = FAssetUtils::ResolveAssetFilePath(Path);
+	auto* Asset = NewObject<UPhysicsAsset>();
+	FString Error;
+	if (!PhysicsAssetFile::Read(std::filesystem::path(Resolved.empty() ? Path : Resolved), *Asset, Error))
+	{
+		KRS_LOG(Warning, "Failed to load Physics Asset: {} ({})", Path, Error);
+		for (USkeletalBodySetup* Setup : Asset->SkeletalBodySetups) delete Setup;
+		for (UPhysicsConstraintTemplate* Template : Asset->ConstraintSetup) delete Template;
+		delete Asset;
+		return nullptr;
+	}
+	Asset->SetAssetPath(Key);
+	Get().PhysicsAssetMap[Key] = Asset;
+	return Asset;
 }
 
 bool UAssetManager::ReorientStaticMesh(UStaticMesh& Mesh, const std::function<FVector(const FVector&)>& Rotate)

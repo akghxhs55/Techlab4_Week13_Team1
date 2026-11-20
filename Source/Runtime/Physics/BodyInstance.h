@@ -23,7 +23,7 @@ enum class ECollisionEnabled : uint8
 };
 
 USTRUCT()
-struct FBodyInstance
+struct FBodyInstance // Component와 PhysX의 Rigid Body를 연결하고 관리
 {
 	GENERATED_BODY()
 

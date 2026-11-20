@@ -4,6 +4,7 @@
 #include "Editor/Gizmo/Gizmo.h"
 #include "Editor/Viewports/EditorViewportClient.h"
 
+struct FPhysAssetCreateParams;
 
 class FSkeletalMeshEditor : public FSkeletalPreviewEditor
 {
@@ -39,6 +40,7 @@ public:
 
 	// 에셋 브라우저에서 선택한 애니메이션 시퀀스 에디터를 연다.
 	void OpenAnimationAsset(const FString& InAssetPath);
+	bool CreatePhysicsAsset(const FPhysAssetCreateParams& Params, FString& OutError);
 
 protected:
 	// 이 에디터에 연결된 탭을 생성합니다.

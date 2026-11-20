@@ -4,6 +4,13 @@
 #include "SkeletalMeshEditorTab.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Render/SkeletalMesh.h"
+#include "Asset/AssetManager.h"
+#include "Asset/AssetUtils.h"
+#include "Physics/PhysicsAsset.h"
+#include "Physics/PhysicsAssetFile.h"
+#include "PhysicsAssetUtils.h"
+#include "UObject/UObjectGlobals.h"
+#include <filesystem>
 
 bool FSkeletalMeshEditor::InitializeResources()
 {
@@ -60,6 +67,43 @@ void FSkeletalMeshEditor::OpenAnimationAsset(const FString& InAssetPath)
 	{
 		EditorManager.OpenEditor(InAssetPath);
 	}
+}
+
+bool FSkeletalMeshEditor::CreatePhysicsAsset(const FPhysAssetCreateParams& Params, FString& OutError)
+{
+	OutError.clear();
+	if (!Mesh)
+	{
+		OutError = "No skeletal mesh is open";
+		return false;
+	}
+	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(GetAssetPath());
+	if (MeshFile.empty())
+	{
+		OutError = "Cannot resolve the skeletal mesh file";
+		return false;
+	}
+	const std::filesystem::path AssetFile = std::filesystem::path(MeshFile + ".physicsasset");
+	if (std::filesystem::exists(AssetFile))
+	{
+		OutError = "A Physics Asset already exists for this mesh";
+		return false;
+	}
+	auto* Asset = NewObject<UPhysicsAsset>();
+	const bool bGenerated = FPhysicsAssetUtils::CreateFromSkeletalMesh(*Mesh, *Asset, Params, OutError);
+	const bool bSaved = bGenerated && PhysicsAssetFile::Write(AssetFile, *Asset, OutError);
+	for (USkeletalBodySetup* Setup : Asset->SkeletalBodySetups) delete Setup;
+	for (UPhysicsConstraintTemplate* Template : Asset->ConstraintSetup) delete Template;
+	delete Asset;
+	if (!bSaved) return false;
+	if (UPhysicsAsset* Loaded = UAssetManager::LoadPhysicsAsset(MeshFile + ".physicsasset"))
+	{
+		Mesh->SetPhysicsAsset(Loaded);
+		return true;
+	}
+	std::filesystem::remove(AssetFile);
+	OutError = "Generated Physics Asset could not be loaded";
+	return false;
 }
 
 void FSkeletalMeshEditor::SyncBoneGizmo()

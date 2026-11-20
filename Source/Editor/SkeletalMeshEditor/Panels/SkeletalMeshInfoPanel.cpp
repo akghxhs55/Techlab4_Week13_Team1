@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "SkeletalMeshInfoPanel.h"
 #include "Editor/SkeletalMeshEditor/SkeletalMeshEditor.h"
+#include "Editor/SkeletalMeshEditor/PhysicsAssetUtils.h"
 #include "Render/SkeletalMesh.h"
 
 #include <filesystem>
@@ -33,4 +34,18 @@ void FSkeletalMeshInfoPanel::DrawContent()
 	ImGui::Text("Materials: %d", static_cast<int>(Mesh->GetMaterialSlots().Num()));
 	ImGui::Text("Sections: %d", static_cast<int>(Data.Sections.Num()));
 	ImGui::Text("Bones: %d", Mesh->GetNumBones());
+	ImGui::Separator();
+	ImGui::Text("Physics Asset: %s", Mesh->GetPhysicsAsset() ? "Loaded" : "None");
+	ImGui::SliderFloat("Min Bone Size", &MinBoneSize, 0.01f, 0.5f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderInt("Min Vertices", &MinVertexCount, 1, 100, "%d", ImGuiSliderFlags_AlwaysClamp);
+	if (ImGui::Button("Create Physics Asset"))
+	{
+		FPhysAssetCreateParams Params;
+		Params.MinBoneSize = MinBoneSize;
+		Params.MinVertexCount = MinVertexCount;
+		if (Editor.CreatePhysicsAsset(Params, PhysicsAssetMessage))
+			PhysicsAssetMessage = "Physics Asset created";
+	}
+	if (!PhysicsAssetMessage.empty())
+		ImGui::TextWrapped("%s", PhysicsAssetMessage.c_str());
 }
