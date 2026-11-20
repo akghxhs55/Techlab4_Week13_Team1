@@ -12,6 +12,8 @@ public:
 	UPROPERTY(EditAnywhere)
 	FVector BoxExtent = FVector(0.5f, 0.5f, 0.5f);
 
+	virtual void UpdateBodySetup() override;
+
 	FVector GetScaledBoxExtent() const;
 	virtual FBox CalcLocalBounds() const override;
 	virtual void DrawDebug(FLineBatcher*, const FVector4&) const override;

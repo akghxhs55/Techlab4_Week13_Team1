@@ -24,7 +24,7 @@ namespace
 
 	PxTransform MakeLocalPose(const FKShapeElem& Elem, const FVector& Scale)
 	{
-		return PxTransform(K2PVector(Mul(Elem.Center, Scale)), K2PQuat(Elem.Rotation.Quaternion().Normalized()));
+		return { K2PVector(Mul(Elem.Center, Scale)), K2PQuat(Elem.Rotation.Quaternion().Normalized()) };
 	}
 
 	void ApplyCollisionFlags(PxShape* Shape, ECollisionEnabled Enabled)
@@ -59,7 +59,7 @@ namespace
 
 		for (const FKBoxElem& Element : Geom.BoxElems)
 		{
-			const PxVec3 HalfExtents(0.5f * Element.Extent.X * S.X, 0.5f * Element.Extent.Y * S.Y, 0.5f * Element.Extent.Z * S.Z);
+			const PxVec3 HalfExtents(0.5f * Element.X * S.X, 0.5f * Element.Y * S.Y, 0.5f * Element.Z * S.Z);
 			Attach(PxBoxGeometry(HalfExtents), MakeLocalPose(Element, InScale));
 		}
 

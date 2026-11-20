@@ -6,8 +6,10 @@
 #include <PxSceneDesc.h>
 #include <extensions/PxDefaultSimulationFilterShader.h>
 
+#include "BodyInstance.h"
 #include "PhysicsCore.h"
 #include "PhysicsSettings.h"
+#include "Components/PrimitiveComponent.h"
 
 FPhysScene::FPhysScene(UWorld* InOwner)
 	: Owner(InOwner)
@@ -120,4 +122,14 @@ void FPhysScene::EndFrame()
 
 void FPhysScene::SyncComponentsToBodies()
 {
+	physx::PxU32 Num = 0;
+	physx::PxActor** Actors = Scene->getActiveActors(Num);
+	for (physx::PxU32 i = 0; i < Num; ++i)
+	{
+		auto* Body = static_cast<FBodyInstance*>(Actors[i]->userData);
+		if (Body && Body->OwnerComponent)
+		{
+			Body->OwnerComponent->SyncComponentToRBPhysics();
+		}
+	}
 }

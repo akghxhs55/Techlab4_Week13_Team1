@@ -28,7 +28,13 @@ struct FKBoxElem : public FKShapeElem
 	GENERATED_BODY()
 
 	UPROPERTY()
-	FVector Extent;
+	float X;
+	
+	UPROPERTY()
+	float Y;
+	
+	UPROPERTY()
+	float Z;
 };
 
 USTRUCT()

@@ -22,6 +22,9 @@ public:
 	UStaticMesh* GetStaticMesh() const { return StaticMesh; }
 	virtual UStaticMesh* GetRenderMesh() const override { return StaticMesh; }
 
+	// 에디터 아이콘(라이트 화살표 등)은 게임 충돌에 참여하지 않는다
+	virtual UBodySetup* GetBodySetup() override { return (StaticMesh && !bEditorIcon) ? StaticMesh->GetBodySetup() : nullptr; }
+
 	virtual int32 GetNumMaterials() const override;
 	virtual FString GetMaterialSlotName(int32 SlotIndex) const override;
 	virtual UMaterial* GetDefaultMaterial(int32 SlotIndex) const override;
