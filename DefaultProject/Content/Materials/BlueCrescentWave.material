@@ -39,7 +39,7 @@
     "FlipNormalY": false,
     "OutputNodeId": 1,
     "OverrideShadingModel": false,
-    "PSOType": 24,
+    "PSOType": 1,
     "Properties": {},
     "SamplerState": "LinearClamp",
     "ShadingModel": 2,

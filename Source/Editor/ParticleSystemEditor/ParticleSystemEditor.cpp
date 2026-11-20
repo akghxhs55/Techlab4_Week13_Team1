@@ -200,7 +200,7 @@ void FParticleSystemEditor::FocusPreview()
 		return;
 	}
 
-	constexpr float MinFocusRadius = 100.0f;
+	constexpr float MinFocusRadius = 4.0f;
 
 	// 카메라는 월드 좌표로 맞추므로 월드 바운드를 쓴다 (오빗 중에는 컴포넌트가 원점에 있지 않다)
 	FBox Box = PreviewComponent->CalcBounds();
