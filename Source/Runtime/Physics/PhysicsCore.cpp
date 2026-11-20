@@ -65,6 +65,14 @@ bool FPhysicsCore::Init()
 	}
 	bExtensionInitialized = true;
 
+	CpuDispatcher = PxDefaultCpuDispatcherCreate(2);
+	if (!CpuDispatcher)
+	{
+		KRS_LOG(Error, "[PhysX] Failed to create CpuDispatcher");
+		Shutdown();
+		return false;
+	}
+
 	DefaultMaterial = Physics->createMaterial(0.7f, 0.7f, 0.3f);
 
 	KRS_LOG(Info, "[PhysX] Initialized {}.{}.{}", PX_PHYSICS_VERSION_MAJOR, PX_PHYSICS_VERSION_MINOR, PX_PHYSICS_VERSION_BUGFIX);
@@ -78,6 +86,12 @@ void FPhysicsCore::Shutdown()
 	{
 		DefaultMaterial->release();
 		DefaultMaterial = nullptr;
+	}
+
+	if (CpuDispatcher)
+	{
+		CpuDispatcher->release();
+		CpuDispatcher = nullptr;
 	}
 
 	if (bExtensionInitialized)
@@ -97,4 +111,9 @@ void FPhysicsCore::Shutdown()
 		Foundation->release();
 		Foundation = nullptr;
 	}
+}
+
+physx::PxCpuDispatcher* FPhysicsCore::GetCpuDispatcher()
+{
+	return CpuDispatcher;
 }
