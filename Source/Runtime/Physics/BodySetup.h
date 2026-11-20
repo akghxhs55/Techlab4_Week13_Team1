@@ -8,6 +8,8 @@ class UBodySetup : public UObject
 {
 	GENERATED_BODY()
 public:
+	~UBodySetup() override;
+
 	UPROPERTY(EditAnywhere)
 	FAggregateGeom AggGeom;
 

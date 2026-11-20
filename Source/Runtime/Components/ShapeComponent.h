@@ -19,6 +19,7 @@ public:
 	virtual ~UShapeComponent() override;
 
 	virtual UBodySetup* GetBodySetup() override;
+	void ClearShapeBodySetup(const UBodySetup* InBodySetup);
 	virtual void UpdateBodySetup() {}
 
 	// 넓은 범위 판정용. 월드 스케일과 회전이 반영된 AABB
