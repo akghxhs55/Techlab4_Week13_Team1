@@ -23,6 +23,8 @@ class FLineBatcher;
 class UBillboardComponent;
 class APawn;
 class APlayerController;
+class AGameMode;
+class AGameHUD;
 
 struct FViewContext;
 
@@ -111,6 +113,20 @@ public:
 	bool HasBegunPlay() const { return bBegunPlay; }
 	APawn* GetPlayerPawn() const { return PlayerPawn; }
 	APlayerController* GetPlayerController() const { return PlayerController; }
+	AGameMode* GetGameMode() const { return GameMode; }
+	AGameHUD* GetHUD() const { return HUD; }
+	UClass* GetGameModeClass() const;
+	UClass* GetDefaultPawnClass() const;
+	UClass* GetPlayerControllerClass() const;
+	UClass* GetHUDClass() const;
+	const FString& GetGameModeClassName() const { return GameModeClassName; }
+	const FString& GetPlayerPawnClassName() const { return PlayerPawnClassName; }
+	const FString& GetPlayerControllerClassName() const { return PlayerControllerClassName; }
+	const FString& GetHUDClassName() const { return HUDClassName; }
+	bool SetGameModeClass(UClass* Class);
+	bool SetPlayerPawnClass(UClass* Class);
+	bool SetPlayerControllerClass(UClass* Class);
+	bool SetHUDClass(UClass* Class);
 	bool IsPaused() const { return bIsPaused; }
 	void SetPaused(bool bPaused) { bIsPaused = bPaused; }
 
@@ -137,6 +153,10 @@ public:
 
 	// Slomo-hitstop
 	float GetEffectiveTimeDilation() const;
+	float GetGlobalTimeDilation() const { return GlobalTimeDilation; }
+	void SetGlobalTimeDilation(float InDilation);
+	float GetCinematicTimeDilation() const { return CinematicTimeDilation; }
+	void SetCinematicTimeDilation(float InDilation) { CinematicTimeDilation = InDilation; }
 	void StartHitStop(float Duration, float Dilation);
 
 	// 렌더러가 이 월드를 그릴 때 뷰마다 카메라 위치를 남긴다.
@@ -171,6 +191,16 @@ private:
 	ACameraActor* MainCamera = nullptr;
 	APawn* PlayerPawn = nullptr;
 	APlayerController* PlayerController = nullptr;
+	AGameMode* GameMode = nullptr;
+	AGameHUD* HUD = nullptr;
+	UPROPERTY()
+	FString GameModeClassName;
+	UPROPERTY()
+	FString PlayerPawnClassName;
+	UPROPERTY()
+	FString PlayerControllerClassName;
+	UPROPERTY()
+	FString HUDClassName;
 	bool bIsPaused = false;
 	bool bBegunPlay = false;
 
@@ -181,7 +211,9 @@ private:
 	FScene Scene;
 
 	// Slomo-hitstop
+	UPROPERTY()
 	float GlobalTimeDilation = 1.0f;
+	float CinematicTimeDilation = 1.0f;
 	float HitStopTimeRemaining = 0.0f;	// 실제 시간 (초)
 	float HitStopDilation = 1.0f;
 	float TimeSeconds = 0.0f;			// 게임 시간 (dilated 누적)

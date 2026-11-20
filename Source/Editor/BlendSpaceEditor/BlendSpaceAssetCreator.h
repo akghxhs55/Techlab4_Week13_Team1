@@ -24,4 +24,5 @@ private:
     FString PreviewMeshPath;
     std::filesystem::path CreateDirectory;
     bool bOpenDialog = false;
+    bool bCreate2D = false;
 };

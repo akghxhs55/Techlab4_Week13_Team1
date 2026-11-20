@@ -10,9 +10,10 @@ public:
 	explicit FSkeletalMeshSceneProxy(USkinnedMeshComponent* InComponent);
 
 	void UpdateRenderState() override;
-	bool HasDynamicMeshElements() const override { return true; }
+	bool HasDynamicRelevance() const override { return true; }
 
-	void GetDynamicMeshElements(FRenderQueue& Queue, const FViewContext& View) override;
+	void GetDynamicMeshElements(const FViewContext& View, FMeshElementCollector& Collector, uint32 LODIndex = 0) const override;
+	int32 GetDebugWeightBone() const override;
 private:
 	
 };

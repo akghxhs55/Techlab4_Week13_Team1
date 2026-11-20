@@ -1,6 +1,12 @@
 #include "EnginePCH.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/SwordCharacter.h"
+#include "GameFramework/TestCharacter.h"
+#include "GameFramework/GameMode.h"
+#include "GameFramework/GameHUD.h"
+#include "Engine/Engine.h"
 #include "Camera/PlayerCameraManager.h" 
 #include "Engine/World.h"               
 #include "Camera/CameraShakeBase.h"
@@ -22,6 +28,11 @@ void APlayerController::Tick(float DeltaTime)
 void APlayerController::ProcessPlayerInput(float DeltaTime)
 {
 	if (!PossessedPawn) return;
+	if (GetWorld() && GetWorld()->GetGameMode() && !GetWorld()->GetGameMode()->AllowsPlayerControllerInput())
+	{
+		MouseAxisX = MouseAxisY = 0.0f;
+		return;
+	}
 	const float Forward = static_cast<float>(bKeyDown[static_cast<int32>(EKeyCode::W)]) -
 		static_cast<float>(bKeyDown[static_cast<int32>(EKeyCode::S)]);
 	const float Right = static_cast<float>(bKeyDown[static_cast<int32>(EKeyCode::D)]) -
@@ -64,6 +75,8 @@ void APlayerController::Possess(APawn* InPawn)
 
 void APlayerController::UnPossess()
 {
+	if (ATestCharacter* Character = Cast<ATestCharacter>(PossessedPawn))
+		Character->StopAim();
 	if (PossessedPawn) PossessedPawn->UnPossessed();
 	PossessedPawn = nullptr;
 }
@@ -73,6 +86,42 @@ void APlayerController::InputKey(int32 Key, bool bDown)
 	if (Key < 0 || Key >= 256) return;
 	const bool bJustPressed = bDown && !bKeyDown[Key];
 	bKeyDown[Key] = bDown;
+	ACharacter* Character = Cast<ACharacter>(PossessedPawn);
+	const bool bInputAllowed = GetWorld() && !GetWorld()->IsPaused() &&
+		(!GetWorld()->GetGameMode() || GetWorld()->GetGameMode()->AllowsPlayerControllerInput());
+	if (Key == static_cast<int32>(EKeyCode::RButton))
+	{
+		if (ATestCharacter* TestCharacter = Cast<ATestCharacter>(PossessedPawn))
+		{
+			if (!bDown) TestCharacter->StopAim();
+			else if (bJustPressed && bInputAllowed)
+				TestCharacter->StartAim();
+		}
+	}
+	if (Key == static_cast<int32>(EKeyCode::Space) && Character)
+	{
+		if (!bDown) Character->StopJumping();
+		else if (bJustPressed && bInputAllowed &&
+			(Cast<ASwordCharacter>(PossessedPawn) || Cast<ATestCharacter>(PossessedPawn)))
+			Character->Jump();
+	}
+	if ((Key == static_cast<int32>(EKeyCode::F) || Key == static_cast<int32>(EKeyCode::LButton)) &&
+		bJustPressed && Character && bInputAllowed)
+		Character->Attack();
+	if ((Key == static_cast<int32>(EKeyCode::Shift) ||
+		Key == static_cast<int32>(EKeyCode::LShift) ||
+		Key == static_cast<int32>(EKeyCode::RShift)) && bJustPressed && bInputAllowed)
+	{
+		if (ATestCharacter* TestCharacter = Cast<ATestCharacter>(PossessedPawn))
+			TestCharacter->Dash();
+	}
+	if (Key == static_cast<int32>(EKeyCode::R) && bJustPressed && bInputAllowed)
+	{
+		if (ASwordCharacter* SwordCharacter = Cast<ASwordCharacter>(PossessedPawn))
+			SwordCharacter->CastBeam();
+	}
+	if (!bInputAllowed)
+		return;
 	if (!bJustPressed || !PlayerCameraManager) return;
 
 	if (Key == static_cast<int32>(EKeyCode::F6))
@@ -113,6 +162,12 @@ void APlayerController::InputAxis(EGameInputAxis Axis, float Delta)
 
 void APlayerController::ClearInputState()
 {
+	if (PossessedPawn)
+	{
+		if (ATestCharacter* Character = Cast<ATestCharacter>(PossessedPawn)) Character->StopAim();
+		if (ACharacter* Character = Cast<ACharacter>(PossessedPawn)) Character->StopJumping();
+		PossessedPawn->ConsumeMovementInputVector();
+	}
 	std::memset(bKeyDown, 0, sizeof(bKeyDown));
 	MouseAxisX = MouseAxisY = 0.0f;
 }
@@ -130,4 +185,19 @@ void APlayerController::UpdateCameraManager(float DeltaTime)
 	{
 		PlayerCameraManager->UpdateCamera(DeltaTime);
 	}
+}
+
+void APlayerController::SetCursorMode(ECursorMode Mode)
+{
+	CursorMode = Mode;
+	MouseAxisX = MouseAxisY = 0.0f;
+	if (GEngine)
+		GEngine->SetGameMouseCapture(GetWorld(), Mode == ECursorMode::Locked);
+}
+
+void APlayerController::EndPlay()
+{
+	if (CursorMode == ECursorMode::Locked)
+		SetCursorMode(ECursorMode::Free);
+	Super::EndPlay();
 }

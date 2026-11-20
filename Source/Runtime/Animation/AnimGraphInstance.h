@@ -2,12 +2,16 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimNode_StateMachine.h"
+#include "Animation/AnimMontageAsset.h"
 #include <functional>
 #include <memory>
 #include "AnimGraphInstance.generated.h"
 
 class UAnimSequence;
 class UBlendSpace1D;
+class UBlendSpace2D;
+class UAnimNotify;
+class UAnimNotifyState;
 
 enum class EAnimGraphCompare : uint8
 {
@@ -43,6 +47,12 @@ public:
 	static constexpr const char* GroundSpeedVariable = "GroundSpeed";
 	// 매 프레임 자동으로 채우는 변수: 소유 Character가 공중이면 true (UE IsFalling, 절벽에서 떨어질 때도 켜진다)
 	static constexpr const char* IsFallingVariable = "IsFalling";
+	static constexpr const char* DirectionVariable = "Direction";
+	static constexpr const char* AimPitchVariable = "AimPitch";
+	static constexpr const char* IsAimingVariable = "IsAiming";
+	static constexpr const char* IsAttackingVariable = "IsAttacking";
+	static constexpr const char* IsHitVariable = "IsHit";
+	static constexpr const char* IsDeadVariable = "IsDead";
 
 	virtual ~UAnimGraphInstance() override;
 
@@ -56,14 +66,39 @@ public:
 	UAnimSequence* LoadSequence(const FString& Path);
 	UBlendSpace1D* CreateBlendSpace();
 	UBlendSpace1D* LoadBlendSpace(const FString& Path);
+	UBlendSpace2D* CreateBlendSpace2D();
+	UBlendSpace2D* LoadBlendSpace2D(const FString& Path);
 	bool OwnsSequence(const UAnimSequence* Sequence) const;
 	bool OwnsBlendSpace(const UBlendSpace1D* BlendSpace) const;
+	bool OwnsBlendSpace2D(const UBlendSpace2D* BlendSpace) const;
 
 	// ---------------- 노드 ----------------
 	int32 AddSequencePlayer(UAnimSequence* Sequence, bool bLooping, float PlayRate = 1.0f);
 	int32 AddBlendSpacePlayer(UBlendSpace1D* BlendSpace, const FString& XVariable, float PlayRate = 1.0f);
+	int32 AddBlendSpace2DPlayer(UBlendSpace2D* BlendSpace, const FString& XVariable, const FString& YVariable, float PlayRate = 1.0f);
 	int32 AddTwoWayBlend(int32 NodeA, int32 NodeB, const FString& AlphaVariable);
+	void SetTwoWayBlendSync(int32 NodeIndex, bool bSync);
+	int32 AddSlotNode(int32 SourceNode, const FString& SlotName = "UpperBody");
+	int32 AddLayeredBoneBlend(int32 BaseNode, int32 BlendNode, const FString& StartBoneName,
+		const FString& AlphaVariable, bool bMeshSpaceRotationBlend = false);
+	int32 AddAimOffset1D(int32 BaseNode, const FString& AimOffsetPath,
+		const FString& PitchVariable, const FString& AlphaVariable);
 	int32 AddStateMachine();
+
+	// ---------------- 몽타주 ----------------
+	float PlayMontage(const FString& MontagePath, float InPlayRate = 1.0f, const FString& StartSection = "");
+	float PlayMontageFromAsset(const FString& MontagePath, FAnimMontageAsset InAsset, float InPlayRate = 1.0f, const FString& StartSection = "");
+	void StopMontage(const FString& SlotName = "", float BlendOutOverride = -1.0f);
+	void SetMontagePaused(bool bInPaused, const FString& SlotName = "");
+	bool IsMontagePaused(const FString& SlotName = "") const;
+	bool SetMontagePosition(float InPosition, bool bPauseMontage = true, const FString& SlotName = "");
+	bool JumpToSection(const FString& SectionName, const FString& SlotName = "");
+	bool IsPlayingMontage(const FString& SlotName = "") const;
+	float GetMontagePosition(const FString& SlotName = "") const;
+	float GetMontageLength(const FString& SlotName = "") const;
+	float GetMontageWeight(const FString& SlotName = "") const;
+	bool EvaluateSlotPose(const FString& SlotName, FPoseContext& InOutPose);
+	void BindMontageNotify(std::function<void(const FString&)> Callback) { OnMontageNotify = std::move(Callback); }
 
 	bool IsValidNode(int32 NodeIndex) const { return NodeIndex >= 0 && NodeIndex < Nodes.Num(); }
 	int32 GetNumNodes() const { return Nodes.Num(); }
@@ -88,6 +123,11 @@ public:
 	bool SetInitialState(int32 MachineNode, int32 StateIndex);
 	int32 GetStatePoseNode(int32 MachineNode, int32 StateIndex) const;
 	FName GetCurrentStateName(int32 MachineNode) const;
+	bool IsStateActiveOrPending(const FString& StateName) const;
+	void SetIsAiming(bool bValue);
+	void RequestAttack();
+	void RequestHit();
+	void RequestDeath();
 
 	// 데이터로 표현되는 규칙/동작 (노드 에디터가 저장·복원할 수 있는 형태)
 	FAnimTransitionRule MakeBoolRule(const FString& Variable, bool bExpected = true);
@@ -123,7 +163,54 @@ protected:
 	virtual void HandleNamedNotify(const FName& NotifyName) override;
 
 private:
-	enum class EBindingTarget : uint8 { BlendSpaceX, TwoWayBlendAlpha };
+	enum class EBindingTarget : uint8
+	{
+		BlendSpaceX,
+		BlendSpace2DX,
+		BlendSpace2DY,
+		TwoWayBlendAlpha,
+		LayeredBlendAlpha,
+		AimOffsetAlpha,
+		AimOffsetPitch
+	};
+
+	struct FActiveMontageSegment
+	{
+		UAnimSequence* Sequence = nullptr;
+		float StartTime = 0.0f;
+		float EndTime = 0.0f;
+		float AnimStartOffset = 0.0f;
+		float PlayRate = 1.0f;
+	};
+
+	struct FActiveMontage
+	{
+		FString Path;
+		FAnimMontageAsset Asset;
+		UAnimSequence* Sequence = nullptr;
+		TArray<FActiveMontageSegment> Segments;
+		TArray<FAnimNotifyEvent> NotifyEvents;
+		float TotalLength = 0.0f;
+		float Position = 0.0f;
+		float PlayRate = 1.0f;
+		float ElapsedTime = 0.0f;
+		float BlendWeight = 0.0f;
+		int32 CurrentSectionIndex = -1;
+		bool bPlaying = false;
+		bool bPaused = false;
+		bool bStopping = false;
+		float StopElapsed = 0.0f;
+		float StopDuration = 0.0f;
+		float StopStartWeight = 1.0f;
+		bool bNotifyIncludeStart = true;
+	};
+
+	static float ResolveMontageSegmentRate(const FActiveMontageSegment& Segment);
+	static float MapToMontageSegmentLocalTime(const FActiveMontageSegment& Segment, float MontageTime);
+	static const FActiveMontageSegment* ResolveActiveMontageSegment(
+		const TArray<FActiveMontageSegment>& Segments, float MontageTime, float& OutLocalTime);
+	void UpdateMontages(float DeltaSeconds);
+	void ClearMontages();
 
 	// 매 프레임 변수 값을 노드 입력에 써 넣는다
 	struct FVariableBinding
@@ -156,6 +243,10 @@ private:
 
 	TArray<UAnimSequence*> OwnedSequences;
 	TArray<UBlendSpace1D*> OwnedBlendSpaces;
+	TArray<UBlendSpace2D*> OwnedBlendSpaces2D;
+	TArray<UObject*> OwnedMontageNotifyObjects;
+	TArray<FActiveMontage> ActiveMontages;
+	std::function<void(const FString&)> OnMontageNotify;
 
 	uint32 Generation = 0;
 };

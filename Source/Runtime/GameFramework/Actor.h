@@ -39,6 +39,7 @@ public:
 	USceneComponent* GetRootComponent() const { return RootComponent; }
 	void SetRootComponent(USceneComponent* SceneComponent) { RootComponent = SceneComponent; }
 	bool MakeRootComponent(USceneComponent* SceneComponent);
+	bool AttachToActor(AActor* ParentActor, EAttachmentRule Rule = EAttachmentRule::KeepRelative, USceneComponent* TargetParentComponent = nullptr);
 	void SetActorEnableCollision(bool bEnabled) { bActorEnableCollision = bEnabled; }
 	bool GetActorEnableCollision() const { return bActorEnableCollision; }
 

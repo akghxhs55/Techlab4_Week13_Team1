@@ -24,7 +24,7 @@ void FParticleSystemSceneProxy::UpdateRenderState()
 	DefaultMaterial = UAssetManager::GetAssetByPath<UMaterial>("ParticleSpriteAdditive");
 }
 
-bool FParticleSystemSceneProxy::EnsureSpriteQuad()
+bool FParticleSystemSceneProxy::EnsureSpriteQuad() const
 {
 	if (!SpriteQuadVertexBuffer)
 	{
@@ -37,7 +37,7 @@ bool FParticleSystemSceneProxy::EnsureSpriteQuad()
 	return SpriteQuadVertexBuffer && SpriteQuadIndexBuffer;
 }
 
-void FParticleSystemSceneProxy::GetDynamicMeshElements(FRenderQueue& Queue, const FViewContext& View)
+void FParticleSystemSceneProxy::GetDynamicMeshElements(const FViewContext& View, FMeshElementCollector& Collector, uint32 LODIndex) const
 {
 	if (!View.bShowParticles)
 		return;
@@ -76,7 +76,7 @@ void FParticleSystemSceneProxy::GetDynamicMeshElements(FRenderQueue& Queue, cons
 			continue;
 
 		Context.EmitterIndex = EmitterIndex;
-		Data->Submit(Queue, Context);
+		Data->Submit(Collector, Context);
 	}
 	BuildRenderDataMs = SmoothParticleStatMs(BuildRenderDataMs, Timer.Finish());
 }

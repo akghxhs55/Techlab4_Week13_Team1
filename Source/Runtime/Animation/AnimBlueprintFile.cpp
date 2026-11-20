@@ -124,12 +124,18 @@ namespace
         Object["TransitionOutputPinId"] = Value.TransitionOutputPinId;
         Object["SequencePath"] = Value.SequencePath;
         Object["BlendSpacePath"] = Value.BlendSpacePath;
+        Object["AimOffsetPath"] = Value.AimOffsetPath;
+        Object["SlotName"] = Value.SlotName;
+        Object["StartBoneName"] = Value.StartBoneName;
         Object["bLooping"] = Value.bLooping;
         Object["bResetOnEntry"] = Value.bResetOnEntry;
+        Object["bMeshSpaceRotationBlend"] = Value.bMeshSpaceRotationBlend;
+        Object["bSyncByNormalizedTime"] = Value.bSyncByNormalizedTime;
         Object["PlayRate"] = Value.PlayRate;
         Object["ChildGraphId"] = Value.ChildGraphId;
         Object["Position"] = { { "X", Value.Position.X }, { "Y", Value.Position.Y } };
         Object["FloatInput"] = { { "bUseVariable", Value.FloatInput.bUseVariable }, { "Variable", Value.FloatInput.Variable }, { "Constant", Value.FloatInput.Constant } };
+        Object["SecondFloatInput"] = { { "bUseVariable", Value.SecondFloatInput.bUseVariable }, { "Variable", Value.SecondFloatInput.Variable }, { "Constant", Value.SecondFloatInput.Constant } };
 
         if (Value.Type == EAnimBlueprintNodeType::State)
         {
@@ -144,7 +150,7 @@ namespace
     {
         FAnimBlueprintNode Value;
         Value.Id = ReadInt(Object, "Id");
-        Value.Type = ReadEnum<EAnimBlueprintNodeType>(Object, "Type", 8);
+        Value.Type = ReadEnum<EAnimBlueprintNodeType>(Object, "Type", static_cast<int32>(EAnimBlueprintNodeType::AimOffset1D));
         Value.Name = Object.at("Name").get<FString>();
         Value.InputPosePinId = ReadInt(Object, "InputPosePinId");
         Value.SecondInputPosePinId = ReadInt(Object, "SecondInputPosePinId");
@@ -153,8 +159,18 @@ namespace
         Value.TransitionOutputPinId = ReadInt(Object, "TransitionOutputPinId");
         Value.SequencePath = Object.at("SequencePath").get<FString>();
         Value.BlendSpacePath = Object.at("BlendSpacePath").get<FString>();
+        if (Object.contains("AimOffsetPath") && Object["AimOffsetPath"].is_string())
+            Value.AimOffsetPath = Object["AimOffsetPath"].get<FString>();
+        if (Object.contains("SlotName") && Object["SlotName"].is_string())
+            Value.SlotName = Object["SlotName"].get<FString>();
+        if (Object.contains("StartBoneName") && Object["StartBoneName"].is_string())
+            Value.StartBoneName = Object["StartBoneName"].get<FString>();
         Value.bLooping = Object.at("bLooping").get<bool>();
         Value.bResetOnEntry = Object.at("bResetOnEntry").get<bool>();
+        if (Object.contains("bMeshSpaceRotationBlend") && Object["bMeshSpaceRotationBlend"].is_boolean())
+            Value.bMeshSpaceRotationBlend = Object["bMeshSpaceRotationBlend"].get<bool>();
+        if (Object.contains("bSyncByNormalizedTime") && Object["bSyncByNormalizedTime"].is_boolean())
+            Value.bSyncByNormalizedTime = Object["bSyncByNormalizedTime"].get<bool>();
         Value.PlayRate = Object.at("PlayRate").get<float>();
         Value.ChildGraphId = ReadInt(Object, "ChildGraphId");
         const json& Position = Object.at("Position");
@@ -164,6 +180,13 @@ namespace
         Value.FloatInput.bUseVariable = Input.at("bUseVariable").get<bool>();
         Value.FloatInput.Variable = Input.at("Variable").get<FString>();
         Value.FloatInput.Constant = Input.at("Constant").get<float>();
+        if (Object.contains("SecondFloatInput") && Object["SecondFloatInput"].is_object())
+        {
+            const json& SecondInput = Object["SecondFloatInput"];
+            Value.SecondFloatInput.bUseVariable = SecondInput.at("bUseVariable").get<bool>();
+            Value.SecondFloatInput.Variable = SecondInput.at("Variable").get<FString>();
+            Value.SecondFloatInput.Constant = SecondInput.at("Constant").get<float>();
+        }
         Value.OnEnter = ReadStateEvent(Object, "OnEnter");
         Value.OnExit = ReadStateEvent(Object, "OnExit");
         return Value;
@@ -539,10 +562,17 @@ bool AnimBlueprintFile::Validate(const FAnimBlueprintData& Data, FString& OutErr
                 break;
             case EAnimBlueprintNodeType::SequencePlayer:
             case EAnimBlueprintNodeType::BlendSpacePlayer:
+            case EAnimBlueprintNodeType::BlendSpace2DPlayer:
             case EAnimBlueprintNodeType::StateMachine:
                 Required[2] = true;
                 break;
+            case EAnimBlueprintNodeType::Slot:
+            case EAnimBlueprintNodeType::AimOffset1D:
+                Required[0] = true;
+                Required[2] = true;
+                break;
             case EAnimBlueprintNodeType::TwoWayBlend:
+            case EAnimBlueprintNodeType::LayeredBoneBlend:
                 Required[0] = true;
                 Required[1] = true;
                 Required[2] = true;
@@ -745,18 +775,16 @@ bool AnimBlueprintFile::Validate(const FAnimBlueprintData& Data, FString& OutErr
             }
         }
 
-        std::unordered_set<FString> TransitionPairs;
+		// 같은 두 상태 사이에 우선순위가 다른 여러 전이 조건을 둘 수 있다
+		for (const FAnimBlueprintTransition& Transition : Graph.Transitions)
+		{
+			const FAnimBlueprintNode* From = FindNode(Graph, Transition.FromStateId);
+			const FAnimBlueprintNode* To = FindNode(Graph, Transition.ToStateId);
 
-        for (const FAnimBlueprintTransition& Transition : Graph.Transitions)
-        {
-            const FAnimBlueprintNode* From = FindNode(Graph, Transition.FromStateId);
-            const FAnimBlueprintNode* To = FindNode(Graph, Transition.ToStateId);
-            const FString Pair = std::to_string(Transition.FromStateId) + ":" + std::to_string(Transition.ToStateId);
-
-            if (!AddId(Transition.Id) || !From || !To || From == To || !TransitionPairs.insert(Pair).second || (From->Type != EAnimBlueprintNodeType::State && From->Type != EAnimBlueprintNodeType::AnyState) || To->Type != EAnimBlueprintNodeType::State || From->TransitionOutputPinId != Transition.FromPinId || To->TransitionInputPinId != Transition.ToPinId)
-            {
-                return Fail("A State transition is invalid or duplicated.");
-            }
+			if (!AddId(Transition.Id) || !From || !To || From == To || (From->Type != EAnimBlueprintNodeType::State && From->Type != EAnimBlueprintNodeType::AnyState) || To->Type != EAnimBlueprintNodeType::State || From->TransitionOutputPinId != Transition.FromPinId || To->TransitionInputPinId != Transition.ToPinId)
+			{
+				return Fail("A State transition is invalid or duplicated.");
+			}
 
             if (static_cast<int32>(Transition.Rule) > 3 || static_cast<int32>(Transition.Compare) > 5 || !std::isfinite(Transition.Value) || !std::isfinite(Transition.CrossfadeDuration) || Transition.CrossfadeDuration < 0.0f)
             {

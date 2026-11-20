@@ -18,6 +18,11 @@ struct FLuaActorRef
 	AActor* Get() const;
 };
 
+// Actor usertype 메타테이블을 덮어쓰지 않도록 Zombie 바인딩용 파생 타입을 분리한다
+struct FLuaZombieRef : FLuaActorRef
+{
+};
+
 struct FLuaComponentRef
 {
 	UWorld* World = nullptr;

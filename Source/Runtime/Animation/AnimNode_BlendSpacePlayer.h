@@ -95,6 +95,40 @@ struct FAnimNode_BlendSpacePlayer : public FAnimNode_Base
 		}
 	}
 
+	float GetCycleSeconds() const override
+	{
+		if (!BlendSpace || PlayRate <= 0.0f || !std::isfinite(PlayRate))
+			return 0.0f;
+		FBlendSample SampleA;
+		FBlendSample SampleB;
+		float Alpha = 0.0f;
+		if (!BlendSpace->GetSamples(X, SampleA, SampleB, Alpha)
+			|| !SampleA.Animation || !SampleB.Animation
+			|| !SampleA.Animation->GetDataModel() || !SampleB.Animation->GetDataModel())
+			return 0.0f;
+		const float EffectiveLength = FMath::Lerp(
+			SampleA.Animation->GetDataModel()->GetPlayLength(),
+			SampleB.Animation->GetDataModel()->GetPlayLength(),
+			Alpha);
+		return EffectiveLength > 0.0f ? (EffectiveLength / PlayRate) : 0.0f;
+	}
+
+	bool GetNormalizedTime(float& OutTime) const override
+	{
+		if (!BlendSpace)
+			return false;
+		OutTime = FMath::Clamp(Phase, 0.0f, 1.0f);
+		return true;
+	}
+
+	void SetNormalizedTime(float Time) override
+	{
+		if (std::isfinite(Time))
+			Phase = FMath::Clamp(Time, 0.0f, 1.0f);
+	}
+
+	bool IsLoopingNode() const override { return bLooping; }
+
 	void Evaluate(FPoseContext& Output) override
 	{
         if (!BlendSpace)

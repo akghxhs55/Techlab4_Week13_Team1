@@ -24,9 +24,9 @@ void FObjectProperty::SerializeItem(FStructuredArchive::FSlot Slot, void* Value)
 {
     UObject*& Ref = GetPropertyValue(Value);
 
-    if (PropertyClass == UMaterial::StaticClass())
+    if (PropertyClass == UMaterial::StaticClass() || PropertyClass == UMaterialInterface::StaticClass())
     {
-		UMaterial* Material = Cast<UMaterial>(Ref);
+		UMaterialInterface* Material = Cast<UMaterialInterface>(Ref);
         UMaterial::SerializeMaterialReference(Slot, Material);
         Ref = Material;
         return;

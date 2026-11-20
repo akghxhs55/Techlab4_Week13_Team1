@@ -26,6 +26,8 @@ FVFIntermediates VF_GetIntermediates(FVertexFactoryInput Input, float4x4 World, 
     Result.WorldPosition = Position;
     Result.WorldNormal = Normal;
     Result.WorldTangent = Tangent;
+    Result.LocalPosition = Input.Position;
+    Result.LocalNormal = Input.Normal;
     Result.UV = Input.UV;
     Result.Color = Input.Color * Input.InstanceColor;
     return Result;

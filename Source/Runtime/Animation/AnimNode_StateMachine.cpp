@@ -61,6 +61,20 @@ int32 FAnimNode_StateMachine::GetCurrentStateIndex() const
     return States.IsEmpty() ? INDEX_NONE : CurrentState;
 }
 
+bool FAnimNode_StateMachine::IsStateActiveOrBlending(FName StateName) const
+{
+	if (States.IsEmpty())
+		return false;
+	if (CurrentState >= 0 && CurrentState < States.Num() && States[CurrentState].Name == StateName)
+		return true;
+	for (const FActiveBlend& Blend : ActiveBlends)
+	{
+		if (Blend.FromState >= 0 && Blend.FromState < States.Num() && States[Blend.FromState].Name == StateName)
+			return true;
+	}
+	return false;
+}
+
 void FAnimNode_StateMachine::Update(const FAnimationUpdateContext& Context)
 {
     if (States.IsEmpty())

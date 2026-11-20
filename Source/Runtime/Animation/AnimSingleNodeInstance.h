@@ -14,6 +14,7 @@ public:
 	void SetAnimationAsset(UAnimationAsset* InAsset, bool bLoop = true, float InPlayRate = 1.0f);
 	void SetBlendSpaceAsset(UBlendSpace1D* InBlendSpace, float InPlayRate = 1.0f);
 	void SetBlendSpaceInput(float Value);
+	void SetBlendSpace2DInput(float InX, float InY);
 
 	void SetPlaying(bool bInPlaying);
 	bool IsPlaying() const;

@@ -44,6 +44,17 @@ public:
 	virtual void MouseMove(FViewport* Viewport, int32 X, int32 Y) override;
 	virtual bool InputKey(FViewport* Viewport, int32 Key, bool bDown) override;
 	virtual bool InputAxis(FViewport* Viewport, int32 ControllerId, EGameInputAxis AxisKey, float Delta, float DeltaTime) override;
+	bool ConsumeExitRequest()
+	{
+		const bool bRequested = bExitRequested;
+		bExitRequested = false;
+		return bRequested;
+	}
+
+private:
+	bool bExitRequested = false;
+
+public:
 
 	// 게임 카메라 시점 계산
 	FSceneView CalcSceneView(const FRect& InViewRect);
@@ -86,6 +97,7 @@ public:
 	void SetCameraComponent(UCameraComponent* InCameraComponent);
 	// 이 뷰포트가 실제로 그리고 마우스 Ray를 만드는 카메라. 첫 CalcSceneView 전에는 null일 수 있다.
 	UCameraComponent* GetCameraComponent() const { return CameraComponent; }
+	void SetAllowCameraOverlayDebug(bool bAllow) { bAllowCameraOverlayDebug = bAllow; }
 
 	void Reset();
 
@@ -123,6 +135,7 @@ private:
 	UGameInstance* GameInstance = nullptr;
 	UEngine* Engine = nullptr;
 	UCameraComponent* CameraComponent = nullptr;
+	bool bAllowCameraOverlayDebug = true;
 
 	// 렌더 타깃 버퍼
 	FRect Rect{};

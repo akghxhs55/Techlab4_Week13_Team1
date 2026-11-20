@@ -63,7 +63,9 @@ public:
 	// Attatch-To
 	USceneComponent* GetAttachParent() const { return AttachParent; }
 	const TArray<USceneComponent*>& GetAttachChildren() const { return AttachChildren; }
+	const FString& GetAttachSocketName() const { return AttachSocketName; }
 	void SetupAttachment(USceneComponent* InParent, EAttachmentRule Rule = EAttachmentRule::KeepRelative);
+	void SetupAttachmentToSocket(USceneComponent* InParent, const FString& InSocketName, EAttachmentRule Rule = EAttachmentRule::KeepRelative);
 	void DetachFromParent(EAttachmentRule Rule = EAttachmentRule::KeepRelative);
 
 	virtual FBox CalcLocalBounds() const { return FBox{ FVector(), FVector() }; }
@@ -114,6 +116,8 @@ protected:
 	mutable FRotationConversionCache RelativeRotationCache;
 
 	USceneComponent* AttachParent = nullptr; // Attach 부모 정보
+	UPROPERTY()
+	FString AttachSocketName;
 	TArray<USceneComponent*> AttachChildren;
 
 	bool bAbsoluteLocation = false;

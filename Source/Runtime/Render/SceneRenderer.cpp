@@ -17,15 +17,19 @@
 #include "Render/PostProcess/ToneMapData.h"
 #include "Render/DecalData.h"
 #include "Render/SkyboxRenderer.h"
+#include "Render/ParticleCurveTexture.h"
 #include "Text/TextRenderer.h"
 #include "UObject/UObjectIterator.h"
 #include "Render/GPUStats.h"
+#include "Core/EngineTimer.h"
+#include "Asset/LOD/StaticMeshLODSelector.h"
 
 #include <cmath>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <utility>
+#include "Render/Decal/ProjectedDecalRenderer.h"
 
 DECLARE_CYCLE_STAT("Frustum Cull", STAT_FrustumCull);
 DECLARE_CYCLE_STAT("Gather Elements", STAT_GatherElements);
@@ -40,8 +44,7 @@ namespace
 
 	struct FDecalItemRef {
 		const FPrimitiveSceneProxy* Proxy;
-		uint32 Batch;
-		uint32 Item;
+		uint32 CommandIndex;
 	};
 
 	FRenderGraphRasterPassDesc MakeViewportPass(const std::string& Name, FRenderGraphTextureRef Color,
@@ -183,9 +186,12 @@ void FSceneRenderer::InitViews(FRenderer* Renderer, const FSceneRenderOptions& O
 	// 게임 쪽(파티클 LOD 등)이 다음 Tick에서 카메라 거리를 알 수 있게 남긴다
 	World->AddRenderedViewLocation(View.ViewLocation);
 
+	FScene& Scene = World->GetScene();
+	Scene.FlushStaticCaches(Options);
+
 	// 월드 프리미티브 수집 및 절두체 컬링
-	GatherRenderPackets(World->GetScene(), RenderData, CachedViewContext, &View.Frustum, Renderer);
-	RenderData.AmbientLight = World->GetScene().GetAmbientLight(View.bGameView);
+	GatherViewVisibilityAndDynamicElements(Scene, RenderData, CachedViewContext, Options, &View.Frustum, Renderer);
+	RenderData.AmbientLight = Scene.GetAmbientLight(View.bGameView);
 
 	// 모든 프록시가 같은 FLightRenderParameters를 채우고, 종류는 Type으로만 구분한다.
 	auto AddVisibleLight = [this](const FLightSceneProxy* Light)
@@ -197,7 +203,6 @@ void FSceneRenderer::InitViews(FRenderer* Renderer, const FSceneRenderOptions& O
 		if (Light->GetLightComponent() == RenderData.PreviewLight) RenderData.PreviewLightIndex = Index;
 	};
 
-	const FScene& Scene = World->GetScene();
 	for (const FDirectionalLightSceneProxy* Light : Scene.GetDirectionalLights())
 	{
 		if (!Light->IsEnabled() || !Light->IsShown(View.bGameView)) continue;
@@ -273,6 +278,69 @@ void FSceneRenderer::UnbindForwardLighting(FRenderer* Renderer)
 	RenderCommand::UnbindShaderResources(11, 1, EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 }
 
+void FSceneRenderer::BuildVisiblePassCommands(const FScene& Scene, EMeshPass Pass, const FSceneRenderOptions& Options,
+	bool bWireframe, TArray<FVisibleMeshDrawCommand>& OutCommands) const
+{
+	OutCommands.Reset();
+	const TArray<FCachedMeshDrawEntry>& CachedList = Scene.GetCachedDrawList(Pass);
+	const TArray<FMeshDrawCommand>& DynamicList = RenderData.DynamicPassCommands[static_cast<size_t>(Pass)];
+	OutCommands.Reserve(CachedList.Num() + DynamicList.Num());
+
+	const uint32 NumPrimitives = static_cast<uint32>(RenderData.PrimitiveVisibilityMap.Num());
+	const bool bApplyWireframe = bWireframe && (Pass == EMeshPass::BasePass);
+	const bool bApplyUnlit = (Options.LightingModel == ELightingModel::Unlit) && (Pass == EMeshPass::BasePass);
+
+	for (const FCachedMeshDrawEntry& Entry : CachedList)
+	{
+		const uint32 PrimIdx = Entry.PrimitiveIndex;
+		if (PrimIdx >= NumPrimitives || !RenderData.PrimitiveVisibilityMap[PrimIdx])
+			continue;
+		if (Pass == EMeshPass::ShadowDepth)
+		{
+			if (Entry.LODIndex != 0)
+				continue;
+		}
+		else if (PrimIdx < static_cast<uint32>(RenderData.PrimitiveSelectedLODs.Num()) &&
+			RenderData.PrimitiveSelectedLODs[PrimIdx] != Entry.LODIndex)
+		{
+			continue;
+		}
+
+		FVisibleMeshDrawCommand Vis{};
+		Vis.Command = &Entry.Command;
+		Vis.PrimitiveId = Entry.Command.PrimitiveId;
+		Vis.StateBucketId = Entry.Command.StateBucketId;
+		Vis.SortKey = Entry.Command.SortKey;
+		Vis.bForceWireframe = bApplyWireframe;
+
+		if (bApplyUnlit)
+			Vis.ShaderOverride = ResolveUnlitShaderOverride(Entry.Command, Options);
+		if (Pass == EMeshPass::Translucency && Entry.Command.Proxy)
+		{
+			const FAABB& Bounds = Entry.Command.Proxy->GetBounds();
+			const FVector Delta = Bounds.Center - View.ViewLocation;
+			Vis.SortKey = MakeTranslucentSortKey(Delta.Dot(Delta));
+		}
+		OutCommands.Add(Vis);
+	}
+
+	for (const FMeshDrawCommand& DynCmd : DynamicList)
+	{
+		FVisibleMeshDrawCommand Vis{};
+		Vis.Command = &DynCmd;
+		Vis.PrimitiveId = DynCmd.PrimitiveId;
+		Vis.StateBucketId = DynCmd.StateBucketId;
+		Vis.SortKey = DynCmd.SortKey;
+		Vis.bForceWireframe = bApplyWireframe && !DynCmd.bIsParticle;
+		if (bApplyUnlit)
+			Vis.ShaderOverride = ResolveUnlitShaderOverride(DynCmd, Options);
+		OutCommands.Add(Vis);
+	}
+
+	std::stable_sort(OutCommands.begin(), OutCommands.end(),
+		[](const FVisibleMeshDrawCommand& A, const FVisibleMeshDrawCommand& B) { return A.SortKey < B.SortKey; });
+}
+
 bool FSceneRenderer::AddWorldNormalPass(FRenderGraphBuilder& Graph, FRenderer* Renderer,
 	FSceneViewTargets& Targets, const FSceneRenderOptions& Options)
 {
@@ -284,15 +352,25 @@ bool FSceneRenderer::AddWorldNormalPass(FRenderGraphBuilder& Graph, FRenderer* R
 	Pass.Name = "WorldNormal";
 	Pass.ColorAttachments = { { SceneColor, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 1.0f } } };
 	Pass.DepthAttachment = { Depth, ERenderGraphLoadAction::Clear, 1.0f, 0 };
-	return Graph.AddRasterPass(std::move(Pass), [this, Renderer, bDrawPrimitives = Options.bDrawPrimitives]
+	return Graph.AddRasterPass(std::move(Pass), [this, Renderer, bDrawPrimitives = Options.bDrawPrimitives, Options]
 		{
-			if (!bDrawPrimitives) return;
-			FMeshPassProcessor Processor;
-			TArray<FMeshDrawBatch> Batches;
-			bCorePassSucceeded = Processor.Build(View, RenderData.RenderQueue,
-				&RenderData, EMeshPassType::WorldNormal, Batches);
-			if (bCorePassSucceeded)
-				Renderer->DrawMeshes(Batches);
+			if (!bDrawPrimitives || !World) return;
+			TArray<FMeshDrawCommand>& DynList = RenderData.DynamicPassCommands[static_cast<size_t>(EMeshPass::WorldNormal)];
+			DynList.Reset();
+			FWorldNormalPassMeshProcessor Processor;
+			for (const FMeshBatch& Batch : RenderData.Collector.GetMeshBatches())
+			{
+				if (!Processor.AddMeshBatch(Batch, Options, &RenderData.Collector, DynList))
+				{
+					bCorePassSucceeded = false;
+					return;
+				}
+			}
+
+			BuildVisiblePassCommands(World->GetScene(), EMeshPass::WorldNormal, Options, false, RenderData.VisibleWorldNormalCommands);
+			Renderer->UploadViewConstants(View.ViewProjectionMatrix, View.ViewMatrix, View.ProjectionMatrix,
+				static_cast<float>(EngineTimer::GetTotalTime()));
+			Renderer->SubmitVisibleCommands(RenderData.VisibleWorldNormalCommands, RenderData.GPUSceneBuffer);
 		});
 }
 
@@ -320,8 +398,6 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 	const FRenderGraphTextureRef LightingHDR = Graph.CreateTexture(HDRDesc, "LightingHDR");
 	if (!LightingHDR)
 		return false;
-	
-	PrepareDrawData(Renderer, RenderData);
 
 	// 스카이 배경을 물체보다 먼저 HDR 타깃에 깐다. 이 패스가 LightingHDR을 Clear하고, 포워드 패스는 Load로 그 위에 그린다.
 	FSkyboxRenderer* PreviewSkybox = Renderer->GetPreviewSkybox();
@@ -365,13 +441,12 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			})) return false;
 	}
 
+	TArray<FProjectedDecalRenderData> ProjectedDecals;
 	{ // Opaque forward rendering
-		ForwardBatches.Reset();
+		RenderData.VisibleBasePassCommands.Reset();
 		if (Options.bDrawPrimitives)
 		{
-			FMeshPassProcessor Processor;
-			if (!Processor.Build(View, RenderData.RenderQueue, &RenderData,
-				EMeshPassType::Forward, ForwardBatches, Options.LightingModel)) return false;
+			BuildVisiblePassCommands(World->GetScene(), EMeshPass::BasePass, Options, View.bIsWireframe, RenderData.VisibleBasePassCommands);
 		}
 		// 현재 업로드된 광원 정보를 기존 그리드에 전달한다.
 		FForwardLightTileGrid& Tiles = RenderData.ViewLightResources.GetTiles();
@@ -389,10 +464,39 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 		const bool bGridPrepared = Options.bDrawPrimitives && bLightUploadSucceeded &&
 			Tiles.PrepareBuild(View, GridLighting, SceneLights, Targets.Depth.get(), CullingMode);
 
+		// 투영 데칼 수집 및 정렬
+		bool bHasLitProjectedDecal = false;
+		bool bHasUnlitProjectedDecal = false;
+		if (Options.bDrawDecals && Renderer->GetProjectedDecal() && Renderer->GetProjectedDecal()->IsReady() && World)
+		{
+			const FScene& Scene = World->GetScene();
+			ProjectedDecals.Reserve(Scene.Decals.Num());
+			for (UDecalComponent* DecalComp : Scene.Decals)
+			{
+				if (!DecalComp || !DecalComp->IsShown(View.bGameView))
+					continue;
+				FProjectedDecalRenderData Data{};
+				if (!DecalComp->TryGetRenderData(Data))
+					continue;
+				bHasLitProjectedDecal |= !Data.bUnlit;
+				bHasUnlitProjectedDecal |= Data.bUnlit;
+				ProjectedDecals.Add(Data);
+			}
+			std::stable_sort(ProjectedDecals.begin(), ProjectedDecals.end(),
+				[](const FProjectedDecalRenderData& A, const FProjectedDecalRenderData& B)
+				{
+					if (A.SortOrder != B.SortOrder)
+						return A.SortOrder < B.SortOrder;
+					return A.ComponentID < B.ComponentID;
+				});
+		}
+		const bool bHasProjectedDecals = !ProjectedDecals.IsEmpty();
+
+		const bool bHasGpuParticles = Options.bDrawPrimitives && !RenderData.Collector.GetGpuParticleBatches().IsEmpty();
 		const bool bNeedsLightCulling = bGridPrepared && CullingMode != ELightCullingMode::Off && (RenderData.HasSpotLights() || RenderData.HasPointLights());
 		// 그림자 마스크는 장면 깊이로 Projection하므로 프리패스가 필요하다. Gouraud는 FinalizeShadowLights가 채널을 주지 않는다.
 		const bool bForwardShadows = Options.bDrawPrimitives && ShadowAtlasRef && !ShadowedLights.IsEmpty();
-		if (bNeedsLightCulling || bForwardShadows)
+		if (bNeedsLightCulling || bForwardShadows || bHasGpuParticles || bHasProjectedDecals)
 		{
 			FPipelineState* DepthPipeline = FRenderResourceManager::GetPSO(EPSOType::StaticMesh_DepthOnly);
 			if (!DepthPipeline || !DepthPipeline->Shader || !DepthPipeline->Shader->PixelShader) return false;
@@ -402,26 +506,16 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			FRenderGraphRasterPassDesc Prepass{};
 			Prepass.Name = "DepthPrepass";
 			Prepass.DepthAttachment = { Depth, ERenderGraphLoadAction::Clear, 1.0f, 0 };
-			if (!Graph.AddRasterPass(std::move(Prepass), [this, Renderer, DepthPipeline]
+			if (!Graph.AddRasterPass(std::move(Prepass), [this, Renderer, Options]
 				{
-					if (ForwardBatches.IsEmpty()) return;
+					if (!bCorePassSucceeded || !World) return;
+					BuildVisiblePassCommands(World->GetScene(), EMeshPass::DepthPass, Options, false, RenderData.VisibleDepthPassCommands);
+					if (RenderData.VisibleDepthPassCommands.IsEmpty()) return;
 
-					// 실제 메시 패스와 같은 VS를 사용해 깊이 계산을 일치시킨다.
-					// 같은 객체를 공유하면 마지막 VS로 덮어써지므로 정점 타입마다 프로그램을 나눈다
-					TArray<FShaderProgram> DepthPrograms;
-					DepthPrograms.Reserve(static_cast<int32>(EVertexFactoryType::Count));
-					for (int32 Index = 0; Index < static_cast<int32>(EVertexFactoryType::Count); ++Index)
-						DepthPrograms.Add(FShaderProgram(nullptr, DepthPipeline->Shader->PixelShader));
-					TArray<FMeshDrawBatch> DepthBatches = ForwardBatches;
-					for (FMeshDrawBatch& Batch : DepthBatches)
-					{
-						FShaderProgram& Program = DepthPrograms[static_cast<int32>(Batch.VertexFactory->GetType())];
-						Program.VertexShader = Batch.Pipeline.Shader->VertexShader;
-						Batch.Pipeline = *DepthPipeline;
-						Batch.Pipeline.Shader = &Program;
-					}
 					SCOPED_GPU_STAT(GPUStats::STAT_GPU_DepthPrepass);
-					Renderer->DrawMeshes(DepthBatches);
+					Renderer->UploadViewConstants(View.ViewProjectionMatrix, View.ViewMatrix, View.ProjectionMatrix,
+						static_cast<float>(EngineTimer::GetTotalTime()));
+					Renderer->SubmitVisibleCommands(RenderData.VisibleDepthPassCommands, RenderData.GPUSceneBuffer);
 				})) return false;
 		}
 
@@ -462,8 +556,184 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 				})) 
 				return false;
 		}
+		if (bHasGpuParticles)
+		{
+			FRenderGraphComputePassDesc GpuParticleSim{};
+			GpuParticleSim.Name = "GpuParticleSimulate";
+			if (Targets.Depth && Targets.Depth->GetRawPtr())
+			{
+				GpuParticleSim.ReadResources.push_back(Targets.Depth->GetRawPtr());
+			}
+			for (const FGpuParticleBatch& Batch : RenderData.Collector.GetGpuParticleBatches())
+			{
+				if (!Batch.GpuResources || Batch.MaxParticles == 0)
+				{
+					continue;
+				}
+				FGpuParticleEmitterResources& Res = *Batch.GpuResources;
+				if (!Res.ParticleBuffer || Res.MaxParticles != Batch.MaxParticles)
+				{
+					Res.ParticleBuffer = RenderCommand::CreateRWStructuredBuffer(Batch.ParticleStride, Batch.MaxParticles);
+					Res.MaxParticles = Batch.MaxParticles;
+					if (Res.ParticleBuffer)
+					{
+						RenderCommand::ClearUnorderedAccess(Res.ParticleBuffer.get(), 0);
+					}
+				}
+				else if (Batch.bResetRequested && Res.ParticleBuffer)
+				{
+					RenderCommand::ClearUnorderedAccess(Res.ParticleBuffer.get(), 0);
+				}
+				if (Res.ParticleBuffer && Res.ParticleBuffer->GetBuffer())
+				{
+					ID3D11Resource* RawRes = Res.ParticleBuffer->GetBuffer();
+					if (std::find(GpuParticleSim.WriteResources.begin(), GpuParticleSim.WriteResources.end(), RawRes) == GpuParticleSim.WriteResources.end())
+					{
+						GpuParticleSim.WriteResources.push_back(RawRes);
+					}
+				}
+			}
+			if (!GpuParticleSim.WriteResources.empty())
+			{
+				if (!Graph.AddComputePass(std::move(GpuParticleSim), [this, DepthTexture = Targets.Depth.get()]
+				{
+					FComputeShader* InjectCS = FRenderResourceManager::GetComputeShader("EngineResources/Shaders/GpuParticleSimulate.hlsl", "CSInjectSpawns");
+					FComputeShader* SimCS = FRenderResourceManager::GetComputeShader("EngineResources/Shaders/GpuParticleSimulate.hlsl", "CSSimulate");
+					if (!InjectCS || !SimCS)
+					{
+						return;
+					}
+					FParticleCurveTexture& CurveAtlas = FParticleCurveTexture::Get();
+					CurveAtlas.FlushPendingUploads();
+
+					const bool bDepthReady = DepthTexture && DepthTexture->GetSRV();
+					const FMatrix ViewProj = View.ViewProjectionMatrix;
+					const FMatrix InvViewProj = View.ViewProjectionMatrix.Inverse();
+					const FVector4 ScreenAndClip(
+						static_cast<float>(View.ViewRect.Width),
+						static_cast<float>(View.ViewRect.Height),
+						View.NearClip,
+						View.FarClip);
+
+					for (const FGpuParticleBatch& Batch : RenderData.Collector.GetGpuParticleBatches())
+					{
+						if (!Batch.GpuResources || Batch.MaxParticles == 0)
+						{
+							continue;
+						}
+						FGpuParticleEmitterResources& Res = *Batch.GpuResources;
+						if (!Res.ParticleBuffer)
+						{
+							continue;
+						}
+						if (!Res.SimCB)
+						{
+							Res.SimCB = RenderCommand::CreateConstantBuffer(sizeof(FGpuParticleSimParams));
+						}
+						if (!Res.SimCB)
+						{
+							continue;
+						}
+
+						FGpuParticleSimParams SimParams = Batch.SimParams;
+						SimParams.ViewProj = ViewProj;
+						SimParams.InvViewProj = InvViewProj;
+						SimParams.ScreenAndClip = ScreenAndClip;
+						if (!bDepthReady)
+						{
+							SimParams.HasCollision = 0;
+						}
+						RenderCommand::UpdateBufferData(Res.SimCB.get(), &SimParams, sizeof(SimParams));
+
+						if (Batch.SpawnCount > 0 && !Batch.PendingSpawnBytes.IsEmpty())
+						{
+							if (!Res.SpawnUploadBuffer || Res.SpawnCapacity < Batch.SpawnCount)
+							{
+								const uint32 NewCap = std::max(Batch.SpawnCount, 64u);
+								Res.SpawnUploadBuffer = RenderCommand::CreateDynamicStructuredBuffer(NewCap, Batch.ParticleStride);
+								Res.SpawnCapacity = Res.SpawnUploadBuffer ? NewCap : 0;
+							}
+							if (Res.SpawnUploadBuffer)
+							{
+								if (void* MappedSpawn = RenderCommand::MapWriteDiscard(Res.SpawnUploadBuffer.get()))
+								{
+									std::memcpy(MappedSpawn, Batch.PendingSpawnBytes.GetData(), Batch.PendingSpawnBytes.Num());
+									RenderCommand::Unmap(Res.SpawnUploadBuffer.get());
+								}
+								RenderCommand::BindComputeShader(InjectCS);
+								RenderCommand::BindConstantBuffer(0, Res.SimCB.get(), EShaderBindFlagBits::Compute);
+								RenderCommand::BindShaderResource(0, Res.SpawnUploadBuffer.get(), EShaderBindFlagBits::Compute);
+								RenderCommand::BindUnorderedAccess(0, Res.ParticleBuffer.get());
+								RenderCommand::Dispatch((Batch.SpawnCount + 63u) / 64u, 1, 1);
+								RenderCommand::UnbindShaderResources(0, 1, EShaderBindFlagBits::Compute);
+							}
+						}
+
+						RenderCommand::BindComputeShader(SimCS);
+						RenderCommand::BindConstantBuffer(0, Res.SimCB.get(), EShaderBindFlagBits::Compute);
+						RenderCommand::BindShaderResource(1, CurveAtlas.GetTexture(), EShaderBindFlagBits::Compute);
+						RenderCommand::BindShaderResource(2, bDepthReady ? DepthTexture : nullptr, EShaderBindFlagBits::Compute);
+						RenderCommand::BindSamplerState(0, ESamplerState::LinearClamp, EShaderBindFlagBits::Compute);
+						RenderCommand::BindUnorderedAccess(0, Res.ParticleBuffer.get());
+						RenderCommand::Dispatch((Batch.MaxParticles + 255u) / 256u, 1, 1);
+
+						RenderCommand::UnbindUnorderedAccess(0);
+						RenderCommand::UnbindShaderResources(1, 2, EShaderBindFlagBits::Compute);
+						RenderCommand::BindComputeShader(nullptr);
+					}
+				}))
+					return false;
+			}
+		}
+		FRenderGraphTextureRef DBufferLit{};
+		FRenderGraphTextureRef DBufferUnlit{};
+		FRenderGraphTextureRef DBufferNormal{};
+		if (bUseDepthPrepass && bHasProjectedDecals)
+		{
+			DBufferLit = Graph.CreateTexture({ Width, Height, ETextureFormat::R8G8B8A8_UNorm }, "DBufferLit");
+			DBufferUnlit = Graph.CreateTexture({ Width, Height, ETextureFormat::R8G8B8A8_UNorm }, "DBufferUnlit");
+			DBufferNormal = Graph.CreateTexture({ Width, Height, ETextureFormat::R16G16B16A16_Float }, "DBufferNormal");
+			if (!DBufferLit || !DBufferUnlit || !DBufferNormal) return false;
+
+			FRenderGraphRasterPassDesc DBufferLitPass{};
+			DBufferLitPass.Name = "DBufferDecal_Lit";
+			DBufferLitPass.ReadTextures = { Depth };
+			DBufferLitPass.ReadTextureStartSlot = 1;
+			DBufferLitPass.ColorAttachments = {
+				{ DBufferLit, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } },
+				{ DBufferNormal, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } }
+			};
+			if (!Graph.AddRasterPass(std::move(DBufferLitPass), [this, Renderer, Width, Height, &ProjectedDecals, bHasLitProjectedDecal]
+			{
+				if (bHasLitProjectedDecal && Renderer->GetProjectedDecal())
+				{
+					Renderer->GetProjectedDecal()->OnRenderDepth(View, Width, Height, ProjectedDecals, false);
+				}
+			})) return false;
+
+			FRenderGraphRasterPassDesc DBufferUnlitPass{};
+			DBufferUnlitPass.Name = "DBufferDecal_Unlit";
+			DBufferUnlitPass.ReadTextures = { Depth };
+			DBufferUnlitPass.ReadTextureStartSlot = 1;
+			DBufferUnlitPass.ColorAttachments = {
+				{ DBufferUnlit, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } }
+			};
+			if (!Graph.AddRasterPass(std::move(DBufferUnlitPass), [this, Renderer, Width, Height, &ProjectedDecals, bHasUnlitProjectedDecal]
+			{
+				if (bHasUnlitProjectedDecal && Renderer->GetProjectedDecal())
+				{
+					Renderer->GetProjectedDecal()->OnRenderDepth(View, Width, Height, ProjectedDecals, true);
+				}
+			})) return false;
+		}
+
 		FRenderGraphRasterPassDesc Forward{};
 		Forward.Name = "ForwardOpaque";
+		if (DBufferLit && DBufferUnlit && DBufferNormal)
+		{
+			Forward.ReadTextures = { DBufferLit, DBufferUnlit, DBufferNormal };
+			Forward.ReadTextureStartSlot = 14;
+		}
 		Forward.ColorAttachments = {
 			{ LightingHDR, bDrawSkybox ? ERenderGraphLoadAction::Load : ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 1.0f } }
 		};
@@ -473,50 +743,46 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			if (!LightingOptions.bDrawPrimitives) return;
 			bCorePassSucceeded = BindForwardLighting(Renderer, LightingOptions, ForwardShadowMask ? Graph.Resolve(ForwardShadowMask) : nullptr);
 			if (!bCorePassSucceeded) return;
+			Renderer->UploadViewConstants(View.ViewProjectionMatrix, View.ViewMatrix, View.ProjectionMatrix,
+				static_cast<float>(EngineTimer::GetTotalTime()));
 			if (bUseDepthPrepass)
 			{
-				for (FMeshDrawBatch& Batch : ForwardBatches)
+				for (FVisibleMeshDrawCommand& Vis : RenderData.VisibleBasePassCommands)
 				{
-					Batch.Pipeline.DepthStencilState = EDepthStencilState::PrepassReadOnly;
+					if (Vis.Command && !Vis.Command->bIsParticle)
+					{
+						Vis.bHasDepthStencilOverride = true;
+						Vis.DepthStencilOverride = EDepthStencilState::PrepassReadOnly;
+					}
 				}
 			}
-			SCOPED_GPU_STAT(GPUStats::STAT_GPU_ForwardOpaque);
-			Renderer->DrawMeshes(ForwardBatches);
-
-			// 언리얼 본 가중치 히트맵: 활성화된 스켈레탈 메시 위에 와이어프레임 오버레이를 한 번 더 그린다.
-			if (!View.bIsWireframe)
 			{
-				TArray<FMeshDrawBatch> HeatmapWireBatches;
-				for (const FMeshDrawBatch& SrcBatch : ForwardBatches)
+				SCOPED_GPU_STAT(GPUStats::STAT_GPU_ForwardOpaque);
+				Renderer->SubmitVisibleCommands(RenderData.VisibleBasePassCommands, RenderData.GPUSceneBuffer,
+					&RenderData.RenderStats.DrawCalls, &RenderData.RenderStats.ParticleDrawCalls);
+
+				// 언리얼 본 가중치 히트맵: 활성화된 스켈레탈 메시 위에 와이어프레임 오버레이를 한 번 더 그린다.
+				if (!View.bIsWireframe)
 				{
-					FMeshDrawBatch WireBatch = SrcBatch;
-					WireBatch.Items.Reset();
-					for (const FMeshDrawBatch::FItem& SrcItem : SrcBatch.Items)
+					TArray<FVisibleMeshDrawCommand> HeatmapWireCommands;
+					for (const FVisibleMeshDrawCommand& SrcVis : RenderData.VisibleBasePassCommands)
 					{
-						if (SrcItem.ObjectDataSize < sizeof(FForwardObjectConstants))
+						if (SrcVis.Command && SrcVis.Command->DebugWeightBone >= 0)
 						{
-							continue;
-						}
-						const auto* SrcConstants = reinterpret_cast<const FForwardObjectConstants*>(SrcItem.ObjectData.data());
-						if (SrcConstants->ShadowFlags.Y > 0.5f)
-						{
-							FMeshDrawBatch::FItem WireItem = SrcItem;
-							auto* WireConstants = reinterpret_cast<FForwardObjectConstants*>(WireItem.ObjectData.data());
-							WireConstants->ShadowFlags.Z = 1.0f;
-							WireBatch.Items.Add(std::move(WireItem));
+							FVisibleMeshDrawCommand WireVis = SrcVis;
+							WireVis.HeatmapWireMode = 1;
+							WireVis.bForceWireframe = true;
+							WireVis.bHasBlendStateOverride = true;
+							WireVis.BlendStateOverride = EBlendState::AlphaBlend;
+							WireVis.bHasDepthStencilOverride = true;
+							WireVis.DepthStencilOverride = EDepthStencilState::PrepassReadOnly;
+							HeatmapWireCommands.Add(std::move(WireVis));
 						}
 					}
-					if (!WireBatch.Items.IsEmpty())
+					if (!HeatmapWireCommands.IsEmpty())
 					{
-						WireBatch.bForceWireframe = true;
-						WireBatch.Pipeline.BlendState = EBlendState::AlphaBlend;
-						WireBatch.Pipeline.DepthStencilState = EDepthStencilState::PrepassReadOnly;
-						HeatmapWireBatches.Add(std::move(WireBatch));
+						Renderer->SubmitVisibleCommands(HeatmapWireCommands, RenderData.GPUSceneBuffer);
 					}
-				}
-				if (!HeatmapWireBatches.IsEmpty())
-				{
-					Renderer->DrawMeshes(HeatmapWireBatches);
 				}
 			}
 
@@ -531,12 +797,12 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			Decal.DepthAttachment = { Depth, ERenderGraphLoadAction::Load, 1.0f, 0 };
 			Decal.ReadTextures = {};
 			Decal.Viewport = {};
-			if (!Graph.AddRasterPass(std::move(Decal), [this, Renderer, bDecalCulling = Options.bDecalCulling, 
+			if (!Graph.AddRasterPass(std::move(Decal), [this, Renderer, bDecalCulling = Options.bDecalCulling,
 				bDecalNarrowCulling = Options.bDecalNarrowCulling, bDecalBVHCulling = Options.bDecalBVHCulling,
 				bDecalOBBTree = Options.bDecalOBBTree]
 				{
 					SCOPE_CYCLE_COUNTER(STAT_DecalPass);
-					if (!bCorePassSucceeded || ForwardBatches.IsEmpty()) return;
+					if (!bCorePassSucceeded || RenderData.VisibleBasePassCommands.IsEmpty()) return;
 
 					FPipelineState* DecalPipeline = FRenderResourceManager::GetPSO(EPSOType::Decal);
 					FPipelineState* DecalAdditivePipeline = FRenderResourceManager::GetPSO(EPSOType::DecalAdditive);
@@ -547,45 +813,38 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 					SCOPED_GPU_STAT(GPUStats::STAT_GPU_Decal);
 
 					FConstantBuffer* Constants = Renderer->GetDecalConstants();
-					TArray<FMeshDrawBatch> DecalBatches;
-					DecalBatches.Reserve(ForwardBatches.Num());
 					FDecalData Data{};
 
 					const FScene& Scene = World->GetScene();
 					RenderData.RenderStats.DecalCount = Scene.Decals.Num();
 
-					TArray <UDecalComponent*> SortedDecals = Scene.Decals;
+					TArray<UDecalComponent*> SortedDecals = Scene.Decals;
 					std::sort(SortedDecals.begin(), SortedDecals.end(), CompareDecalSortOrder);
 
-					TArray <FMeshDrawBatch> DecalHeaders;
-					DecalHeaders.Reserve(ForwardBatches.Num());
-					TArray <FDecalItemRef> ItemRefs;
+					TArray<FDecalItemRef> ItemRefs;
+					ItemRefs.Reserve(RenderData.VisibleBasePassCommands.Num());
 
-					TArray <uint32> TouchedBatches;
-
-					// ForwardBatches를 순회로 각 배치의 아이템 중 데칼을 받을 수 있는 아이템들 수집
-					for (uint32 BatchIndex = 0; BatchIndex < ForwardBatches.Num(); BatchIndex++)
+					for (uint32 CmdIndex = 0; CmdIndex < static_cast<uint32>(RenderData.VisibleBasePassCommands.Num()); ++CmdIndex)
 					{
-						const FMeshDrawBatch& Src = ForwardBatches[BatchIndex];
-						DecalHeaders.Add(Src);
-						FMeshDrawBatch& Header = DecalHeaders.Last();
-						Header.Items.Reset();
-						Header.Sampler = ESamplerState::LinearClamp;
-
-						// 데칼 셰이더에 이 정점 타입 변형이 없으면 받지 않는다. 헤더는 인덱스를 맞추려고 남긴다
-						if (!FRenderResourceManager::ResolveShader(DecalPipeline->Shader, Src.VertexFactory->GetType())) continue;
-
-						for (uint32 ItemIndex = 0; ItemIndex < static_cast<uint32>(Src.Items.Num()); ItemIndex++)
-						{
-							const FMeshDrawBatch::FItem& Item = Src.Items[ItemIndex];
-							if (!Item.bReceivesDecals) continue;
-							ItemRefs.Add({ Item.Proxy, BatchIndex, ItemIndex });
-						}
+						const FVisibleMeshDrawCommand& Vis = RenderData.VisibleBasePassCommands[CmdIndex];
+						const FMeshDrawCommand* Cmd = Vis.Command;
+						if (!Cmd || !Cmd->bReceiveDecal || !Cmd->Proxy || Cmd->bIsParticle || !Cmd->VertexFactory)
+							continue;
+						if (!FRenderResourceManager::ResolveShader(DecalPipeline->Shader, Cmd->VertexFactory->GetType()))
+							continue;
+						ItemRefs.Add({ Cmd->Proxy, CmdIndex });
 					}
 
 					std::sort(ItemRefs.begin(), ItemRefs.end(), CompareDecalItemRef);
 
-					for (auto Decal : SortedDecals) {
+					Renderer->UploadViewConstants(View.ViewProjectionMatrix, View.ViewMatrix, View.ProjectionMatrix,
+						static_cast<float>(EngineTimer::GetTotalTime()));
+
+					TArray<FMeshDrawCommand> DecalCmdStorage;
+					TArray<FVisibleMeshDrawCommand> DecalVisList;
+
+					for (UDecalComponent* Decal : SortedDecals)
+					{
 						if (Decal->GetDecalTexture() == nullptr) continue;
 						RenderData.RenderStats.DecalsRendered++;
 
@@ -597,93 +856,119 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 						RenderCommand::UpdateBufferData(Constants, &Data, sizeof(Data));
 						RenderCommand::BindConstantBuffer(1, Constants, EShaderBindFlagBits::Pixel);
 
-						DecalBatches.Reset();
-						TouchedBatches.Reset();
-						uint32 ReceiverItems = 0;
+						DecalCmdStorage.Reset();
+						DecalVisList.Reset();
 						const FAABB DecalAABB = Decal->GetWorldAABB();
 						const FOBB DecalOBB = Decal->GetWorldOBB();
-
 						const FBox DecalBox{ DecalAABB.Center - DecalAABB.Extent, DecalAABB.Center + DecalAABB.Extent };
+						const FPipelineState& BasePSO = Decal->IsAdditive() ? *DecalAdditivePipeline : *DecalPipeline;
 
-						// 아이템 하나 검사 
-						const auto ConsiderItem = [&](const FDecalItemRef& Ref)
+						std::function<void(const FDecalItemRef&)> ConsiderItem = [&](const FDecalItemRef& Ref)
+						{
+							const FVisibleMeshDrawCommand& SrcVis = RenderData.VisibleBasePassCommands[Ref.CommandIndex];
+							const FMeshDrawCommand* SrcCmd = SrcVis.Command;
+							const FPrimitiveSceneProxy* Proxy = Ref.Proxy;
+							const FAABB& ItemBounds = Proxy->GetBounds();
+							RenderData.RenderStats.DecalItemsTested++;
+
+							if (!bDecalBVHCulling && bDecalCulling)
 							{
-								const FMeshDrawBatch::FItem& Item = ForwardBatches[Ref.Batch].Items[Ref.Item];
-								RenderData.RenderStats.DecalItemsTested++;
+								RenderData.RenderStats.DecalBroadTests++;
+								if (!IntersectAABB(DecalAABB, ItemBounds)) return;
+							}
 
-								if (!bDecalBVHCulling && bDecalCulling) {
-									RenderData.RenderStats.DecalBroadTests++;
-									if (!IntersectAABB(DecalAABB, Item.Bounds)) return;
+							RenderData.RenderStats.DecalNarrowTested++;
+							if (bDecalNarrowCulling && !IntersectOBBAABB(DecalOBB, ItemBounds)) return;
+
+							if (bDecalNarrowCulling && bDecalOBBTree && Proxy->GetMesh())
+							{
+								const FStaticMeshData& MeshData = Proxy->GetMesh()->GetMeshData();
+								const FMatrix LocalToWorld = Proxy->GetLocalToWorld();
+								if (MeshData.OBBTree)
+								{
+									RenderData.RenderStats.DecalOBBTreeTested++;
+									if (!MeshData.OBBTree->Intersects(DecalOBB, LocalToWorld)) return;
 								}
+							}
 
-								RenderData.RenderStats.DecalNarrowTested++;
-								if (bDecalNarrowCulling && !IntersectOBBAABB(DecalOBB, Item.Bounds)) return;
+							FShaderProgram* ResolvedShader = FRenderResourceManager::ResolveShader(BasePSO.Shader, SrcCmd->VertexFactory->GetType());
+							if (!ResolvedShader) return;
 
-								if (bDecalNarrowCulling && bDecalOBBTree && Item.Proxy && Item.Proxy->GetMesh()) {
-									const FStaticMeshData& MeshData = Item.Proxy->GetMesh()->GetMeshData();
-									FMatrix LocalToWorld = Item.Proxy->GetLocalToWorld();
-									if (MeshData.OBBTree) {
-										RenderData.RenderStats.DecalOBBTreeTested++;
-										if (!MeshData.OBBTree->Intersects(DecalOBB, LocalToWorld)) return;
-									}
-									
-								}
+							FMeshDrawCommand& Cmd = DecalCmdStorage.AddDefaulted_GetRef();
+							Cmd.Pipeline = BasePSO;
+							Cmd.Pipeline.Shader = ResolvedShader;
+							Cmd.VertexFactory = SrcCmd->VertexFactory;
+							Cmd.FirstIndex = SrcCmd->FirstIndex;
+							Cmd.IndexCount = SrcCmd->IndexCount;
+							Cmd.BaseVertexLocation = SrcCmd->BaseVertexLocation;
+							Cmd.InstanceCount = SrcCmd->InstanceCount;
+							Cmd.StartInstanceLocation = SrcCmd->StartInstanceLocation;
+							Cmd.Sampler = ESamplerState::LinearClamp;
+							Cmd.SamplerStages = EShaderBindFlagBits::Pixel;
+							Cmd.ShaderResources.Add({ 0u, EShaderBindFlagBits::Pixel, Decal->GetDecalTexture(), nullptr });
+							Cmd.PrimitiveId = SrcVis.PrimitiveId;
+							Cmd.bUsesGPUScene = SrcCmd->bUsesGPUScene;
+							Cmd.bSkeletalMesh = SrcCmd->bSkeletalMesh;
+							Cmd.ObjectKey = SrcCmd->ObjectKey;
+							Cmd.Proxy = SrcCmd->Proxy;
+							Cmd.StateBucketId = ComputeMeshCommandStateBucket(Cmd);
+							Cmd.SortKey = MakeOpaqueSortKey(Cmd.StateBucketId, 0, 0, 0);
+						};
 
-								FMeshDrawBatch& Header = DecalHeaders[Ref.Batch];
-								if (Header.Items.IsEmpty()) TouchedBatches.Add(Ref.Batch);
-								Header.Items.Add(Item);
-							};
-
-						// BVH 질의 후 index 하나씩 돌며 검사
 						{
 							SCOPE_CYCLE_COUNTER(STAT_DecalGatherItems);
-							if (bDecalBVHCulling) {
+							if (bDecalBVHCulling)
+							{
 								Scene.BVH.Query(
-									[&](const FBox& Bounds) {
+									[&](const FBox& Bounds)
+									{
 										RenderData.RenderStats.DecalBroadTests++;
 										return UWorld::AreAABBsOverlapping(DecalBox, Bounds);
 									},
-									[&](FPrimitiveSceneProxy* Proxy) { 
-										// BVH에서 얻은 Proxy를 ItemRefs에서 찾아서 ConsiderItem 호출
-										auto it = std::lower_bound(ItemRefs.begin(), ItemRefs.end(), Proxy, CompareDecalItemRefProxy);
-										while (it != ItemRefs.end() && it->Proxy == Proxy) {
+									[&](FPrimitiveSceneProxy* Proxy)
+									{
+										FDecalItemRef* Begin = ItemRefs.GetData();
+										FDecalItemRef* End = Begin + ItemRefs.Num();
+										FDecalItemRef* it = std::lower_bound(Begin, End, Proxy, CompareDecalItemRefProxy);
+										while (it != End && it->Proxy == Proxy)
+										{
 											ConsiderItem(*it);
 											++it;
 										}
 									});
 							}
-							else {
-								for (const FDecalItemRef& Ref : ItemRefs) {
+							else
+							{
+								for (const FDecalItemRef& Ref : ItemRefs)
+								{
 									ConsiderItem(Ref);
 								}
 							}
 						}
 
-						if (TouchedBatches.IsEmpty()) continue;
-						std::sort(TouchedBatches.begin(), TouchedBatches.end());
+						if (DecalCmdStorage.IsEmpty()) continue;
 
-						for (uint32 BatchIndex : TouchedBatches) {
-							FMeshDrawBatch& Header = DecalHeaders[BatchIndex];
-							Header.Pipeline = Decal->IsAdditive() ? *DecalAdditivePipeline : *DecalPipeline;
-							Header.Pipeline.Shader = FRenderResourceManager::ResolveShader(Header.Pipeline.Shader, Header.VertexFactory->GetType());
-							Header.Textures = { { Decal->GetDecalTexture(), EShaderBindFlagBits::Pixel } };
-							ReceiverItems += Header.Items.Num();
-							DecalBatches.Add(std::move(Header));
+						DecalVisList.Reserve(DecalCmdStorage.Num());
+						for (const FMeshDrawCommand& Cmd : DecalCmdStorage)
+						{
+							FVisibleMeshDrawCommand Vis{};
+							Vis.Command = &Cmd;
+							Vis.PrimitiveId = Cmd.PrimitiveId;
+							Vis.StateBucketId = Cmd.StateBucketId;
+							Vis.SortKey = Cmd.SortKey;
+							DecalVisList.Add(Vis);
 						}
+
+						std::stable_sort(DecalVisList.begin(), DecalVisList.end(),
+							[](const FVisibleMeshDrawCommand& A, const FVisibleMeshDrawCommand& B) { return A.SortKey < B.SortKey; });
 
 						{
 							SCOPE_CYCLE_COUNTER(STAT_DecalDraw);
-							Renderer->DrawMeshes(DecalBatches);
+							Renderer->SubmitVisibleCommands(DecalVisList, RenderData.GPUSceneBuffer);
 						}
-						RenderData.RenderStats.DecalDrawCalls += ReceiverItems;
-
-						for (uint32 Index = 0; Index < static_cast<uint32>(TouchedBatches.Num()); ++Index) {
-							FMeshDrawBatch& Header = DecalHeaders[TouchedBatches[Index]];
-							Header = std::move(DecalBatches[Index]);
-							Header.Items.Reset();
-						}
-						
+						RenderData.RenderStats.DecalDrawCalls += static_cast<uint32>(DecalVisList.Num());
 					}
+					RenderCommand::BindConstantBuffer(1, nullptr, EShaderBindFlagBits::Pixel);
 				})) return false;
 		}
 	}
@@ -891,40 +1176,44 @@ bool FSceneRenderer::Render(FRenderer* Renderer, FSceneViewTargets& Targets, con
 // 반투명 렌더링
 void FSceneRenderer::RenderTranslucent(FRenderer* Renderer, FConstantBuffer* FogConstants)
 {
-	if (!Renderer)
+	if (!Renderer || !World)
 	{
 		return;
 	}
 
 	RenderCommand::BindConstantBuffer(3, FogConstants, EShaderBindFlagBits::Pixel);
-	PrepareDrawData(Renderer, RenderData);
-	TArray<FMeshDrawBatch> Batches;
-	FMeshPassProcessor Processor;
-	if (Processor.Build(View, RenderData.RenderQueue, &RenderData,
-		EMeshPassType::Translucent, Batches))
-	{
-		Renderer->UploadViewMatrix(View.ViewProjectionMatrix);
-		Renderer->DrawMeshes(Batches);
-	}
+	BuildVisiblePassCommands(World->GetScene(), EMeshPass::Translucency, FSceneRenderOptions{}, View.bIsWireframe, RenderData.VisibleTranslucencyCommands);
+	Renderer->UploadViewConstants(View.ViewProjectionMatrix, View.ViewMatrix, View.ProjectionMatrix,
+		static_cast<float>(EngineTimer::GetTotalTime()));
+	Renderer->SubmitVisibleCommands(RenderData.VisibleTranslucencyCommands, RenderData.GPUSceneBuffer,
+		&RenderData.RenderStats.DrawCalls, &RenderData.RenderStats.ParticleDrawCalls);
 	RenderCommand::BindConstantBuffer(3, nullptr, EShaderBindFlagBits::Pixel);
 }
 
-void FSceneRenderer::GatherRenderPackets(FScene& Scene, FSceneRenderData& Data,
-	const FViewContext& View, const FFrustumPlanes* Frustum, FRenderer* Renderer) //여기서 꼭 renderer를 매개변수로 받아야 할까?
+void FSceneRenderer::GatherViewVisibilityAndDynamicElements(FScene& Scene, FSceneRenderData& Data,
+	const FViewContext& View, const FSceneRenderOptions& Options,
+	const FFrustumPlanes* Frustum, FRenderer* Renderer)
 {
 	Data.ResetFrame();
-	FRenderQueue& RenderQueue = Data.RenderQueue;
+	FMeshElementCollector& Collector = Data.Collector;
 	FRenderStats& RenderStats = Data.RenderStats;
-	auto& VisibleProxies = Data.VisibleProxies;
-	auto& GatherChunks = Data.GatherChunks;
-	using FGatherChunk = FSceneRenderData::FGatherChunk;
+	TArray<FPrimitiveSceneProxy*>& VisibleProxies = Data.VisibleProxies;
+
+	const uint32 NumPrimitives = Scene.GetNumPrimitives();
+	Data.PrimitiveVisibilityMap.Init(uint8(0), NumPrimitives);
+	Data.PrimitiveOccludedMap.Init(uint8(0), NumPrimitives);
+	Data.PrimitiveSelectedLODs.Init(uint8(0), NumPrimitives);
 
 	{
 		SCOPE_CYCLE_COUNTER(STAT_FrustumCull);
-		// 표시 상태는 프록시 캐시로 판정해 오클루전과 드로우 수집 전에 제외한다.
-		const auto Visit = [&](FPrimitiveSceneProxy* Proxy)
+		// 표시 상태는 프록시 캐시로 판정해 드로우 수집 전에 제외한다.
+		std::function<void(FPrimitiveSceneProxy*)> Visit = [&](FPrimitiveSceneProxy* Proxy)
 		{
-			if (Proxy->IsShown(View.bGameView)) VisibleProxies.Add(Proxy);
+			if (!Proxy->IsShown(View.bGameView))
+				return;
+			if (Proxy->IsSkinned() && !View.bShowSkeletalMesh)
+				return;
+			VisibleProxies.Add(Proxy);
 		};
 
 		if (Frustum)
@@ -943,174 +1232,135 @@ void FSceneRenderer::GatherRenderPackets(FScene& Scene, FSceneRenderData& Data,
 		}
 	}
 
-	RenderStats.TotalPrimitives = Scene.PrimitiveSceneProxies.Num();
+	RenderStats.TotalPrimitives = NumPrimitives;
+
+	const uint8* OccludedMask = nullptr;
+	if (Renderer && Renderer->GetGPUOcclusion().GetSettings().bEnabled)
+	{
+		FGPUOcclusion& Occlusion = Renderer->GetGPUOcclusion();
+		if (Occlusion.Run(VisibleProxies.GetData(), static_cast<uint32>(VisibleProxies.Num()), View))
+		{
+			const std::vector<uint8>& Occluded = Occlusion.GetOccluded();
+			if (Occlusion.GetSettings().bCull)
+			{
+				uint32 Kept = 0;
+				for (uint32 i = 0; i < static_cast<uint32>(VisibleProxies.Num()); ++i)
+				{
+					if (!Occluded[i])
+						VisibleProxies[Kept++] = VisibleProxies[i];
+				}
+				VisibleProxies.SetNum(Kept);
+			}
+			else
+			{
+				OccludedMask = Occluded.data();
+			}
+		}
+	}
 
 	RenderStats.VisiblePrimitives = VisibleProxies.Num();
-
-	constexpr uint32 ExtraSlots = 4096;
-	const uint32 VisibleCount = VisibleProxies.Num();
-	const uint32 MaxSlots = VisibleCount + ExtraSlots;
-	if (Renderer) Data.ObjectConstants.SetNum(MaxSlots);
-	const bool bPrepareObjectSlots = Renderer != nullptr;
-	uint32 NextExtraSlot = VisibleCount;
-
-	// 조각 수 = 스레드 수 × 4. 잘게 나눠야 먼저 끝난 스레드가 남은 조각을 가져가서 부하가 고르게 된다.
-	const uint32 NumThreads = Tasks::FTaskScheduler::Get().GetNumWorkers() + 1;
-	const uint32 ChunkCount = FMath::Clamp(VisibleCount, 1u, NumThreads * 4);
-
-	if (GatherChunks.Num() < ChunkCount)
-		GatherChunks.SetNum(ChunkCount);     // 늘릴 때만. 줄이지 않아야 배열 용량이 계속 재사용된다.
-
-	// Renderer가 있으면 불투명 스태틱 메시는 패킷 대신 조각별 묶음에 작은 항목으로 넣는다.
-	// 동일 바인딩의 개별 드로우를 묶어 패킷 복사와 항목별 정렬을 줄인다.
-	const bool bStaticGroups = Renderer != nullptr;
 
 	{
 		SCOPE_CYCLE_COUNTER(STAT_GatherElements);
 
-		Tasks::ParallelForChunks(VisibleCount, ChunkCount, [&](uint32 Begin, uint32 End, uint32 ChunkIndex)
+		Data.LODInputs.Reset();
+		Data.LODInputs.Reserve(VisibleProxies.Num());
+		for (const FPrimitiveSceneProxy* Proxy : VisibleProxies)
+		{
+			Data.LODInputs.Add({ Proxy ? Proxy->GetLODSphere() : FLODSphere{}, Proxy ? Proxy->GetRenderState() : nullptr });
+		}
+		SelectLODs(Data.LODInputs, View, Data.SelectedLODs);
+
+		for (uint32 VisibleIndex = 0; VisibleIndex < static_cast<uint32>(VisibleProxies.Num()); ++VisibleIndex)
+		{
+			FPrimitiveSceneProxy* Proxy = VisibleProxies[VisibleIndex];
+			if (!Proxy || !Proxy->IsVisible())
+				continue;
+			if (Proxy->IsSkinned() && !View.bShowSkeletalMesh)
+				continue;
+
+			const uint8 LOD = (VisibleIndex < static_cast<uint32>(Data.SelectedLODs.Num()))
+				? Data.SelectedLODs[VisibleIndex] : 0;
+
+			if (Proxy->GetPackedIndex() >= 0 && static_cast<uint32>(Proxy->GetPackedIndex()) < NumPrimitives)
 			{
-				FGatherChunk& Out = GatherChunks[ChunkIndex];      // 이 조각 전용. 다른 스레드는 절대 안 건드림
-				// (머티리얼, 메시) 묶음 찾기. 조합이 몇 개뿐이라 선형 탐색이면 충분하고, 바로 전 묶음을 먼저 본다.
-				const auto FindGroup = [&Out](UMaterial* Material, UStaticMesh* Mesh) -> FStaticDrawGroup&
-					{
-						if (Out.LastGroup < Out.Groups.size())
-						{
-							FStaticDrawGroup& Last = Out.Groups[Out.LastGroup];
-							if (Last.Material == Material && Last.Mesh == Mesh)
-								return Last;
-						}
-						for (uint32 g = 0; g < Out.Groups.size(); ++g)
-						{
-							FStaticDrawGroup& Group = Out.Groups[g];
-							if (Group.Material == Material && Group.Mesh == Mesh)
-							{
-								Out.LastGroup = g;
-								return Group;
-							}
-						}
-						Out.LastGroup = static_cast<uint32>(Out.Groups.size());
-						FStaticDrawGroup& Group = Out.Groups.emplace_back();
-						Group.Material = Material;
-						Group.Mesh = Mesh;
-						return Group;
-					};
-
-				for (uint32 VisibleIndex = Begin; VisibleIndex < End; ++VisibleIndex)
+				const uint32 PrimIdx = static_cast<uint32>(Proxy->GetPackedIndex());
+				Data.PrimitiveVisibilityMap[PrimIdx] = 1;
+				Data.PrimitiveSelectedLODs[PrimIdx] = LOD;
+				if (OccludedMask && OccludedMask[VisibleIndex])
 				{
-					FPrimitiveSceneProxy* Proxy = VisibleProxies[VisibleIndex];   // 읽기만
-					if (!Proxy->IsVisible()) continue;
+					Data.PrimitiveOccludedMap[PrimIdx] = 1;
+				}
+			}
 
-					UStaticMesh* Mesh = Proxy->GetMesh();
-					if (!Mesh)
+			if (Proxy->GetRenderState() && Proxy->GetLODCount() > 0)
+			{
+				const uint32 ClampedLOD = std::min(static_cast<uint32>(LOD), Proxy->GetLODCount() - 1u);
+				if (ClampedLOD < 4)
+				{
+					++RenderStats.LODCounts[ClampedLOD];
+					const FCachedMeshLOD& CachedLOD = Proxy->GetLOD(ClampedLOD);
+					for (uint32 s = 0; s < CachedLOD.NumSections; ++s)
 					{
-						Out.SlowPathIndices.Add(VisibleIndex);     // 컴포넌트를 건드리는 경로는 메인이 나중에
-						continue;
-					}
-
-					const FMeshRenderState& MeshState = *Proxy->GetRenderState();
-
-					uint32 Slot = InvalidObjectSlot;
-					if (bPrepareObjectSlots)
-					{
-						// 칸 VisibleIndex는 이 반복만 쓴다 → 스레드끼리 겹치지 않음
-						const FPerObjectConstants Constants =
-							MakePerObjectConstants(Proxy->GetLocalToWorld(), Proxy->bReceiveShadow);
-
-						Data.ObjectConstants[VisibleIndex] = Constants;
-
-						Slot = VisibleIndex;
-					}
-
-					for (uint32 i = 0; i < MeshState.Sections.Num(); ++i)
-					{
-						const FCachedMeshSection& Section = Proxy->GetSection(i);
-						Out.Triangles += Section.IndexCount / 3;
-
-						if (bStaticGroups && Section.Material && Section.Material->PSOType == EPSOType::StaticMesh_Opaque)
-						{
-							FStaticDrawGroup& Group = FindGroup(Section.Material, Mesh);
-							Group.Items.push_back({ Proxy, Slot, Section.StartIndex, Section.IndexCount });
-							++Out.StaticDrawCount;
-							continue;
-						}
-
-						FRenderPacket& Packet = Out.Packets.AddDefaulted_GetRef();   // 조각 전용 배열에 추가
-						Packet.Proxy = Proxy;
-						Packet.Mesh = Mesh;
-						Packet.Material = Section.Material;
-						Packet.StartIndex = Section.StartIndex;
-						Packet.IndexCount = Section.IndexCount;
-						Packet.Slot = Slot;
+						const uint64 Tris = Proxy->GetSection(CachedLOD.FirstSection + s).IndexCount / 3;
+						RenderStats.LODTriangles[ClampedLOD] += Tris;
+						RenderStats.Triangles += Tris;
 					}
 				}
-			});
-
-	// 이 뷰의 스태틱 드로우 수를 세고, 실제 렌더링할 때에만 해당 묶음을 바인딩한다.
-		uint32 StaticDraws = 0;
-		if (Renderer)
-		{
-			for (uint32 c = 0; c < ChunkCount; ++c)
+			}
+			else if (const FMeshRenderState* State = Proxy->GetRenderState())
 			{
-				StaticDraws += GatherChunks[c].StaticDrawCount;
+				for (uint32 s = 0; s < static_cast<uint32>(State->Sections.Num()); ++s)
+				{
+					RenderStats.Triangles += State->Sections[s].IndexCount / 3;
+				}
+			}
+
+			if (Proxy->HasDynamicRelevance())
+			{
+				Proxy->GetDynamicMeshElements(View, Collector, LOD);
 			}
 		}
 
-		uint32 TotalPackets = 0;
-		for (uint32 c = 0; c < ChunkCount; ++c)
-			TotalPackets += GatherChunks[c].Packets.Num();
-
-		RenderQueue.Reserve(TotalPackets + 256);             // 느린 경로 몫 약간 여유
-		for (uint32 c = 0; c < ChunkCount; ++c)
-			if (GatherChunks[c].Packets.Num() > 0)
-				RenderQueue.Append(GatherChunks[c].Packets);  // 조각 순서대로 이어 붙이기
-
-		for (uint32 c = 0; c < ChunkCount; ++c)
+		TArray<FMeshBatch>& DynamicBatches = Collector.GetMeshBatchesMutable();
+		for (FMeshBatch& Batch : DynamicBatches)
 		{
-			for (uint32 VisibleIndex : GatherChunks[c].SlowPathIndices)
+			if (Batch.bIsParticle || !Batch.bUsesGPUScene)
+				continue;
+
+			for (FMeshBatchElement& Element : Batch.Elements)
 			{
-				FPrimitiveSceneProxy* Proxy = VisibleProxies[VisibleIndex];
-				UPrimitiveComponent* Primitive = Proxy->GetComponent();
-				if (!Primitive || !Primitive->IsVisible())
-					continue;
-
-				if (Proxy->IsSkinned() && !View.bShowSkeletalMesh)
-					continue;
-
-				const uint32 FirstNew = RenderQueue.Num();
-
-				Proxy->GetDynamicMeshElements(RenderQueue, View);
-
-				// continue 없이 항상 여기까지 와서 새 패킷에 여유 칸을 배정한다.
-				for (uint32 p = FirstNew; p < RenderQueue.Num(); ++p)
+				if (Element.WorldMatrix == nullptr && Element.Proxy && !Element.Proxy->IsSkinned() && Element.Proxy->GetPackedIndex() >= 0)
 				{
-					if (!bPrepareObjectSlots || NextExtraSlot >= MaxSlots) break;
-					FRenderPacket& Packet = RenderQueue[p];
-					const FMatrix& Model = Packet.Proxy ? Packet.Proxy->GetLocalToWorld() : Packet.Model ? *Packet.Model : FMatrix::Identity;
-					Data.ObjectConstants[NextExtraSlot] = MakePerObjectConstants(Model);
-					Packet.Slot = NextExtraSlot++;
+					Element.PrimitiveId = static_cast<uint32>(Element.Proxy->GetPackedIndex());
+				}
+				else
+				{
+					const FMatrix& Model = Element.WorldMatrix ? *Element.WorldMatrix
+						: (Element.Proxy ? Element.Proxy->GetLocalToWorld() : FMatrix::Identity);
+					const float BoneOffset = Element.DebugWeightBone >= 0 ? static_cast<float>(Element.DebugWeightBone + 1) : 0.0f;
+					const uint32 DynIdx = NumPrimitives + static_cast<uint32>(Data.DynamicPrimitiveData.Num());
+					Data.DynamicPrimitiveData.Add(MakePrimitiveSceneData(Model, Element.bReceiveShadow, Element.bReceiveDecal, BoneOffset));
+					Element.PrimitiveId = DynIdx;
 				}
 			}
 		}
 
-		for (uint32 c = 0; c < ChunkCount; ++c)
-			RenderStats.Triangles += GatherChunks[c].Triangles;
+		Collector.CommitGpuResources();
+		Data.GPUSceneBuffer = Scene.SyncGPUScene(Data.DynamicPrimitiveData);
 
-		if (bPrepareObjectSlots) Data.ObjectConstants.SetNum(NextExtraSlot);
-		RenderStats.DrawCalls = RenderQueue.Num() + StaticDraws;
-	}
-}
+		const FBasePassMeshProcessor BaseProcessor;
+		const FDepthPassMeshProcessor DepthProcessor;
+		const FTranslucencyPassMeshProcessor TranslucencyProcessor;
+		const FShadowDepthMeshProcessor ShadowProcessor;
 
-
-void FSceneRenderer::PrepareDrawData(FRenderer* Renderer, const FSceneRenderData& Data)
-{
-	if (!Renderer) return;
-	if (uint8* Destination = Renderer->BeginObjectConstants(static_cast<uint32>(Data.ObjectConstants.Num())))
-	{
-		for (int32 Index = 0; Index < Data.ObjectConstants.Num(); ++Index)
-			std::memcpy(Destination + static_cast<size_t>(Index) * ObjectSlotBytes,
-				&Data.ObjectConstants[Index], sizeof(FPerObjectConstants));
-		Renderer->EndObjectConstants();
+		for (const FMeshBatch& Batch : Collector.GetMeshBatches())
+		{
+			BaseProcessor.AddMeshBatch(Batch, Options, &Collector, Data.DynamicPassCommands[static_cast<size_t>(EMeshPass::BasePass)]);
+			DepthProcessor.AddMeshBatch(Batch, Options, &Collector, Data.DynamicPassCommands[static_cast<size_t>(EMeshPass::DepthPass)]);
+			TranslucencyProcessor.AddMeshBatch(Batch, Options, &Collector, Data.DynamicPassCommands[static_cast<size_t>(EMeshPass::Translucency)]);
+			ShadowProcessor.AddMeshBatch(Batch, Options, &Collector, Data.DynamicPassCommands[static_cast<size_t>(EMeshPass::ShadowDepth)]);
+		}
 	}
 }
 

@@ -50,6 +50,7 @@ struct FAnimNode_StateMachine : public FAnimNode_Base
     void  SetInitialState(int32 StateIndex);
     FName GetCurrentStateName() const;     // ImGui 디버그용
     int32 GetCurrentStateIndex() const;
+	bool IsStateActiveOrBlending(FName StateName) const;
 
     void Update(const FAnimationUpdateContext& Context) override;
     void Evaluate(FPoseContext& Output) override;

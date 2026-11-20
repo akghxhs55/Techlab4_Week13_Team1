@@ -25,3 +25,26 @@ ADecalActor::ADecalActor() {
 		BillboardComponent->SetMaterial(0, IconMat);
 	}
 }
+
+void ADecalActor::SetTemporaryLifetime(float InSeconds)
+{
+	if (InSeconds <= 0.0f)
+	{
+		Destroy();
+		return;
+	}
+	bUseTemporaryLifetime = true;
+	RemainingLifetime = InSeconds;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.SetTickFunctionEnable(true);
+}
+
+void ADecalActor::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	if (!bUseTemporaryLifetime || DeltaTime <= 0.0f)
+		return;
+	RemainingLifetime -= DeltaTime;
+	if (RemainingLifetime <= 0.0f)
+		Destroy();
+}

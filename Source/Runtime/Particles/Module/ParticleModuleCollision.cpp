@@ -196,3 +196,57 @@ void UParticleModuleCollision::Update(FParticleEmitterInstance& Owner, int32 Off
 			}
 		});
 }
+
+void UParticleModuleCollision::TickSegmentCollision(FParticleEmitterInstance& Owner, int32 Offset,
+	const FVector& WorldStart, const FVector& WorldEnd, FBaseParticle& Particle,
+	bool& bOutHit, FVector& OutHitPoint, FVector& OutHitNormal)
+{
+	bOutHit = false;
+	if (!Owner.Component)
+		return;
+	UWorld* World = Owner.Component->GetWorld();
+	if (!World)
+		return;
+
+	const FVector Segment = WorldEnd - WorldStart;
+	const float Length = Segment.Length();
+	if (Length <= 1.0e-4f)
+		return;
+
+	const float Radius = (std::max)(Particle.Size.X, Particle.Size.Y) * RadiusScale;
+	const FVector Ext(Radius, Radius, Radius);
+	FBox SweepBounds(WorldStart - Ext, WorldStart + Ext);
+	SweepBounds.Expand(FBox(WorldEnd - Ext, WorldEnd + Ext));
+
+	CandidateCache.Reset();
+	AActor* IgnoreActor = bIgnoreSourceActor ? Owner.Component->GetOwner() : nullptr;
+	World->GatherSweepCandidates(SweepBounds, IgnoreActor, CandidateCache);
+	if (CandidateCache.IsEmpty())
+		return;
+
+	const FRay Ray{ WorldStart, Segment / Length };
+	FHitResult Hit;
+	if (!UWorld::SweepAgainstCandidates(CandidateCache, Ray, Length, Radius, Hit) || Hit.bStartPenetrating)
+		return;
+
+	const float T = (std::clamp)(Hit.Time, 0.0f, 1.0f);
+	bOutHit = true;
+	OutHitPoint = WorldStart + Segment * T + Hit.Normal * SurfaceOffset;
+	OutHitNormal = Hit.Normal;
+
+	if (Offset > 0)
+	{
+		FParticleCollisionPayload& Payload = ParticleHelper::GetPayload<FParticleCollisionPayload>(Particle, Offset);
+		if (Payload.bInitialized && (Payload.UsedCollisions > 0 || MaxCollisions <= 0))
+		{
+			const bool bFirstHit = (Particle.Flags & STATE_Particle_CollisionHasOccurred) == 0;
+			const bool bLastHit = MaxCollisions > 0 && Payload.UsedCollisions == 1;
+			Owner.ReportCollisionEvent(Particle, OutHitPoint, Hit.Normal, T, Hit.HitComponent, bFirstHit, bLastHit);
+			Particle.Flags |= STATE_Particle_CollisionHasOccurred;
+			if (MaxCollisions > 0)
+			{
+				--Payload.UsedCollisions;
+			}
+		}
+	}
+}

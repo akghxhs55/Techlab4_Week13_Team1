@@ -14,6 +14,8 @@
 #include "UI/TextBlock.h"
 #include "Asset/AssetManager.h"
 #include "Audio/SoundWave.h"
+#include "GameFramework/PlayerController.h"
+#include "Input/MouseCapture.h"
 
 namespace
 {
@@ -79,6 +81,18 @@ namespace LuaBindingsDetail
 		// 실제 전환은 다음 Tick 시작. 호출한 뒤의 코드도 이번 프레임에는 그대로 실행된다.
 		Lua.set_function("OpenLevel", [](sol::this_environment ThisEnv, const FString& LevelName) {
 			UGameplayStatics::OpenLevel(WorldFromEnv(ThisEnv, "OpenLevel"), LevelName);
+			});
+		// 커서 잠금 모드
+		Lua.new_enum("CursorMode", "Free", ECursorMode::Free, "Locked", ECursorMode::Locked);
+		Lua.set_function("SetCursorMode", [](sol::this_environment ThisEnv, ECursorMode Mode) {
+			if (UWorld* World = WorldFromEnv(ThisEnv, "SetCursorMode"))
+				if (APlayerController* PlayerController = World->GetPlayerController())
+					PlayerController->SetCursorMode(Mode);
+			});
+		Lua.set_function("GetCursorMode", [](sol::this_environment ThisEnv) {
+			UWorld* World = WorldFromEnv(ThisEnv, "GetCursorMode");
+			APlayerController* PlayerController = World ? World->GetPlayerController() : nullptr;
+			return PlayerController ? PlayerController->GetCursorMode() : ECursorMode::Free;
 			});
 		Lua.set_function("SetGameValue", [](sol::this_environment ThisEnv, const FString& Key, double Value) {
 			if (UGameInstance* GameInstance = UGameplayStatics::GetGameInstance(WorldFromEnv(ThisEnv, "SetGameValue")))
@@ -191,6 +205,7 @@ namespace FLuaBindings
 		RegisterAudio(Lua);
 		RegisterCameraAction(Lua);
 		RegisterAnimation(Lua);
+		RegisterZombie(Lua);
 	}
 
 	void FlushPendingDestroy(UWorld* World)

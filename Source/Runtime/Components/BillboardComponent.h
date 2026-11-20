@@ -37,19 +37,19 @@ public:
 	bool LineTraceComponentForView(const FRay& WorldRay, FHitResult& OutHit, const FMatrix& BillboardWorldMatrix);
 
 	virtual int32 GetNumMaterials() const override { return 1; }
-	virtual UMaterial* GetMaterial(int32 SlotIndex) const override { return SlotIndex == 0 ? Material : nullptr; }
-	virtual void SetMaterial(int32 SlotIndex, UMaterial* InMaterial) override { if (SlotIndex == 0) Material = InMaterial; }
+	virtual UMaterialInterface* GetMaterial(int32 SlotIndex) const override { return SlotIndex == 0 ? Material : nullptr; }
+	virtual void SetMaterial(int32 SlotIndex, UMaterialInterface* InMaterial) override { if (SlotIndex == 0) Material = InMaterial; }
 
 	void SetTintSource(const ULightComponentBase* InSource) { TintSource = InSource; }
 
 	virtual const FStaticMeshData* GetMeshData() const override { return QuadMesh ? &QuadMesh->GetMeshData() : nullptr; }
 	virtual FBox CalcLocalBounds() const override;
 
+	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
+	UStaticMesh* GetQuadMesh() const { return QuadMesh; }
+	const FBillboardConstants& GetCurrentIconParams() const;
+
 	void GetWorldTransformedMatrix(FMatrix* OutWorldMatrix) const;
-	// 뷰 컨텍스트 기준 월드 행렬로 Billboard 렌더 패킷을 제출한다.
-	virtual void SubmitToRenderQueue(FRenderQueue& RenderQueue, const FViewContext& ViewContext) override;
-	// View별 ViewportLayout가 계산한 Billboard 행렬을 사용해 같은 렌더 패킷 형식으로 제출한다.
-	void SubmitToRenderQueue(FRenderQueue& RenderQueue, const FMatrix& BillboardWorldMatrix);
 
 	using Super::Serialize;
 	virtual void Serialize(FStructuredArchive::FRecord Record) override;
@@ -57,11 +57,12 @@ public:
 	bool IsEditorIcon() const { return bEditorIcon; }
 	void SetEditorIcon(bool IsEditorIcon) { bEditorIcon = IsEditorIcon; }
 	void SetIconSize(float S) { IconSize = S; }
+	float GetIconSize() const { return IconSize; }
 
 protected:
-	UMaterial* Material = nullptr;
+	UMaterialInterface* Material = nullptr;
 	UStaticMesh* QuadMesh = nullptr;
-	FBillboardConstants IconParams{ 0.0f, 1.0f, 1.0f, 1.0f };	// CurrentFrame, RowSize, ColSize, Alpha
+	mutable FBillboardConstants IconParams{ 0.0f, 1.0f, 1.0f, 1.0f };	// CurrentFrame, RowSize, ColSize, Alpha
 private:
 	const ULightComponentBase* TintSource = nullptr;
 	bool bEditorIcon = false;

@@ -4,6 +4,37 @@
 #include "Engine/Scene.h"
 #include "Engine/World.h"
 #include "Render/LineBatcher.h"
+#include "Render/MaterialRenderProxy.h"
+#include "Render/NormalMapUtils.h"
+#include <algorithm>
+#include <cmath>
+
+namespace
+{
+	bool IsSRGBDecalView(FTexture2D* Texture)
+	{
+		if (!Texture || !Texture->GetSRV())
+			return false;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC Desc{};
+		Texture->GetSRV()->GetDesc(&Desc);
+
+		switch (Desc.Format)
+		{
+		case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+		case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+		case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+		case DXGI_FORMAT_BC1_UNORM_SRGB:
+		case DXGI_FORMAT_BC2_UNORM_SRGB:
+		case DXGI_FORMAT_BC3_UNORM_SRGB:
+		case DXGI_FORMAT_BC7_UNORM_SRGB:
+			return true;
+
+		default:
+			return false;
+		}
+	}
+}
 
 void UDecalComponent::TickComponent(float DeltaTime)
 {
@@ -163,4 +194,80 @@ void UDecalComponent::DestroyRenderState()
 float UDecalComponent::Ease(float t) const
 {
 	return FMath::CubicInterp(0.0f, 0.0f, 1.0f, 0.0f, t);
+}
+
+bool UDecalComponent::TryGetRenderData(FProjectedDecalRenderData& OutRenderData) const
+{
+	if (!bDecalEnabled || !DecalMaterial)
+		return false;
+
+	FMaterialRenderProxy MaterialProxy{};
+	DecalMaterial->GetRenderProxy(MaterialProxy);
+
+	if (MaterialProxy.Textures.IsEmpty())
+		return false;
+
+	UTexture2D* TextureAsset = MaterialProxy.Textures[0];
+	FTexture2D* Texture = TextureAsset ? TextureAsset->GetResource() : nullptr;
+	if (!Texture || !Texture->GetSRV())
+		return false;
+
+	const FVector4& MaterialColor = MaterialProxy.BaseColor;
+	if (!std::isfinite(MaterialColor.X) || !std::isfinite(MaterialColor.Y) ||
+		!std::isfinite(MaterialColor.Z) || !std::isfinite(MaterialColor.W))
+		return false;
+
+	const float Opacity = std::clamp(MaterialColor.W, 0.0f, 1.0f);
+	if (Opacity <= 0.0f)
+		return false;
+
+	const FVector WorldScale = GetWorldScale3D();
+	constexpr float MinScale = 1e-4f;
+	if (!std::isfinite(WorldScale.X) || !std::isfinite(WorldScale.Y) || !std::isfinite(WorldScale.Z) ||
+		WorldScale.X < MinScale || WorldScale.Y < MinScale || WorldScale.Z < MinScale)
+		return false;
+
+	FProjectedDecalRenderData Data{};
+	Data.DecalToWorld = GetWorldMatrix();
+	Data.TintOpacity = FVector4(
+		std::max(0.0f, MaterialColor.X),
+		std::max(0.0f, MaterialColor.Y),
+		std::max(0.0f, MaterialColor.Z),
+		Opacity);
+	Data.ColorTexture = Texture;
+
+	UTexture2D* NormalAsset = MaterialProxy.Textures.Num() > 1 ? MaterialProxy.Textures[1] : nullptr;
+	FTexture2D* NormalResource = NormalAsset ? NormalAsset->GetResource() : nullptr;
+	Data.NormalEncoding = NormalMapUtils::GetEncoding(NormalResource);
+	Data.NormalTexture = Data.NormalEncoding > 0.0f ? NormalResource : nullptr;
+	Data.NormalStrength = std::isfinite(NormalStrength) ? std::max(0.0f, NormalStrength) : 0.0f;
+	Data.NormalOpacity = std::isfinite(NormalOpacity) ? std::clamp(NormalOpacity, 0.0f, 1.0f) : 0.0f;
+	Data.bFlipNormalY = MaterialProxy.bFlipNormalY;
+	Data.Sampler = MaterialProxy.SamplerState;
+	if (Data.Sampler == ESamplerState::ShadowComparison)
+	{
+		Data.Sampler = ESamplerState::LinearClamp;
+	}
+
+	Data.bDecodeSRGB = !IsSRGBDecalView(Texture);
+	Data.bUnlit = bUnlit;
+	Data.SortOrder = SortOrder;
+	Data.ComponentID = GetUUID();
+
+	if (!IsValidProjectedDecalRenderData(Data))
+		return false;
+
+	OutRenderData = Data;
+	return true;
+}
+
+void UDecalComponent::Serialize(FStructuredArchive::FRecord Record)
+{
+	Super::Serialize(Record);
+
+	TOptional<FStructuredArchive::FSlot> MaterialSlot = Record.TryEnterField("DecalMaterial", true);
+	if (MaterialSlot.IsSet())
+	{
+		UMaterial::SerializeMaterialReference(MaterialSlot.GetValue(), DecalMaterial);
+	}
 }

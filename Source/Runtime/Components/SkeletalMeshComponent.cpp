@@ -16,8 +16,12 @@
 #include "GameFramework/Actor.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
 #include "Animation/BlendSpaceFile.h"
 #include "Asset/AssetManager.h"
+#include "Render/Material.h"
+#include "Render/MaterialInstance.h"
+#include "Components/ParticleSystemComponent.h"
 
 void USkeletalMeshComponent::SetAnimInstance(UAnimInstance* InInstance)
 {
@@ -79,9 +83,10 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
 	if (AnimInstance && GetSkeletalMesh())
 	{
         bUpdatingAnimation = true;
-		if (auto* Instance = Cast<UAnimSingleNodeInstance>(AnimInstance))
+		if (UAnimSingleNodeInstance* Instance = Cast<UAnimSingleNodeInstance>(AnimInstance))
 		{
 			Instance->SetBlendSpaceInput(BlendSpaceInput);
+			Instance->SetBlendSpace2DInput(BlendSpaceInput, BlendSpaceInputY);
 		}
 
 		AnimInstance->UpdateAnimation(DeltaTime);
@@ -101,6 +106,7 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
 		}
         bUpdatingAnimation = false;
 	}
+	UpdatePreviewDissolve(DeltaTime);
 	Super::TickComponent(DeltaTime);
 }
 
@@ -157,6 +163,120 @@ FMatrix USkeletalMeshComponent::GetBoneComponentMatrix(int32 BoneIndex) const
 FMatrix USkeletalMeshComponent::GetBoneWorldMatrix(int32 BoneIndex) const
 {
 	return GetBoneComponentMatrix(BoneIndex) * GetWorldMatrix();
+}
+
+namespace
+{
+	void ExtractSocketBasis(const FMatrix& Matrix, FQuat* OutRotation, FVector* OutScale)
+	{
+		FVector AxisX(Matrix[0][0], Matrix[0][1], Matrix[0][2]);
+		FVector AxisY(Matrix[1][0], Matrix[1][1], Matrix[1][2]);
+		FVector AxisZ(Matrix[2][0], Matrix[2][1], Matrix[2][2]);
+
+		const float ScaleX = AxisX.Size();
+		const float ScaleY = AxisY.Size();
+		const float ScaleZ = AxisZ.Size();
+		if (OutScale)
+		{
+			*OutScale = FVector(ScaleX, ScaleY, ScaleZ);
+		}
+		if (!OutRotation)
+		{
+			return;
+		}
+		if (ScaleX <= 1e-6f || ScaleY <= 1e-6f || ScaleZ <= 1e-6f)
+		{
+			*OutRotation = FQuat::Identity();
+			return;
+		}
+
+		AxisX /= ScaleX;
+		AxisY /= ScaleY;
+		AxisZ /= ScaleZ;
+		if (FVector::Dot(FVector::Cross(AxisX, AxisY), AxisZ) < 0.0f)
+		{
+			AxisZ = -AxisZ;
+		}
+		FMatrix RotMatrix = FMatrix::Identity;
+		RotMatrix[0][0] = AxisX.X; RotMatrix[0][1] = AxisX.Y; RotMatrix[0][2] = AxisX.Z;
+		RotMatrix[1][0] = AxisY.X; RotMatrix[1][1] = AxisY.Y; RotMatrix[1][2] = AxisY.Z;
+		RotMatrix[2][0] = AxisZ.X; RotMatrix[2][1] = AxisZ.Y; RotMatrix[2][2] = AxisZ.Z;
+		*OutRotation = FQuat(MatrixToRotator(RotMatrix));
+	}
+}
+
+bool USkeletalMeshComponent::DoesSocketExist(const FString& InSocketName) const
+{
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || InSocketName.empty())
+		return false;
+	if (Mesh->HasSocket(InSocketName))
+		return true;
+	return Mesh->FindBoneIndex(InSocketName) >= 0;
+}
+
+FMatrix USkeletalMeshComponent::GetSocketWorldMatrix(const FString& InSocketName) const
+{
+	const FMatrix ComponentWorld = GetWorldMatrix();
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || InSocketName.empty())
+		return ComponentWorld;
+
+	FMatrix LocalToBone = FMatrix::Identity;
+	int32 BoneIndex = -1;
+	if (const FSkeletalMeshSocket* Socket = Mesh->FindSocket(InSocketName))
+	{
+		BoneIndex = Mesh->FindBoneIndex(Socket->BoneName);
+		if (BoneIndex >= 0)
+			LocalToBone = Socket->GetSocketLocalMatrix();
+	}
+	if (BoneIndex < 0)
+	{
+		BoneIndex = Mesh->FindBoneIndex(InSocketName);
+	}
+	if (BoneIndex < 0)
+		return ComponentWorld;
+
+	return (LocalToBone * GetBoneComponentMatrix(BoneIndex)) * ComponentWorld;
+}
+
+FQuat USkeletalMeshComponent::GetSocketWorldRotationQuat(const FString& InSocketName) const
+{
+	if (InSocketName.empty())
+		return FQuat(GetWorldRotation());
+	FQuat OutRotation = FQuat::Identity();
+	ExtractSocketBasis(GetSocketWorldMatrix(InSocketName), &OutRotation, nullptr);
+	return OutRotation;
+}
+
+FVector USkeletalMeshComponent::GetSocketWorldScale3D(const FString& InSocketName) const
+{
+	if (InSocketName.empty())
+		return GetWorldScale3D();
+	FVector OutScale(1.0f, 1.0f, 1.0f);
+	ExtractSocketBasis(GetSocketWorldMatrix(InSocketName), nullptr, &OutScale);
+	return OutScale;
+}
+
+FTransform USkeletalMeshComponent::GetSocketTransform(const FString& InSocketName) const
+{
+	const FMatrix WorldMat = GetSocketWorldMatrix(InSocketName);
+	FQuat Rot = FQuat::Identity();
+	FVector Scale(1.0f, 1.0f, 1.0f);
+	ExtractSocketBasis(WorldMat, &Rot, &Scale);
+	return FTransform(Rot, FVector(WorldMat[3][0], WorldMat[3][1], WorldMat[3][2]), Scale);
+}
+
+void USkeletalMeshComponent::GetSocketNames(TArray<FString>& OutSocketNames) const
+{
+	OutSocketNames.Reset();
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh)
+		return;
+	for (const FSkeletalMeshSocket& Socket : Mesh->GetSockets())
+	{
+		OutSocketNames.Add(Socket.SocketName);
+	}
 }
 
 void USkeletalMeshComponent::ResetPose()
@@ -307,6 +427,7 @@ void USkeletalMeshComponent::SetAnimation(UAnimationAsset* NewAnimToPlay)
 
 	SingleNodeInstance->SetAnimationAsset(NewAnimToPlay);
 	SingleNodeInstance->SetBlendSpaceInput(BlendSpaceInput);
+	SingleNodeInstance->SetBlendSpace2DInput(BlendSpaceInput, BlendSpaceInputY);
 
 	RefreshAnimationPose();
 }
@@ -336,7 +457,7 @@ bool USkeletalMeshComponent::IsPlaying() const
 
 void USkeletalMeshComponent::PlayAnimation(UAnimationAsset* NewAnimToPlay, bool bLooping)
 {
-	if (NewAnimToPlay && !Cast<UAnimSequence>(NewAnimToPlay) && !Cast<UBlendSpace1D>(NewAnimToPlay))
+	if (NewAnimToPlay && !Cast<UAnimSequence>(NewAnimToPlay) && !Cast<UBlendSpace1D>(NewAnimToPlay) && !Cast<UBlendSpace2D>(NewAnimToPlay))
 	{
 		return;
 	}
@@ -354,9 +475,10 @@ void USkeletalMeshComponent::RefreshAnimationPose()
         return;
     }
 
-	if (auto* Instance = GetSingleNodeInstance())
+	if (UAnimSingleNodeInstance* Instance = GetSingleNodeInstance())
 	{
 		Instance->SetBlendSpaceInput(BlendSpaceInput);
+		Instance->SetBlendSpace2DInput(BlendSpaceInput, BlendSpaceInputY);
 	}
 
 	FPoseContext Pose(AnimInstance, GetBones());
@@ -578,4 +700,130 @@ UAnimGraphInstance* USkeletalMeshComponent::CreateAnimGraph()
     SetAnimInstance(Instance.get());
     ManagedAnimGraph = std::move(Instance);
     return ManagedAnimGraph.get();
+}
+
+void USkeletalMeshComponent::StartPreviewDissolve(float InDuration, const FVector4& InEdgeColor)
+{
+	USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh)
+	{
+		return;
+	}
+	if (PreviewDissolveSavedMaterials.IsEmpty())
+	{
+		const int32 SlotCount = GetNumMaterials();
+		PreviewDissolveSavedMaterials.SetNum(SlotCount);
+		for (int32 SlotIndex = 0; SlotIndex < SlotCount; ++SlotIndex)
+		{
+			UMaterialInterface* Original = GetMaterial(SlotIndex);
+			PreviewDissolveSavedMaterials[SlotIndex] = Original;
+			UMaterial* BaseMat = Original ? Original->GetBaseMaterial() : nullptr;
+			UMaterial* DissolveParent = UMaterial::GetOrCreateDissolveParent(BaseMat);
+			UMaterialInstanceDynamic* DynMat = DissolveParent ? UMaterial::CreateDynamicInstance(DissolveParent) : nullptr;
+			if (!DynMat)
+			{
+				continue;
+			}
+			SetMaterial(SlotIndex, DynMat);
+			PreviewDissolveMaterials.Add(DynMat);
+		}
+	}
+
+	PreviewDissolveDuration = (std::max)(0.05f, InDuration);
+	PreviewDissolveElapsed = 0.0f;
+	bPreviewDissolveActive = true;
+	SetDissolveHidden(false);
+
+	const FBox MeshBounds = CalcBounds();
+	const float MinZ = MeshBounds.Min.Z;
+	const float MaxZ = (std::max)(MeshBounds.Max.Z, MinZ + 0.1f);
+	for (UMaterialInstanceDynamic* DynMat : PreviewDissolveMaterials)
+	{
+		if (!DynMat)
+		{
+			continue;
+		}
+		DynMat->SetScalarParameterValue(FName("DissolveAmount"), -0.05f);
+		DynMat->SetScalarParameterValue(FName("DissolveMinZ"), MinZ);
+		DynMat->SetScalarParameterValue(FName("DissolveMaxZ"), MaxZ);
+		DynMat->SetVectorParameterValue(FName("DissolveEdgeColor"), InEdgeColor);
+	}
+	if (AActor* Owner = GetOwner())
+	{
+		for (UActorComponent* Comp : Owner->GetComponents())
+		{
+			if (UParticleSystemComponent* ParticleComp = Cast<UParticleSystemComponent>(Comp))
+			{
+				ParticleComp->SetFloatParameter("DissolveHeight", MaxZ);
+			}
+		}
+	}
+}
+
+void USkeletalMeshComponent::UpdatePreviewDissolve(float DeltaTime)
+{
+	if (!bPreviewDissolveActive || !std::isfinite(DeltaTime) || DeltaTime <= 0.0f)
+	{
+		return;
+	}
+
+	PreviewDissolveElapsed += DeltaTime;
+	const float Alpha = std::clamp(PreviewDissolveElapsed / (std::max)(0.05f, PreviewDissolveDuration), 0.0f, 1.0f);
+	const float Amount = -0.05f + Alpha * 1.13f;
+	const FBox MeshBounds = CalcBounds();
+	const float MinZ = MeshBounds.Min.Z;
+	const float MaxZ = (std::max)(MeshBounds.Max.Z, MinZ + 0.1f);
+	for (UMaterialInstanceDynamic* DynMat : PreviewDissolveMaterials)
+	{
+		if (DynMat)
+		{
+			DynMat->SetScalarParameterValue(FName("DissolveAmount"), Amount);
+			DynMat->SetScalarParameterValue(FName("DissolveMinZ"), MinZ);
+			DynMat->SetScalarParameterValue(FName("DissolveMaxZ"), MaxZ);
+		}
+	}
+	if (AActor* Owner = GetOwner())
+	{
+		const float ActiveNormZ = std::clamp(1.0f - (Amount - 0.125f) / 0.80f, 0.0f, 1.0f);
+		const float DissolveWorldZ = MinZ + ActiveNormZ * (MaxZ - MinZ);
+		for (UActorComponent* Comp : Owner->GetComponents())
+		{
+			if (UParticleSystemComponent* ParticleComp = Cast<UParticleSystemComponent>(Comp))
+			{
+				ParticleComp->SetFloatParameter("DissolveHeight", DissolveWorldZ);
+			}
+		}
+	}
+	if (Alpha >= 1.0f)
+	{
+		bPreviewDissolveActive = false;
+		SetDissolveHidden(true);
+	}
+}
+
+void USkeletalMeshComponent::ResetPreviewDissolve()
+{
+	if (!bPreviewDissolveActive && PreviewDissolveMaterials.IsEmpty() && PreviewDissolveSavedMaterials.IsEmpty())
+	{
+		return;
+	}
+	bPreviewDissolveActive = false;
+	PreviewDissolveElapsed = 0.0f;
+	for (int32 SlotIndex = 0; SlotIndex < PreviewDissolveSavedMaterials.Num(); ++SlotIndex)
+	{
+		SetMaterial(SlotIndex, PreviewDissolveSavedMaterials[SlotIndex]);
+	}
+	PreviewDissolveSavedMaterials.Reset();
+	PreviewDissolveMaterials.Reset();
+	SetDissolveHidden(false);
+}
+
+void USkeletalMeshComponent::SetDissolveHidden(bool bHidden)
+{
+	if (bDissolveHidden == bHidden)
+	{
+		return;
+	}
+	bDissolveHidden = bHidden;
+	SetVisibility(!bHidden);
 }

@@ -2,6 +2,45 @@
 #include "Scene.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/AmbientLightComponent.h"
+#include "Render/Material.h"
+#include <algorithm>
+
+namespace
+{
+	class FSceneStaticPDI : public FStaticPrimitiveDrawInterface
+	{
+	public:
+		TArray<FStaticMeshBatch> Batches;
+
+		void DrawMesh(const FStaticMeshBatch& Batch) override
+		{
+			Batches.Add(Batch);
+		}
+	};
+
+	void AppendCachedPassCommands(
+		EMeshPass Pass,
+		const FMeshPassProcessor& Processor,
+		const FStaticMeshBatch& Batch,
+		const FSceneRenderOptions& Options,
+		uint32 PrimitiveIndex,
+		std::array<TArray<FCachedMeshDrawEntry>, static_cast<size_t>(EMeshPass::Num)>& CachedDrawLists,
+		TArray<TArray<FCachedCommandSlotRef>>& ProxyCachedCommands)
+	{
+		TArray<FMeshDrawCommand> Built;
+		if (!Processor.AddMeshBatch(Batch, Options, nullptr, Built))
+			return;
+		TArray<FCachedMeshDrawEntry>& List = CachedDrawLists[static_cast<size_t>(Pass)];
+		for (FMeshDrawCommand& Cmd : Built)
+		{
+			Cmd.PrimitiveId = PrimitiveIndex;
+			const uint32 OwnerSlot = static_cast<uint32>(ProxyCachedCommands[PrimitiveIndex].Num());
+			const uint32 EntryIdx = static_cast<uint32>(List.Num());
+			List.Add({ std::move(Cmd), PrimitiveIndex, OwnerSlot, Batch.LODIndex });
+			ProxyCachedCommands[PrimitiveIndex].Add({ Pass, EntryIdx });
+		}
+	}
+}
 
 void FScene::AddPrimitive(UPrimitiveComponent* Component)
 {
@@ -9,8 +48,11 @@ void FScene::AddPrimitive(UPrimitiveComponent* Component)
 
 	FPrimitiveSceneProxy* Proxy = Component->CreateSceneProxy();
 	if (!Proxy) return;
+
+	const uint32 Index = static_cast<uint32>(PrimitiveSceneProxies.Num());
 	Proxy->Scene = this;
-	Proxy->PackedIndex = PrimitiveSceneProxies.Num();
+	Proxy->PackedIndex = static_cast<int32>(Index);
+	Proxy->SetPrimitiveId(Index);
 	Component->SceneProxy = Proxy;
 	MarkDirty(Proxy);
 	MarkRenderStateDirty(Proxy);
@@ -18,6 +60,12 @@ void FScene::AddPrimitive(UPrimitiveComponent* Component)
 	PrimitiveSceneProxies.Add(Proxy);
 	PrimitiveBounds.Add(FAABB{});
 	PrimitiveFlags.Add(0);
+	ProxyCachedCommands.AddDefaulted_GetRef();
+	GPUScenePrimitives.AddDefaulted_GetRef();
+	GPUSceneDirtyMask.Add(0);
+	UpdateGPUScenePrimitiveEntry(Index, Proxy);
+	if (Proxy->HasStaticRelevance())
+		MarkStaticCacheDirty(Proxy);
 
 	bElementListChanged = true;
 }
@@ -34,12 +82,38 @@ void FScene::RemovePrimitive(UPrimitiveComponent* Component)
 	// 사라진 Caster의 그림자가 캐시에 남지 않도록 마지막 위치를 기록한다.
 	if (Proxy->bCastsShadow) RecordShadowInvalidation(Proxy->GetBounds());
 
+	ClearProxyStaticCache(Index);
+
+	if (Proxy->bPendingStaticCacheRebuild)
+	{
+		const int32 Found = StaticCacheDirtyProxies.Find(Proxy);
+		if (Found != INDEX_NONE) StaticCacheDirtyProxies.RemoveAtSwap(Found);
+		Proxy->bPendingStaticCacheRebuild = false;
+	}
+
 	PrimitiveSceneProxies.RemoveAtSwap(Index);
 	PrimitiveBounds.RemoveAtSwap(Index);
 	PrimitiveFlags.RemoveAtSwap(Index);
+	ProxyCachedCommands.RemoveAtSwap(Index);
+	GPUScenePrimitives.RemoveAtSwap(Index);
+	GPUSceneDirtyMask.RemoveAtSwap(Index);
 
 	if (Index < static_cast<uint32>(PrimitiveSceneProxies.Num()))
-		PrimitiveSceneProxies[Index]->PackedIndex = static_cast<int32>(Index);
+	{
+		FPrimitiveSceneProxy* SwappedProxy = PrimitiveSceneProxies[Index];
+		SwappedProxy->PackedIndex = static_cast<int32>(Index);
+		SwappedProxy->SetPrimitiveId(Index);
+		for (const FCachedCommandSlotRef& Ref : ProxyCachedCommands[Index])
+		{
+			TArray<FCachedMeshDrawEntry>& List = CachedDrawLists[static_cast<size_t>(Ref.Pass)];
+			if (Ref.CommandIndex < static_cast<uint32>(List.Num()))
+			{
+				List[Ref.CommandIndex].PrimitiveIndex = Index;
+				List[Ref.CommandIndex].Command.PrimitiveId = Index;
+			}
+		}
+		MarkGPUSceneDirty(Index);
+	}
 
 	if (Proxy->bQueuedForUpdate)
 	{
@@ -73,6 +147,13 @@ void FScene::RemoveAllPrimitives()
 	PrimitiveFlags.Reset();
 	DirtyProxies.Reset();
 	RenderStateDirtyProxies.Reset();
+	StaticCacheDirtyProxies.Reset();
+	for (TArray<FCachedMeshDrawEntry>& List : CachedDrawLists)
+		List.Reset();
+	ProxyCachedCommands.Reset();
+	GPUScenePrimitives.Reset();
+	GPUSceneDirtyIndices.Reset();
+	GPUSceneDirtyMask.Reset();
 	BVH.Clear();
 	bElementListChanged = true;
 	InvalidateAllShadows();
@@ -201,14 +282,187 @@ FAmbientLightRenderData FScene::GetAmbientLight(bool bGameView) const
 	return {};
 }
 
+void FScene::ClearProxyStaticCache(uint32 PrimitiveIndex)
+{
+	if (PrimitiveIndex >= static_cast<uint32>(ProxyCachedCommands.Num()))
+		return;
+
+	TArray<FCachedCommandSlotRef>& Refs = ProxyCachedCommands[PrimitiveIndex];
+	for (int32 r = Refs.Num() - 1; r >= 0; --r)
+	{
+		const FCachedCommandSlotRef Ref = Refs[r];
+		TArray<FCachedMeshDrawEntry>& List = CachedDrawLists[static_cast<size_t>(Ref.Pass)];
+		if (Ref.CommandIndex >= static_cast<uint32>(List.Num()))
+			continue;
+
+		const uint32 LastIdx = static_cast<uint32>(List.Num() - 1);
+		if (Ref.CommandIndex != LastIdx)
+		{
+			List[Ref.CommandIndex] = std::move(List[LastIdx]);
+			const FCachedMeshDrawEntry& Moved = List[Ref.CommandIndex];
+			if (Moved.PrimitiveIndex < static_cast<uint32>(ProxyCachedCommands.Num()) &&
+				Moved.OwnerEntryIndex < static_cast<uint32>(ProxyCachedCommands[Moved.PrimitiveIndex].Num()))
+			{
+				ProxyCachedCommands[Moved.PrimitiveIndex][Moved.OwnerEntryIndex].CommandIndex = Ref.CommandIndex;
+			}
+		}
+		List.RemoveLast();
+	}
+	Refs.Reset();
+}
+
+void FScene::RebuildProxyStaticCache(FPrimitiveSceneProxy* Proxy, const FSceneRenderOptions& Options)
+{
+	if (!Proxy || Proxy->PackedIndex < 0)
+		return;
+
+	const uint32 PrimIdx = static_cast<uint32>(Proxy->PackedIndex);
+	ClearProxyStaticCache(PrimIdx);
+	if (!Proxy->HasStaticRelevance() || !Proxy->IsVisible())
+		return;
+
+	FSceneStaticPDI PDI;
+	Proxy->DrawStaticElements(&PDI);
+	if (PDI.Batches.IsEmpty())
+		return;
+
+	const FBasePassMeshProcessor BaseProcessor;
+	const FDepthPassMeshProcessor DepthProcessor;
+	const FWorldNormalPassMeshProcessor WorldNormalProcessor;
+	const FTranslucencyPassMeshProcessor TranslucencyProcessor;
+	const FShadowDepthMeshProcessor ShadowProcessor;
+
+	for (const FStaticMeshBatch& Batch : PDI.Batches)
+	{
+		AppendCachedPassCommands(EMeshPass::BasePass, BaseProcessor, Batch, Options, PrimIdx, CachedDrawLists, ProxyCachedCommands);
+		AppendCachedPassCommands(EMeshPass::DepthPass, DepthProcessor, Batch, Options, PrimIdx, CachedDrawLists, ProxyCachedCommands);
+		AppendCachedPassCommands(EMeshPass::WorldNormal, WorldNormalProcessor, Batch, Options, PrimIdx, CachedDrawLists, ProxyCachedCommands);
+		AppendCachedPassCommands(EMeshPass::Translucency, TranslucencyProcessor, Batch, Options, PrimIdx, CachedDrawLists, ProxyCachedCommands);
+		AppendCachedPassCommands(EMeshPass::ShadowDepth, ShadowProcessor, Batch, Options, PrimIdx, CachedDrawLists, ProxyCachedCommands);
+	}
+}
+
+void FScene::UpdateGPUScenePrimitiveEntry(uint32 PrimitiveIndex, const FPrimitiveSceneProxy* Proxy)
+{
+	if (!Proxy || PrimitiveIndex >= static_cast<uint32>(GPUScenePrimitives.Num()))
+		return;
+	const int32 DebugWeightBone = Proxy->GetDebugWeightBone();
+	const float BoneOffset = DebugWeightBone >= 0 ? static_cast<float>(DebugWeightBone + 1) : 0.0f;
+	GPUScenePrimitives[PrimitiveIndex] = MakePrimitiveSceneData(
+		Proxy->GetLocalToWorld(), Proxy->bReceiveShadow, Proxy->bReceivesDecals, BoneOffset);
+	MarkGPUSceneDirty(PrimitiveIndex);
+}
+
+void FScene::FlushStaticCaches(const FSceneRenderOptions& Options)
+{
+	const uint64 MaterialRevision = UMaterial::GetRenderDataRevision();
+	const bool bOptionsChanged = !bHasCachedOptions || CachedLightingModel != Options.LightingModel;
+
+	if (bOptionsChanged || CachedMaterialRevision != MaterialRevision)
+	{
+		bHasCachedOptions = true;
+		CachedMaterialRevision = MaterialRevision;
+		CachedLightingModel = Options.LightingModel;
+
+		for (FPrimitiveSceneProxy* Proxy : PrimitiveSceneProxies)
+		{
+			if (Proxy && Proxy->HasStaticRelevance())
+				MarkStaticCacheDirty(Proxy);
+		}
+	}
+
+	if (StaticCacheDirtyProxies.IsEmpty())
+		return;
+
+	for (FPrimitiveSceneProxy* Proxy : StaticCacheDirtyProxies)
+	{
+		if (!Proxy)
+			continue;
+		Proxy->bPendingStaticCacheRebuild = false;
+		RebuildProxyStaticCache(Proxy, Options);
+	}
+	StaticCacheDirtyProxies.Reset();
+}
+
+const FStructuredBuffer* FScene::SyncGPUScene(std::span<const FPrimitiveSceneData> DynamicPrimitives)
+{
+	const uint32 StaticCount = static_cast<uint32>(GPUScenePrimitives.Num());
+	const uint32 DynamicCount = static_cast<uint32>(DynamicPrimitives.size());
+	const uint32 TotalNeeded = StaticCount + DynamicCount;
+	if (TotalNeeded == 0)
+		return nullptr;
+
+	constexpr uint32 ElemStride = sizeof(FPrimitiveSceneData);
+	if (!GPUSceneBuffer || GPUSceneBufferCapacity < TotalNeeded)
+	{
+		uint32 NewCapacity = std::max(GPUSceneBufferCapacity * 2u, 256u);
+		while (NewCapacity < TotalNeeded)
+			NewCapacity *= 2u;
+		GPUSceneBuffer = RenderCommand::CreateDefaultStructuredBuffer(NewCapacity, ElemStride);
+		GPUSceneBufferCapacity = GPUSceneBuffer ? NewCapacity : 0;
+		if (!GPUSceneBuffer)
+			return nullptr;
+		if (StaticCount > 0)
+		{
+			RenderCommand::UpdateStructuredBufferRange(GPUSceneBuffer.get(), 0, StaticCount, ElemStride, GPUScenePrimitives.GetData());
+		}
+		GPUSceneDirtyIndices.Reset();
+		std::fill(GPUSceneDirtyMask.begin(), GPUSceneDirtyMask.end(), uint8(0));
+	}
+	else if (!GPUSceneDirtyIndices.IsEmpty())
+	{
+		// 대량 변경 시 전체를 한 번에 업로드하고 소량이면 연속 구간만 부분 갱신한다
+		const uint32 DirtyCount = static_cast<uint32>(GPUSceneDirtyIndices.Num());
+		if (StaticCount > 0 && DirtyCount * 3 >= StaticCount)
+		{
+			RenderCommand::UpdateStructuredBufferRange(GPUSceneBuffer.get(), 0, StaticCount, ElemStride, GPUScenePrimitives.GetData());
+		}
+		else
+		{
+			std::sort(GPUSceneDirtyIndices.begin(), GPUSceneDirtyIndices.end());
+			const uint32 NumDirty = static_cast<uint32>(GPUSceneDirtyIndices.Num());
+			uint32 i = 0;
+			while (i < NumDirty)
+			{
+				const uint32 RunStart = GPUSceneDirtyIndices[i];
+				if (RunStart >= StaticCount)
+					break;
+				uint32 RunEnd = RunStart;
+				while (i + 1 < NumDirty && GPUSceneDirtyIndices[i + 1] <= RunEnd + 1 && GPUSceneDirtyIndices[i + 1] < StaticCount)
+				{
+					++i;
+					RunEnd = GPUSceneDirtyIndices[i];
+				}
+				const uint32 RunCount = RunEnd - RunStart + 1;
+				RenderCommand::UpdateStructuredBufferRange(GPUSceneBuffer.get(), RunStart, RunCount, ElemStride,
+					GPUScenePrimitives.GetData() + RunStart);
+				++i;
+			}
+		}
+		GPUSceneDirtyIndices.Reset();
+		std::fill(GPUSceneDirtyMask.begin(), GPUSceneDirtyMask.end(), uint8(0));
+	}
+
+	if (DynamicCount > 0)
+	{
+		RenderCommand::UpdateStructuredBufferRange(GPUSceneBuffer.get(), StaticCount, DynamicCount, ElemStride, DynamicPrimitives.data());
+	}
+	return GPUSceneBuffer.get();
+}
+
 void FScene::UpdateAllTransforms()
 {
+	const bool bAnyRenderStateChanged = RenderStateDirtyProxies.Num() > 0;
 	for (FPrimitiveSceneProxy* Proxy : RenderStateDirtyProxies)
 	{
 		// CastShadow·표시 여부·메시가 바뀌면 그림자 결과가 달라질 수 있다. 드물게 일어나므로 Caster 여부와 무관하게 기록한다.
 		RecordShadowInvalidation(Proxy->GetBounds());
 		Proxy->UpdateRenderState();
 		PrimitiveFlags[Proxy->PackedIndex] = Proxy->IsVisible() ? 1 : 0;
+		const uint32 Index = static_cast<uint32>(Proxy->PackedIndex);
+		UpdateGPUScenePrimitiveEntry(Index, Proxy);
+		if (Proxy->HasStaticRelevance())
+			MarkStaticCacheDirty(Proxy);
 		Proxy->bRenderStateQueued = false;
 	}
 	RenderStateDirtyProxies.Reset();
@@ -225,6 +479,7 @@ void FScene::UpdateAllTransforms()
 		}
 		PrimitiveBounds[Proxy->PackedIndex] = Proxy->GetBounds();
 		PrimitiveFlags[Proxy->PackedIndex] = Proxy->IsVisible() ? 1 : 0;
+		UpdateGPUScenePrimitiveEntry(static_cast<uint32>(Proxy->PackedIndex), Proxy);
 		Proxy->bQueuedForUpdate = false;
 	}
 
@@ -244,7 +499,7 @@ void FScene::UpdateAllTransforms()
 	//	PrimitiveFlags[i] = Proxy->GetComponent()->IsVisible() ? 1 : 0;
 	//}
 
-	const bool bAnyMoved = DirtyProxies.Num() > 0;
+	const bool bAnyMoved = DirtyProxies.Num() > 0 || bAnyRenderStateChanged;
 	DirtyProxies.Reset();
 
 
@@ -305,4 +560,21 @@ void FScene::MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy)
 	if (!Proxy || Proxy->bRenderStateQueued) return;
 	Proxy->bRenderStateQueued = true;
 	RenderStateDirtyProxies.Add(Proxy);
+}
+
+void FScene::MarkStaticCacheDirty(FPrimitiveSceneProxy* Proxy)
+{
+	if (!Proxy || Proxy->bPendingStaticCacheRebuild) return;
+	Proxy->bPendingStaticCacheRebuild = true;
+	StaticCacheDirtyProxies.Add(Proxy);
+}
+
+void FScene::MarkGPUSceneDirty(uint32 PrimitiveIndex)
+{
+	if (PrimitiveIndex >= static_cast<uint32>(GPUSceneDirtyMask.Num()))
+		return;
+	if (GPUSceneDirtyMask[PrimitiveIndex] != 0)
+		return;
+	GPUSceneDirtyMask[PrimitiveIndex] = 1;
+	GPUSceneDirtyIndices.Add(PrimitiveIndex);
 }

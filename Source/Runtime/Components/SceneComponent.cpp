@@ -1,5 +1,6 @@
 #include "EnginePCH.h"
 #include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
@@ -79,7 +80,12 @@ void USceneComponent::SetHiddenInGame(bool bNewHidden, EVisibilityPropagation Pr
 
 void USceneComponent::SetupAttachment(USceneComponent* InParent, EAttachmentRule Rule)
 {
-	if (InParent == this || AttachParent == InParent) return;
+	SetupAttachmentToSocket(InParent, FString(), Rule);
+}
+
+void USceneComponent::SetupAttachmentToSocket(USceneComponent* InParent, const FString& InSocketName, EAttachmentRule Rule)
+{
+	if (InParent == this || (AttachParent == InParent && AttachSocketName == InSocketName)) return;
 
 	// 순환 체크
 	for (USceneComponent* Parent = InParent; Parent != nullptr; Parent = Parent->AttachParent)
@@ -90,19 +96,32 @@ void USceneComponent::SetupAttachment(USceneComponent* InParent, EAttachmentRule
 		FTransform WorldTransform(GetWorldRotation(), GetWorldLocation(), GetWorldScale3D());
 		DetachFromParent(Rule);
 		AttachParent = InParent;
+		AttachSocketName = InParent ? InSocketName : FString();
 		if (AttachParent)
 		{
 			AttachParent->AttachChildren.Add(this);
 		}
-		const FTransform ParentTransform = AttachParent
-            ? FTransform(AttachParent->GetWorldRotation(), AttachParent->GetWorldLocation(), AttachParent->GetWorldScale3D())
-            : FTransform::Identity;
+		FTransform ParentTransform = FTransform::Identity;
+		if (AttachParent)
+		{
+			if (!AttachSocketName.empty())
+			{
+				if (const USkeletalMeshComponent* SkelParent = Cast<USkeletalMeshComponent>(AttachParent))
+				{
+					if (SkelParent->GetSkeletalMesh())
+						ParentTransform = SkelParent->GetSocketTransform(AttachSocketName);
+				}
+			}
+			if (ParentTransform.Location == FVector::ZeroVector && AttachSocketName.empty())
+				ParentTransform = FTransform(AttachParent->GetWorldRotation(), AttachParent->GetWorldLocation(), AttachParent->GetWorldScale3D());
+		}
         SetTransform(WorldTransform.GetRelativeTransform(ParentTransform));
 	}
 	else
 	{
 		DetachFromParent(Rule);
 		AttachParent = InParent;
+		AttachSocketName = InParent ? InSocketName : FString();
 		if (AttachParent)
 		{
 			AttachParent->AttachChildren.Add(this);
@@ -136,6 +155,7 @@ void USceneComponent::DetachFromParent(EAttachmentRule Rule)
 			}
 		}
 		AttachParent = nullptr;
+		AttachSocketName.clear();
 		SetTransform(WorldTransform);
 	}
 	else
@@ -150,6 +170,7 @@ void USceneComponent::DetachFromParent(EAttachmentRule Rule)
 			}
 		}
 		AttachParent = nullptr;
+		AttachSocketName.clear();
 	}
 	
 	MarkTransformDirty();
@@ -162,6 +183,14 @@ FRotator USceneComponent::GetWorldRotation() const
 	if (AttachParent)
 	{
 		FQuat ParentQuat = AttachParent->GetWorldRotation().Quaternion();
+		if (!AttachSocketName.empty())
+		{
+			if (const USkeletalMeshComponent* SkelParent = Cast<USkeletalMeshComponent>(AttachParent))
+			{
+				if (SkelParent->GetSkeletalMesh())
+					ParentQuat = SkelParent->GetSocketWorldRotationQuat(AttachSocketName);
+			}
+		}
 		FQuat LocalQuat = Transform.GetOrientation();
 
 		return (ParentQuat * LocalQuat).ToFRotator();
@@ -182,6 +211,14 @@ FVector USceneComponent::GetWorldScale3D() const
 	if (AttachParent)
 	{
 		FVector ParentScale = AttachParent->GetWorldScale3D();
+		if (!AttachSocketName.empty())
+		{
+			if (const USkeletalMeshComponent* SkelParent = Cast<USkeletalMeshComponent>(AttachParent))
+			{
+				if (SkelParent->GetSkeletalMesh())
+					ParentScale = SkelParent->GetSocketWorldScale3D(AttachSocketName);
+			}
+		}
 
 		return FVector(
 			Transform.Scale.X * ParentScale.X,
@@ -200,14 +237,30 @@ FMatrix USceneComponent::GetWorldMatrix() const
 		return Transform.GetLocalMatrix();
 	}
 
-	const FVector WorldLocation = 
-		AttachParent->GetWorldMatrix().TransformPosition(Transform.Location);
+	FMatrix ParentWorldMatrix = AttachParent->GetWorldMatrix();
+	FQuat ParentWorldQuat = AttachParent->GetWorldRotation().Quaternion();
+	FVector ParentWorldScale = AttachParent->GetWorldScale3D();
+	if (!AttachSocketName.empty())
+	{
+		if (const USkeletalMeshComponent* SkelParent = Cast<USkeletalMeshComponent>(AttachParent))
+		{
+			if (SkelParent->GetSkeletalMesh())
+			{
+				ParentWorldMatrix = SkelParent->GetSocketWorldMatrix(AttachSocketName);
+				ParentWorldQuat = SkelParent->GetSocketWorldRotationQuat(AttachSocketName);
+				ParentWorldScale = SkelParent->GetSocketWorldScale3D(AttachSocketName);
+			}
+		}
+	}
 
-	const FQuat WorldRotation = 
-		AttachParent->GetWorldRotation().Quaternion() * Transform.GetOrientation();
+	const FVector WorldLocation =
+		ParentWorldMatrix.TransformPosition(Transform.Location);
+
+	const FQuat WorldRotation =
+		ParentWorldQuat * Transform.GetOrientation();
 
 	const FVector WorldScale =
-		Transform.Scale * AttachParent->GetWorldScale3D();
+		Transform.Scale * ParentWorldScale;
 
 	return FTransform(WorldRotation, WorldLocation, WorldScale).GetLocalMatrix();
 }
@@ -218,6 +271,14 @@ void USceneComponent::SetWorldTransform(const FMatrix& InWorldMatrix, bool bSwee
 	if (AttachParent)
 	{
 		FMatrix ParentWorldMatrix = AttachParent->GetWorldMatrix();
+		if (!AttachSocketName.empty())
+		{
+			if (const USkeletalMeshComponent* SkelParent = Cast<USkeletalMeshComponent>(AttachParent))
+			{
+				if (SkelParent->GetSkeletalMesh())
+					ParentWorldMatrix = SkelParent->GetSocketWorldMatrix(AttachSocketName);
+			}
+		}
 		LocalMatrix = InWorldMatrix * ParentWorldMatrix.Inverse();
 	}
 

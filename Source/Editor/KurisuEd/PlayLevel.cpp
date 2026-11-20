@@ -299,6 +299,19 @@ void UEditorEngine::EndPIEMouseCapture()
 		FInputSystem::SyncMousePosition(Cursor.x, Cursor.y);
 }
 
+bool UEditorEngine::SetGameMouseCapture(const UWorld* InWorld, bool bEnabled)
+{
+	if (!InWorld || InWorld != PlayWorld || PIEViewIndex == InvalidViewIndex)
+		return false;
+	if (!bEnabled || bIsPaused || bIsSimulatingInEditor)
+	{
+		EndPIEMouseCapture();
+		return false;
+	}
+	BeginPIEMouseCapture();
+	return bGameMouseCaptured;
+}
+
 // Play 버튼은 요청만 남긴다. 실제 시작은 다음 프레임의 시작에서 한다. UE의 같은 이름 함수와 같은 역할이다.
 void UEditorEngine::StartQueuedPlaySessionRequest()
 {

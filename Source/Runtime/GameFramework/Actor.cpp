@@ -420,7 +420,11 @@ void AActor::OnDefaultSubobjectCreated(UObject* Subobject)
 	if (UActorComponent* Component = Cast<UActorComponent>(Subobject))
 	{
 		Component->SetOwner(this);
-		Components.Add(Component);
+		// 재활용된 기본 서브오브젝트가 중복 등록되어 소멸 시 이중 해제되는 것을 방지한다
+		if (Components.Find(Component) == INDEX_NONE)
+		{
+			Components.Add(Component);
+		}
 	}
 }
 
@@ -557,4 +561,15 @@ void AActor::CalcCamera(float DeltaTime, FMinimalViewInfo& OutPOV)
 	// 카메라없음 -> 액터자신
 	OutPOV.Location = GetActorLocation();
 	OutPOV.Rotation = GetActorRotation();
+}
+
+bool AActor::AttachToActor(AActor* ParentActor, EAttachmentRule Rule, USceneComponent* TargetParentComponent)
+{
+	if (!ParentActor || ParentActor == this || !RootComponent)
+		return false;
+	USceneComponent* ParentComp = TargetParentComponent ? TargetParentComponent : ParentActor->GetRootComponent();
+	if (!ParentComp)
+		return false;
+	RootComponent->SetupAttachment(ParentComp, Rule);
+	return RootComponent->GetAttachParent() == ParentComp;
 }

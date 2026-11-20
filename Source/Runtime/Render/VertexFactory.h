@@ -17,6 +17,8 @@ enum class EVertexFactoryType : uint8
 	MeshParticle,
 	SpriteParticle,
 	Trail,
+	GpuSpriteParticle,
+	GpuMeshParticle,
 	Count
 };
 
@@ -102,4 +104,36 @@ class FTrailVertexFactory : public FVertexFactory
 public:
 	void Init(FVertexBuffer* VB, FIndexBuffer* IB) { VertexBuffer = VB; IndexBuffer = IB; }
 	EVertexFactoryType GetType() const override { return EVertexFactoryType::Trail; }
+};
+
+class FGpuSpriteParticleVertexFactory : public FVertexFactory
+{
+public:
+	void Init(FVertexBuffer* VB, FIndexBuffer* IB, const FStructuredBuffer* InParticleBuffer)
+	{
+		VertexBuffer = VB;
+		IndexBuffer = IB;
+		ParticleBuffer = InParticleBuffer;
+	}
+	EVertexFactoryType GetType() const override { return EVertexFactoryType::GpuSpriteParticle; }
+	void Bind() const override;
+
+private:
+	const FStructuredBuffer* ParticleBuffer = nullptr;
+};
+
+class FGpuMeshParticleVertexFactory : public FVertexFactory
+{
+public:
+	void Init(FVertexBuffer* VB, FIndexBuffer* IB, const FStructuredBuffer* InParticleBuffer)
+	{
+		VertexBuffer = VB;
+		IndexBuffer = IB;
+		ParticleBuffer = InParticleBuffer;
+	}
+	EVertexFactoryType GetType() const override { return EVertexFactoryType::GpuMeshParticle; }
+	void Bind() const override;
+
+private:
+	const FStructuredBuffer* ParticleBuffer = nullptr;
 };

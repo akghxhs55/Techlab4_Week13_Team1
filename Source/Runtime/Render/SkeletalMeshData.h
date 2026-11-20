@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Render/Vertex.h"
+#include "Render/ImportedMaterialProperties.h"
 #include "Math/Box.h"
 #include "Math/Transform.h"
 #include <Containers/Array.h>
@@ -15,7 +16,7 @@ struct FSkeletalMeshSection
 	// Weight의 BoneIndex 변환 및 Binary 저장 형식을 함께 변경해야 한다.
 };
 
-struct FSkeletalMaterialSlot
+struct FSkeletalMaterialSlot : FImportedMaterialProperties
 {
 	FString Name;
 	FVector4 BaseColor = FVector4(1, 1, 1, 1);
@@ -29,6 +30,21 @@ struct FBoneInfo
 	int32 ParentIndex = -1; // 부모가 항상 앞 인덱스
 	FTransform LocalBindPose; // 부모기준 위치
 	FMatrix InverseBindPose; //컴포넌트 공간 바인드 역행렬
+};
+
+struct FSkeletalMeshSocket
+{
+	FString SocketName;
+	FString BoneName;
+	FVector RelativeLocation = FVector(0.0f, 0.0f, 0.0f);
+	FRotator RelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
+	FVector RelativeScale = FVector(1.0f, 1.0f, 1.0f);
+
+	FMatrix GetSocketLocalMatrix() const
+	{
+		const FTransform LocalTransform(RelativeRotation, RelativeLocation, RelativeScale);
+		return LocalTransform.GetLocalMatrix();
+	}
 };
 
 struct FSkinWeight

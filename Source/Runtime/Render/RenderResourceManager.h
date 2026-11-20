@@ -35,8 +35,11 @@ enum class EPSOType : uint8
 	Particle_AlphaBlend,
 	Particle_Additive,
 	StaticMesh_Additive,     // 메시 파티클 가산 블렌드
+	DBufferDecal_DepthReconstruction,
 	Count
 };
+
+class UMaterial;
 
 class FRenderResourceManager
 {
@@ -58,11 +61,14 @@ public:
 	static FShaderProgram* GetShaderProgram(const FString& InPath);
 	// 변형이 있는지 확인할 때 쓴다. 없으면 로그와 기본 셰이더 대체 없이 nullptr
 	static FShaderProgram* FindShaderProgram(const FString& InPath);
+	static FComputeShader* GetComputeShader(const FString& InPath, const FString& EntryPoint);
 
 	static FPipelineState* GetPSO(const EPSOType& InType);
 	static FShaderProgram* GetForwardShaderProgram(ELightingModel Model);
 	// Local 변형인 Base를 정점 타입에 맞는 변형으로 바꾼다. 변형이 없으면 nullptr
 	static FShaderProgram* ResolveShader(FShaderProgram* Base, EVertexFactoryType VF);
+	static FShaderProgram* GetMaterialGraphShaderProgram(const UMaterial& Material, EPSOType TargetPSO,
+		ELightingModel LightingModel, EVertexFactoryType VFType, FString& OutError);
 private:
 
 	static FString MakeVFKey(const FString& BaseKey, EVertexFactoryType VF);
@@ -72,7 +78,9 @@ private:
 
 	TMap<FString, TUniquePtr<FVertexShader>> VertexShaderMap;
 	TMap<FString, TUniquePtr<FPixelShader>>  PixelShaderMap;
+	TMap<FString, TUniquePtr<FComputeShader>> ComputeShaderMap;
 	TMap<FString, TUniquePtr<FShaderProgram>> ShaderProgramMap;
+	TMap<FString, FString> MaterialGraphErrorMap;
 
 	TMap<EPSOType, TUniquePtr<FPipelineState>> PipelineStateMap;
 };

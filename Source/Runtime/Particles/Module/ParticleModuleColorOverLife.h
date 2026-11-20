@@ -17,6 +17,9 @@ public:
 	void Update(FParticleEmitterInstance& Owner, int32 Offset, float DeltaTime) override;
 	void BakeDistributions() override;
 
+	const FVectorDistribution& GetColorOverLife() const { return ColorOverLife; }
+	const FFloatDistribution& GetAlphaOverLife() const { return AlphaOverLife; }
+
 private:
 	FLinearColor Evaluate(FParticleEmitterInstance& Owner, float RelativeTime) const;
 

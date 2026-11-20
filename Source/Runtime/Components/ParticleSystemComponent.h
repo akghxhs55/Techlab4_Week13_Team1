@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PrimitiveComponent.h"
+#include "GameFramework/Actor.h"
 #include "Particles/ParticleSystem.h"
 #include "Particles/ParticleEventTypes.h"
 #include "Core/Delegate/Delegate.h"
@@ -11,8 +12,42 @@ class UWorld;
 class FLineBatcher;
 class AActor;
 class UObject;
+class USkeletalMeshComponent;
 struct FParticleEmitterInstance;
 class UParticleSystemComponent;
+
+UENUM()
+enum class EParticleSysParamType : uint8
+{
+	Scalar,
+	Vector,
+	Color,
+	Actor,
+};
+
+USTRUCT()
+struct FParticleSysParam
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere)
+	FString Name;
+
+	UPROPERTY(EditAnywhere)
+	EParticleSysParamType ParamType = EParticleSysParamType::Scalar;
+
+	UPROPERTY(EditAnywhere)
+	float Scalar = 0.0f;
+
+	UPROPERTY(EditAnywhere)
+	FVector Vector = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere)
+	FColor Color = FColor(255, 255, 255, 255);
+
+	UPROPERTY(EditAnywhere)
+	AActor* Actor = nullptr;
+};
 
 // 게임 코드가 파티클 이벤트를 받는 델리게이트. EventGenerator가 내보낸 이벤트만 온다
 DECLARE_DELEGATE(FOnParticleSpawnSignature, UParticleSystemComponent*, const FParticleEventSpawnData&);
@@ -48,6 +83,19 @@ public:
 	bool HasCompleted() const { return bWasCompleted; }
 	double GetSendRenderDataMs() const { return SendRenderDataMs; }
 	double GetEventDispatchMs() const { return EventDispatchMs; }
+
+	void SetFloatParameter(const FString& ParameterName, float Value);
+	void SetVectorParameter(const FString& ParameterName, const FVector& Value);
+	void SetColorParameter(const FString& ParameterName, const FColor& Value);
+	void SetActorParameter(const FString& ParameterName, AActor* Value);
+	bool GetFloatParameterValue(const FString& ParameterName, float& OutValue) const;
+	bool GetVectorParameterValue(const FString& ParameterName, FVector& OutValue) const;
+	bool GetColorParameterValue(const FString& ParameterName, FColor& OutValue) const;
+	AActor* GetActorParameterValue(const FString& ParameterName) const;
+	const TArray<FParticleSysParam>& GetInstanceParameters() const { return InstanceParameters; }
+
+	void SetAfterimageSource(USkeletalMeshComponent* InSource) { AfterimageSource = InSource; }
+	USkeletalMeshComponent* GetAfterimageSource() const;
 
 	FPrimitiveSceneProxy* CreateSceneProxy() override;
 	FBox CalcBounds() const override;
@@ -117,6 +165,11 @@ private:
 
 	UPROPERTY(EditAnywhere)
 	UParticleSystem* Template = nullptr;
+
+	UPROPERTY(EditAnywhere)
+	TArray<FParticleSysParam> InstanceParameters;
+
+	USkeletalMeshComponent* AfterimageSource = nullptr;
 
 	TArray<FParticleEmitterInstance*> EmitterInstances;
 	// EmitterInstances를 만든 템플릿. Template이 직렬화 등으로 바뀌면 이 값과 달라진다

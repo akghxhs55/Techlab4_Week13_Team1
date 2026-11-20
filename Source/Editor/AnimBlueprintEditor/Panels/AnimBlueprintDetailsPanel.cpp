@@ -37,8 +37,45 @@ void FAnimBlueprintDetailsPanel::DrawContent()
             DrawFloatInput("Blend Input X", Node->FloatInput, false);
             break;
 
+        case EAnimBlueprintNodeType::BlendSpace2DPlayer:
+            DrawAssetSelector(Node->BlendSpacePath, true);
+            DrawFloatInput("Blend Input X", Node->FloatInput, false);
+            DrawFloatInput("Blend Input Y", Node->SecondFloatInput, false);
+            break;
+
         case EAnimBlueprintNodeType::TwoWayBlend:
             DrawFloatInput("Alpha", Node->FloatInput, true);
+            ImGui::Checkbox("Sync By Normalized Time", &Node->bSyncByNormalizedTime);
+            break;
+
+        case EAnimBlueprintNodeType::Slot:
+        {
+            char SlotBuffer[128] = {};
+            std::snprintf(SlotBuffer, sizeof(SlotBuffer), "%s", Node->SlotName.c_str());
+            if (ImGui::InputText("Slot Name", SlotBuffer, sizeof(SlotBuffer)))
+            {
+                Node->SlotName = SlotBuffer;
+            }
+            break;
+        }
+
+        case EAnimBlueprintNodeType::LayeredBoneBlend:
+        {
+            char BoneBuffer[128] = {};
+            std::snprintf(BoneBuffer, sizeof(BoneBuffer), "%s", Node->StartBoneName.c_str());
+            if (ImGui::InputText("Start Bone Name", BoneBuffer, sizeof(BoneBuffer)))
+            {
+                Node->StartBoneName = BoneBuffer;
+            }
+            DrawFloatInput("Alpha", Node->FloatInput, true);
+            ImGui::Checkbox("Mesh Space Rotation Blend", &Node->bMeshSpaceRotationBlend);
+            break;
+        }
+
+        case EAnimBlueprintNodeType::AimOffset1D:
+            DrawAimOffsetSelector(Node->AimOffsetPath);
+            DrawFloatInput("Alpha", Node->FloatInput, true);
+            DrawFloatInput("Pitch", Node->SecondFloatInput, false);
             break;
 
         case EAnimBlueprintNodeType::StateMachine:
@@ -88,7 +125,9 @@ void FAnimBlueprintDetailsPanel::DrawContent()
             break;
         }
 
-        if (Node->Type == EAnimBlueprintNodeType::SequencePlayer || Node->Type == EAnimBlueprintNodeType::BlendSpacePlayer)
+        if (Node->Type == EAnimBlueprintNodeType::SequencePlayer
+            || Node->Type == EAnimBlueprintNodeType::BlendSpacePlayer
+            || Node->Type == EAnimBlueprintNodeType::BlendSpace2DPlayer)
         {
             ImGui::Checkbox("Loop", &Node->bLooping);
             ImGui::DragFloat("Play Rate", &Node->PlayRate, 0.01f, 0.0f, 5.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -241,6 +280,61 @@ void FAnimBlueprintDetailsPanel::RefreshAssetList(bool bBlendSpace)
     {
         AssetListMessage = "Cannot read asset folder: " + Error.message();
     }
+}
+
+void FAnimBlueprintDetailsPanel::DrawAimOffsetSelector(FString& AimOffsetPath)
+{
+    const FString SelectedName = AimOffsetPath.empty() ? "None" : std::filesystem::path(AimOffsetPath).filename().generic_string();
+    const bool bOpen = ImGui::BeginCombo("AimOffset", SelectedName.c_str());
+    if (!bOpen)
+        return;
+
+    if (ImGui::IsWindowAppearing())
+        RefreshAimOffsetList();
+
+    if (ImGui::Selectable("None", AimOffsetPath.empty()))
+        AimOffsetPath.clear();
+
+    for (const FString& Path : AssetPaths)
+    {
+        const FString Name = std::filesystem::path(Path).filename().generic_string();
+        const bool bSelected = (AimOffsetPath == Path);
+        ImGui::PushID(Path.c_str());
+        if (ImGui::Selectable(Name.c_str(), bSelected))
+            AimOffsetPath = Path;
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+}
+
+void FAnimBlueprintDetailsPanel::RefreshAimOffsetList()
+{
+    AssetPaths.clear();
+    AssetListMessage.clear();
+
+    const FString& PreviewMeshPath = Editor.GetBlueprintData().PreviewMeshPath;
+    FString FilePath = FAssetUtils::ResolveAssetFilePath(PreviewMeshPath);
+    if (FilePath.empty())
+        FilePath = PreviewMeshPath;
+    const std::filesystem::path Directory = std::filesystem::path(FilePath).parent_path();
+    if (Directory.empty())
+        return;
+
+    std::error_code Error;
+    std::filesystem::directory_iterator It(Directory, Error);
+    const std::filesystem::directory_iterator End;
+    while (!Error && It != End)
+    {
+        if (It->is_regular_file(Error) && It->path().extension() == ".aimoffset")
+        {
+            const FString AssetPath = FAssetUtils::GetAssetKey(It->path().generic_string());
+            if (!AssetPath.empty())
+                AssetPaths.push_back(AssetPath);
+        }
+        if (!Error)
+            It.increment(Error);
+    }
+    std::sort(AssetPaths.begin(), AssetPaths.end());
 }
 
 void FAnimBlueprintDetailsPanel::DrawFloatInput(const char* Label, FAnimBlueprintFloatInput& Input, bool bAlpha)

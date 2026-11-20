@@ -2,9 +2,12 @@
 
 #include "UObject/Object.h"
 #include "Math/Color.h"
+#include "Math/Vector.h"
+#include "Containers/Map.h"
 #include "AnimNotifyState.generated.h"
 
 class USkeletalMeshComponent;
+class UParticleSystemComponent;
 class UAnimSequenceBase;
 struct FAnimNotifyEventReference;   // const 참조로만 받으므로 전방 선언으로 충분
 
@@ -34,4 +37,41 @@ public:
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyTick(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+};
+
+UCLASS()
+class UAnimNotifyState_ParticleEffect : public UAnimNotifyState
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY(EditAnywhere)
+	FString ParticlePath;
+
+	UPROPERTY(EditAnywhere)
+	FString BoneName;
+
+	UPROPERTY(EditAnywhere)
+	FString SecondBoneName;
+
+	UPROPERTY(EditAnywhere)
+	FString BaseParameterName = "RibbonBase";
+
+	UPROPERTY(EditAnywhere)
+	FString TipParameterName = "RibbonTip";
+
+	UPROPERTY(EditAnywhere)
+	FVector BoneOffset = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere)
+	bool bFollowBoneRotation = true;
+
+	UPROPERTY(EditAnywhere)
+	bool bLoopDuringState = true;
+
+	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyTick(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+
+private:
+	TMap<USkeletalMeshComponent*, UParticleSystemComponent*> ActiveComponents;
 };

@@ -3,6 +3,7 @@
 #include "Window.h"
 #include "Core/Windows/ResourceIds.h"
 #include "Input/InputSystem.h"
+#include "Input/MouseCapture.h"
 
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
@@ -45,6 +46,22 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	else
 	{
 		window = reinterpret_cast<FWindow*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
+	}
+
+	// 마우스 잠금 메시지는 ImGui 입력 상태에 섞이지 않게 훅보다 먼저 처리한다
+	if (msg == WM_KILLFOCUS || (msg == WM_ACTIVATEAPP && wParam == FALSE) || msg == WM_DESTROY)
+	{
+		FMouseCapture::Release(hWnd);
+	}
+	if (msg == WM_INPUT)
+	{
+		FMouseCapture::ProcessRawInput(hWnd, reinterpret_cast<HRAWINPUT>(lParam));
+		return DefWindowProc(hWnd, msg, wParam, lParam);
+	}
+	if (msg == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT && FMouseCapture::IsActive(hWnd))
+	{
+		SetCursor(nullptr);
+		return TRUE;
 	}
 
 	// 훅을 받지 않는 창의 메시지는 ImGui 입력 상태에 섞이지 않게 바로 창이 처리한다.

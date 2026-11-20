@@ -12,6 +12,8 @@
 #include "GameFramework/DefaultPawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/MyPlayerController.h"
+#include "GameFramework/GameMode.h"
+#include "GameFramework/GameHUD.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Input/InputSystem.h"
 
@@ -338,11 +340,14 @@ void UWorld::ClearWorld()
 
 	for (ULevel* Level : Levels)
 	{
-		for (AActor* Actor : Level->Actors)
+		// EndPlay 중 자식 액터가 Destroy 되어도 배열 순회가 어긋나지 않도록 스냅샷으로 순회한다
+		const TArray<AActor*> ActorsToEnd = Level->Actors;
+		for (AActor* Actor : ActorsToEnd)
 		{
-			if (!Actor) continue;
+			if (!Actor || Level->Actors.Find(Actor) == INDEX_NONE) continue;
 			if (Actor->HasBegunPlay())
 				Actor->EndPlay();
+			if (Level->Actors.Find(Actor) == INDEX_NONE) continue;
 			Actor->UnregisterAllComponents();
 			Actor->RegisterAllActorTickFunctions(false);
 
@@ -438,6 +443,8 @@ void UWorld::ReleaseWorldReferences(AActor* Actor)
 		PlayerController->UnPossess();
 		PlayerController = nullptr;
 	}
+	if (GameMode == Actor) GameMode = nullptr;
+	if (HUD == Actor) HUD = nullptr;
 	if (MainCamera == Actor)
 	{
 		// 렌더러는 메인 카메라가 항상 있다고 가정하므로 기본 카메라를 다시 만든다.
@@ -837,26 +844,29 @@ void UWorld::BeginPlay()
 {
 	if (!IsGameWorld() || bBegunPlay) return;
 
-	//TODO : PlayerPawn, PlayerController Class 설정을 GameMode로 옮겨 수정 가능하게 바꿔야 한다.
-	if (!PlayerPawn)
+	UClass* ModeClass = FindClass(GameModeClassName);
+	if (!ModeClass || !ModeClass->IsChildOf(AGameMode::StaticClass()) || !ModeClass->Constructor)
+		ModeClass = AGameMode::StaticClass();
+	GameMode = Cast<AGameMode>(SpawnActor(ModeClass));
+	if (!GameMode) return;
+	if (!PlayerPawn && PlayerPawnClassName.empty())
 	{
 		for (AActor* Actor : PersistentLevel->GetActors())
 		{
 			if (APawn* Pawn = Cast<APawn>(Actor)) { PlayerPawn = Pawn; break; }
 		}
 	}
-	if (!PlayerPawn)
-	{
-		FTransform Transform = MainCamera ? MainCamera->GetActorTransform() : FTransform::Identity;
-		PlayerPawn = SpawnActor<ADefaultPawn>(NAME_None, &Transform);
-	}
-	if (!PlayerController) 
-		PlayerController = SpawnActor<AMyPlayerController>();
-	
+	GameMode->SpawnPlayer(PlayerPawn, PlayerController);
 	if (PlayerController)
-		PlayerController->SpawnPlayerCameraManager();
-	
-	if (PlayerController && PlayerPawn) PlayerController->Possess(PlayerPawn);
+	{
+		UClass* HUDClass = GetHUDClass();
+		HUD = Cast<AGameHUD>(SpawnActor(HUDClass));
+		if (HUD)
+		{
+			HUD->SetOwningPlayerController(PlayerController);
+			PlayerController->SetHUD(HUD);
+		}
+	}
 
 	// 기존 액터 목록을 고정한 후 시작한다. BeginPlay 중 생성된 액터는 대기열로 간다.
 	TArray<AActor*> InitialActors;
@@ -881,14 +891,89 @@ void UWorld::EndPlay()
 {
 	CoroutineScheduler.Reset();
 	bBegunPlay = false;
+	if (HUD) HUD->HideWidget();
 	if (PlayerController)
 	{
+		PlayerController->SetHUD(nullptr);
 		PlayerController->ClearInputState();
 		PlayerController->UnPossess();
 	}
 	PlayerController = nullptr;
 	PlayerPawn = nullptr;
+	GameMode = nullptr;
+	HUD = nullptr;
 	bIsPaused = false;
+}
+
+namespace
+{
+	UClass* ResolveGameClass(const FString& Name, UClass* Base, UClass* Fallback)
+	{
+		UClass* Class = Name.empty() ? nullptr : FindClass(Name);
+		return Class && Class->IsChildOf(Base) && Class->Constructor ? Class : Fallback;
+	}
+}
+
+UClass* UWorld::GetGameModeClass() const
+{
+	return ResolveGameClass(GameModeClassName, AGameMode::StaticClass(), AGameMode::StaticClass());
+}
+
+UClass* UWorld::GetDefaultPawnClass() const
+{
+	UClass* ModeClass = GetGameModeClass();
+	const AGameMode* ActiveMode = GameMode ? GameMode : (ModeClass ? ModeClass->GetDefaultObject<AGameMode>() : nullptr);
+	return ResolveGameClass(PlayerPawnClassName, APawn::StaticClass(),
+		ActiveMode ? ActiveMode->GetDefaultPawnClass() : ADefaultPawn::StaticClass());
+}
+
+UClass* UWorld::GetPlayerControllerClass() const
+{
+	UClass* ModeClass = GetGameModeClass();
+	const AGameMode* ActiveMode = GameMode ? GameMode : (ModeClass ? ModeClass->GetDefaultObject<AGameMode>() : nullptr);
+	return ResolveGameClass(PlayerControllerClassName, APlayerController::StaticClass(),
+		ActiveMode ? ActiveMode->GetPlayerControllerClass() : AMyPlayerController::StaticClass());
+}
+
+UClass* UWorld::GetHUDClass() const
+{
+	UClass* ModeClass = GetGameModeClass();
+	const AGameMode* ActiveMode = GameMode ? GameMode : (ModeClass ? ModeClass->GetDefaultObject<AGameMode>() : nullptr);
+	return ResolveGameClass(HUDClassName, AGameHUD::StaticClass(),
+		ActiveMode ? ActiveMode->GetHUDClass() : AGameHUD::StaticClass());
+}
+
+bool UWorld::SetGameModeClass(UClass* Class)
+{
+	if (Class && (!Class->IsChildOf(AGameMode::StaticClass()) || !Class->Constructor)) return false;
+	const FString NextName = Class ? Class->Name : FString();
+	if (GameModeClassName == NextName) return true;
+	GameModeClassName = NextName;
+	PlayerPawnClassName.clear();
+	PlayerControllerClassName.clear();
+	HUDClassName.clear();
+	return true;
+}
+
+bool UWorld::SetPlayerPawnClass(UClass* Class)
+{
+	if (Class && (!Class->IsChildOf(APawn::StaticClass()) || !Class->Constructor)) return false;
+	PlayerPawnClassName = Class ? Class->Name : "";
+	return true;
+}
+
+bool UWorld::SetPlayerControllerClass(UClass* Class)
+{
+	if (Class && (!Class->IsChildOf(APlayerController::StaticClass()) || !Class->Constructor)) return false;
+	PlayerControllerClassName = Class ? Class->Name : "";
+	return true;
+}
+
+bool UWorld::SetHUDClass(UClass* Class)
+{
+	if (Class && (!Class->IsChildOf(AGameHUD::StaticClass()) || !Class->Constructor)) return false;
+	HUDClassName = Class ? Class->Name : "";
+	return true;
 }
 
 UWorld* UWorld::CreateWorld(const EWorldType InWorldType, bool bInformEngineOfWorld, FName WorldName)
@@ -1094,7 +1179,12 @@ void UWorld::UpdateOverlaps()
 float UWorld::GetEffectiveTimeDilation() const
 {
 	const float HitStop = (HitStopTimeRemaining > 0.0f) ? HitStopDilation : 1.0f;
-	return FMath::Clamp(GlobalTimeDilation * HitStop, MinTimeDilation, MaxTimeDilation);
+	return FMath::Clamp(GlobalTimeDilation * CinematicTimeDilation * HitStop, MinTimeDilation, MaxTimeDilation);
+}
+
+void UWorld::SetGlobalTimeDilation(float InDilation)
+{
+	GlobalTimeDilation = FMath::Clamp(InDilation, MinTimeDilation, MaxTimeDilation);
 }
 
 void UWorld::StartHitStop(float Duration, float Dilation)

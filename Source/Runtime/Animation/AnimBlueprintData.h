@@ -22,7 +22,11 @@ enum class EAnimBlueprintNodeType : uint8
     Entry,
     State,
     StateResult,
-    AnyState
+    AnyState,
+    BlendSpace2DPlayer,
+    Slot,
+    LayeredBoneBlend,
+    AimOffset1D
 };
 
 enum class EAnimBlueprintVariableType : uint8
@@ -96,9 +100,15 @@ struct FAnimBlueprintNode
 
     FString SequencePath;
     FString BlendSpacePath;
+    FString AimOffsetPath;
+    FString SlotName = "UpperBody";
+    FString StartBoneName = "spine_01";
     FAnimBlueprintFloatInput FloatInput;
+    FAnimBlueprintFloatInput SecondFloatInput;
     bool bLooping = true;
     bool bResetOnEntry = true;
+    bool bMeshSpaceRotationBlend = false;
+    bool bSyncByNormalizedTime = false;
     float PlayRate = 1.0f;
 
     // State 노드 전용

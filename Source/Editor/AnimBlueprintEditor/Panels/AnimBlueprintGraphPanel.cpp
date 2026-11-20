@@ -247,7 +247,7 @@ void FAnimBlueprintGraphPanel::DrawNodes(FAnimBlueprintGraph& Graph)
         if (Node.InputPosePinId != INDEX_NONE)
         {
             NodeEditor::BeginPin(NodeEditor::PinId(Node.InputPosePinId), NodeEditor::PinKind::Input);
-            ImGui::TextUnformatted(Node.Type == EAnimBlueprintNodeType::TwoWayBlend ? "o A" : "o Pose");
+            ImGui::TextUnformatted((Node.Type == EAnimBlueprintNodeType::TwoWayBlend || Node.Type == EAnimBlueprintNodeType::LayeredBoneBlend) ? "o A" : "o Pose");
             NodeEditor::EndPin();
         }
 
@@ -429,9 +429,29 @@ void FAnimBlueprintGraphPanel::DrawCreationMenu()
                 Editor.AddPoseNode(EAnimBlueprintNodeType::BlendSpacePlayer, CreationPosition);
             }
 
+            if (ImGui::MenuItem("BlendSpace 2D Player"))
+            {
+                Editor.AddPoseNode(EAnimBlueprintNodeType::BlendSpace2DPlayer, CreationPosition);
+            }
+
             if (ImGui::MenuItem("Two Way Blend"))
             {
                 Editor.AddPoseNode(EAnimBlueprintNodeType::TwoWayBlend, CreationPosition);
+            }
+
+            if (ImGui::MenuItem("Slot"))
+            {
+                Editor.AddPoseNode(EAnimBlueprintNodeType::Slot, CreationPosition);
+            }
+
+            if (ImGui::MenuItem("Layered Bone Blend"))
+            {
+                Editor.AddPoseNode(EAnimBlueprintNodeType::LayeredBoneBlend, CreationPosition);
+            }
+
+            if (ImGui::MenuItem("AimOffset 1D"))
+            {
+                Editor.AddPoseNode(EAnimBlueprintNodeType::AimOffset1D, CreationPosition);
             }
 
             if (ImGui::MenuItem("State Machine"))

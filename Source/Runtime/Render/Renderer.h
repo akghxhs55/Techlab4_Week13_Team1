@@ -1,13 +1,15 @@
 #pragma once
 
-#include "RenderPacket.h"
+#include "Render/MeshBatch.h"
 #include "Render/ObjectConstants.h"
 #include "Texture2D.h"
 #include "Text/Font.h"
 #include "SceneView.h"
 #include "Engine/LightSceneProxy.h"
 #include "Render/Buffer.h"
+#include "Render/Occlusion/GPUOcclusion.h"
 #include "MeshPassProcessor.h"
+#include <array>
 #include <span>
 
 class FHeightFogRenderer;
@@ -16,6 +18,7 @@ class FCameraOverlayRenderer;
 
 class FTextRenderer;
 class FSkyboxRenderer;
+class FProjectedDecalRenderer;
 
 class FRenderer
 {
@@ -26,14 +29,12 @@ public:
 
 	bool Init();
 
-	// 패스의 의미를 해석하지 않고 준비된 GPU 상태와 드로우만 제출한다.
-	void UploadViewMatrix(const FMatrix& ViewProjection);
-	void DrawMeshes(std::span<const FMeshDrawBatch> Batches);
+	void UploadViewConstants(const FMatrix& ViewProjection, const FMatrix& ViewMatrix,
+		const FMatrix& ProjectionMatrix, float TotalTime = 0.0f);
 
-
-
-	uint8* BeginObjectConstants(uint32 MaxSlots);
-	void EndObjectConstants();
+	void SubmitVisibleCommands(std::span<const FVisibleMeshDrawCommand> Commands,
+		const FStructuredBuffer* GPUSceneBuffer = nullptr, uint32* OutDrawCalls = nullptr,
+		uint32* OutParticleDrawCalls = nullptr);
 
 	void InitScenePasses();
 
@@ -44,22 +45,36 @@ public:
 	FTextRenderer* GetSceneText() const { return SceneText.get(); }
 	FSkyboxRenderer* GetSkybox() const { return Skybox.get(); }
 	FSkyboxRenderer* GetPreviewSkybox() const { return PreviewSkybox.get(); }
+	FProjectedDecalRenderer* GetProjectedDecal() const { return ProjectedDecal.get(); }
 
 	FConstantBuffer* GetToneMapConstants() const { return ToneMapConstants.get(); }
 	FConstantBuffer* GetDecalConstants() const { return DecalConstants.get(); }
-	
+	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
+
 private:
-	void EnsurePerObjectSlotCapacity(uint32 SlotCount);
-	void BindBatch(const FMeshDrawBatch& Batch);
-	void BindObject(const FMeshDrawBatch& Batch, const FMeshDrawBatch::FItem& Item);
-	TUniquePtr<FConstantBuffer> ObjectCB;
+	struct FDrawRun
+	{
+		const FVisibleMeshDrawCommand* Visible = nullptr;
+		uint32 StartInstance = 0;
+		uint32 InstanceCount = 0;
+		bool bGPUSceneInstanced = false;
+	};
+
+	void EnsureInstanceIdCapacity(uint32 Count);
+	void UnbindUnusedResources(const TArray<FMeshDrawShaderResource>& NextResources,
+		TArray<FMeshDrawShaderResource>& InOutBoundResources);
+
+	static constexpr uint32 MaxCommandSlotCBs = 5;
+	std::array<TUniquePtr<FConstantBuffer>, MaxCommandSlotCBs> CommandSlotCBs;
 	TUniquePtr<FConstantBuffer> ViewCB;
-	TUniquePtr<FConstantBuffer> MaterialCB;
-	TUniquePtr<FConstantBuffer> PerObjectSlotCB;
+	TUniquePtr<FConstantBuffer> DrawBatchCB;
 	TUniquePtr<FConstantBuffer> ToneMapConstants;
 	TUniquePtr<FConstantBuffer> DecalConstants;
-	uint32 PerObjectSlotCapacity = 0;
-	bool bUsePerObjectSlots = false;
+	TUniquePtr<FStructuredBuffer> InstanceIdBuffer;
+	uint32 InstanceIdCapacity = 0;
+
+	TArray<uint32> ScratchInstanceIds;
+	TArray<FDrawRun> ScratchDrawRuns;
 
 	TUniquePtr<FHeightFogRenderer> HeightFog;
 	TUniquePtr<FFXAARenderer> FXAA;
@@ -67,4 +82,6 @@ private:
 	TUniquePtr<FTextRenderer> SceneText;
 	TUniquePtr<FSkyboxRenderer> Skybox;
 	TUniquePtr<FSkyboxRenderer> PreviewSkybox;
+	TUniquePtr<FProjectedDecalRenderer> ProjectedDecal;
+	FGPUOcclusion GPUOcclusion;
 };

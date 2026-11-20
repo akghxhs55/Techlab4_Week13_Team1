@@ -2,6 +2,10 @@
 #include "AssetManager.h"
 #include "Render/Buffer.h"
 #include "Render/Material.h"
+#include "Render/MaterialInstance.h"
+#include "Serialization/JsonArchive.h"
+#include <fstream>
+#include <set>
 
 #include "Render/Vertex.h"
 #include "Render/Texture2D.h"
@@ -21,6 +25,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimSequenceFile.h"
 #include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
 #include "Animation/BlendSpaceFile.h"
 #include "Particles/ParticleSystem.h"
 #include "Particles/ParticleSystemFile.h"
@@ -53,6 +58,9 @@ namespace
 		}
 		if (Extension == ".obj") {
 			return EAssetType::StaticMesh;
+		}
+		if (Extension == ".material") {
+			return EAssetType::Material;
 		}
 		if (Extension == ".bin" && FFbxMeshBake::IsBakedPath(Path)) {
 			// 파일을 읽지 않고 구분하도록 FFbxImporter의 저장 이름 규칙을 쓴다
@@ -239,6 +247,9 @@ void UAssetManager::LoadAsset(const FString& Key, const FString& Path) {
 	case EAssetType::StaticMesh:
 		LoadObjStaticMesh(Path);
 		break;
+	case EAssetType::Material:
+		LoadMaterialAsset(Path);
+		break;
 	default:
 		break;
 	}
@@ -267,6 +278,7 @@ URenderAsset* UAssetManager::FindOrLoadAsset(const FString& Path)
 		{
 			return FindOrLoadAsset(EngineKey);
 		}
+		KRS_LOG(Warning, "Asset not found: {}", Path);
 		return nullptr;
 	}
 	const FString SourcePath = *FoundSource;
@@ -652,6 +664,14 @@ URenderAsset* UAssetManager::LoadFbxMesh(const FString& Path, FString& OutError)
 	}
 	if (!Asset) { OutError = "FBX binary: mesh resource creation failed: " + Path; return nullptr; }
 	Get().RegisterAsset(Key, Asset);
+	if (USkeletalMesh* SkelMesh = Cast<USkeletalMesh>(Asset))
+	{
+		const FString ResolvedFile = FAssetUtils::ResolveAssetFilePath(Key);
+		if (!ResolvedFile.empty())
+		{
+			SkelMesh->LoadSocketsFromFile(ResolvedFile + ".sockets.json");
+		}
+	}
 	return Asset;
 }
 
@@ -727,7 +747,7 @@ void UAssetManager::ForEachObjStaticMesh(const std::function<void(const FString&
 namespace
 {
 	template<typename TSlot>
-	bool BuildMaterialsFromSlotsImpl(const TArray<TSlot>& Slots, TArray<UMaterial*>& OutMaterials)
+	bool BuildMaterialsFromSlotsImpl(const TArray<TSlot>& Slots, TArray<UMaterialInterface*>& OutMaterials)
 	{
 		// MaterialSlots를 실제 UMaterial로 변환
 		UMaterial* DefaultMaterial = UAssetManager::GetAssetByPath<UMaterial>("DefaultMaterial");
@@ -744,6 +764,7 @@ namespace
 				return false;
 			}
 			Material->BaseColor = Slot.BaseColor;
+			Material->ApplyImportedProperties(Slot);
 			// 임포트 메쉬의 UV는 0~1 밖의 타일을 쓰는 경우가 많아 반복 샘플링을 기본으로 한다.
 			Material->SamplerState = ESamplerState::LinearWrap;
 			if (Material->BaseColor.W < 1.0f)
@@ -777,14 +798,141 @@ namespace
 
 }
 
-bool UAssetManager::BuildMaterialsFromSlots(const TArray<FStaticMaterialSlot>& Slots, TArray<UMaterial*>& OutMaterials)
+bool UAssetManager::BuildMaterialsFromSlots(const TArray<FStaticMaterialSlot>& Slots, TArray<UMaterialInterface*>& OutMaterials)
 {
 	return BuildMaterialsFromSlotsImpl(Slots, OutMaterials);
 }
 
-bool UAssetManager::BuildMaterialsFromSlots(const TArray<FSkeletalMaterialSlot>& Slots, TArray<UMaterial*>& OutMaterials)
+bool UAssetManager::BuildMaterialsFromSlots(const TArray<FSkeletalMaterialSlot>& Slots, TArray<UMaterialInterface*>& OutMaterials)
 {
 	return BuildMaterialsFromSlotsImpl(Slots, OutMaterials);
+}
+
+void UAssetManager::RegisterMaterialAsset(const FString& AssetPath, UMaterialInterface* Material)
+{
+	if (!Material)
+	{
+		return;
+	}
+
+	const FString Key = FAssetUtils::GetAssetKey(AssetPath);
+	Material->SetPath(Key);
+	Get().RegisterAsset(Key, Material);
+
+	const FString ResolvedFile = FAssetUtils::ResolveAssetFilePath(Key);
+	if (!ResolvedFile.empty())
+	{
+		Get().AssetPathMap.Add(Key, ResolvedFile);
+	}
+}
+
+UMaterialInterface* UAssetManager::LoadMaterialAsset(const FString& AssetPath)
+{
+	if (AssetPath.empty())
+	{
+		return nullptr;
+	}
+
+	// GetAssetByPath는 FindOrLoadAsset에서 다시 여기로 들어오므로 쓰지 않는다
+	if (UMaterialInterface* Cached = Cast<UMaterialInterface>(FindLoadedAsset(AssetPath)))
+	{
+		return Cached;
+	}
+
+	const FString Key = FAssetUtils::GetAssetKey(AssetPath);
+	if (fs::path(FPaths::FromUtf8(Key)).extension() != ".material")
+	{
+		return nullptr;
+	}
+
+	static std::set<FString> LoadingMaterials;
+	if (!LoadingMaterials.insert(Key).second)
+	{
+		return nullptr;
+	}
+
+	FString FilePath = FAssetUtils::ResolveAssetFilePath(Key);
+	if (FilePath.empty())
+	{
+		FilePath = FPaths::ToUtf8(FPaths::ProjectContentDir() / FPaths::FromUtf8(Key));
+	}
+
+	std::ifstream Input(FPaths::FromUtf8(FilePath));
+	if (!Input)
+	{
+		KRS_LOG(Warning, "Material not found: {}", AssetPath);
+		LoadingMaterials.erase(Key);
+		return nullptr;
+	}
+
+	const json Root = json::parse(Input, nullptr, false);
+	if (!Root.is_object() || !Root.contains("Class") || !Root["Class"].is_string() || !Root.contains("Object") || !Root["Object"].is_object())
+	{
+		KRS_LOG(Warning, "Invalid Material asset structure: {}", Key);
+		LoadingMaterials.erase(Key);
+		return nullptr;
+	}
+
+	const FString ClassName = Root["Class"].get<FString>();
+	UMaterialInterface* Material = nullptr;
+	if (ClassName == UMaterialInstanceConstant::StaticClass()->Name || ClassName == "UMaterialInstance")
+	{
+		Material = NewObject<UMaterialInstanceConstant>();
+	}
+	else if (ClassName == UMaterial::StaticClass()->Name)
+	{
+		Material = NewObject<UMaterial>();
+	}
+
+	const FString LegacyClassName = ClassName == "UMaterialInstance" ? "UMaterialInstance" : "";
+	if (!Material || !FJsonArchive::LoadObject(Material, FilePath, LegacyClassName))
+	{
+		if (Material)
+		{
+			delete Material;
+		}
+		LoadingMaterials.erase(Key);
+		return nullptr;
+	}
+
+	if (UMaterial* BaseMat = Cast<UMaterial>(Material))
+	{
+		BaseMat->ParamLayout = EMaterialParamLayout::StaticMesh;
+		BaseMat->Shader = FRenderResourceManager::GetShaderProgram("EngineResources/Shaders/UberLit.hlsl");
+		BaseMat->ParamBuffer = RenderCommand::CreateConstantBuffer(sizeof(FStaticMeshMaterialParams));
+	}
+
+	Material->SetPath(Key);
+	Get().RegisterAsset(Key, Material);
+	LoadingMaterials.erase(Key);
+	return Material;
+}
+
+bool UAssetManager::SaveMaterialAsset(const FString& AssetPath, const UMaterialInterface& Material)
+{
+	const FString Key = FAssetUtils::GetAssetKey(AssetPath);
+	if (Key.empty() || fs::path(FPaths::FromUtf8(Key)).extension() != ".material")
+	{
+		return false;
+	}
+
+	const fs::path FilePath = FPaths::ProjectContentDir() / FPaths::FromUtf8(Key);
+	std::error_code Error;
+	fs::create_directories(FilePath.parent_path(), Error);
+	if (Error)
+	{
+		return false;
+	}
+
+	UMaterialInterface* MutableMaterial = const_cast<UMaterialInterface*>(&Material);
+	if (!FJsonArchive::SaveObject(MutableMaterial, FPaths::ToUtf8(FilePath)))
+	{
+		return false;
+	}
+
+	MutableMaterial->SetPath(Key);
+	RegisterMaterialAsset(Key, MutableMaterial);
+	return true;
 }
 
 UBlendSpace1D* UAssetManager::LoadBlendSpace(const FString& Path)
@@ -810,6 +958,29 @@ UBlendSpace1D* UAssetManager::LoadBlendSpace(const FString& Path)
 	return BlendSpace;
 }
 
+UBlendSpace2D* UAssetManager::LoadBlendSpace2D(const FString& Path)
+{
+	const FString Key = FAssetUtils::GetAssetKey(Path);
+	if (UBlendSpace2D** Found = Get().BlendSpace2DMap.Find(Key))
+	{
+		return *Found;
+	}
+
+	const FString FilePath = FAssetUtils::ResolveAssetFilePath(Path);
+	UBlendSpace2D* BlendSpace = NewObject<UBlendSpace2D>();
+
+	FString Error;
+	if (!BlendSpaceFile::Read2D(std::filesystem::path(FilePath.empty() ? Path : FilePath), *BlendSpace, Error))
+	{
+		KRS_LOG(Warning, "Failed to load BlendSpace2D: {} ({})", Path, Error);
+		delete BlendSpace;
+		return nullptr;
+	}
+
+	Get().BlendSpace2DMap[Key] = BlendSpace;
+	return BlendSpace;
+}
+
 UParticleSystem* UAssetManager::LoadParticleSystem(const FString& Path)
 {
 	const FString Key = FAssetUtils::GetAssetKey(Path);
@@ -831,4 +1002,51 @@ UParticleSystem* UAssetManager::LoadParticleSystem(const FString& Path)
 
 	Get().ParticleSystemMap[Key] = ParticleSystem;
 	return ParticleSystem;
+}
+
+FLODGenerateResult UAssetManager::GenerateStaticMeshLODs(UStaticMesh& Mesh, const FLODGenerateRequest& Request)
+{
+	TArray<FStaticMeshData> Generated;
+	FLODGenerateResult Result = FStaticMeshLODGenerator::Generate(Mesh.GetMeshData(), Generated);
+	if (!Result.bSuccess)
+	{
+		return Result;
+	}
+
+	if (!(Request.ScreenThresholds[0] > Request.ScreenThresholds[1] &&
+		Request.ScreenThresholds[1] > Request.ScreenThresholds[2] &&
+		Request.ScreenThresholds[2] > 0.0f))
+	{
+		Result.bSuccess = false;
+		Result.FailureReason = "Screen thresholds must descend";
+		return Result;
+	}
+
+	TArray<FStaticMeshLODResource> NewResources;
+	for (FStaticMeshData& Data : Generated)
+	{
+		FStaticMeshLODResource Resource;
+		Resource.Data = std::move(Data);
+		Resource.Data.BuildTangentSpace();
+		Resource.Data.OptimizeTriangleOrderForVertexCache();
+		Resource.VertexBuffer = RenderCommand::CreateStaticVertexBuffer(
+			Resource.Data.Vertices.GetData(),
+			sizeof(FVertex) * static_cast<uint32>(Resource.Data.Vertices.Num()),
+			sizeof(FVertex));
+		Resource.IndexBuffer = RenderCommand::CreateStaticIndexBuffer(
+			Resource.Data.Indices.GetData(),
+			static_cast<uint32>(Resource.Data.Indices.Num()));
+		if (!Resource.VertexBuffer || !Resource.IndexBuffer)
+		{
+			Result.bSuccess = false;
+			Result.FailureReason = "LOD GPU buffer creation failed";
+			return Result;
+		}
+		NewResources.Add(std::move(Resource));
+	}
+
+	Mesh.AdditionalLODs = std::move(NewResources);
+	Mesh.ScreenThresholds = Request.ScreenThresholds;
+	Mesh.RebuildRenderData();
+	return Result;
 }

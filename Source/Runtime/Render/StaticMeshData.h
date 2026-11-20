@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Vertex.h"
+#include "Render/ImportedMaterialProperties.h"
 #include "Math/BVH.h"
 #include "Math/Box.h"
 #include "Math/OBBTree.h"
@@ -13,12 +14,19 @@ struct FStaticMeshSection
 	uint32 MaterialSlotIndex = 0;
 };
 
-struct FStaticMaterialSlot
+struct FStaticMaterialSlot : FImportedMaterialProperties
 {
 	FString Name;
 	FVector4 BaseColor = FVector4(1, 1, 1, 1);
 	FString DiffuseTexturePath;
 	FString NormalTexturePath{};
+};
+
+struct FLODSourceVertex
+{
+	int32 PositionIndex = -1;
+	int32 UVIndex = -1;
+	int32 NormalIndex = -1;
 };
 
 struct FMeshTriangleElement
@@ -37,6 +45,8 @@ struct FStaticMeshData
 	TArray<FStaticMaterialSlot> MaterialSlots;
 	FBox AABB;
 
+	// 단순화 토폴로지 판정용 CPU 메타데이터
+	TArray<FLODSourceVertex> LODSourceVertices;
 
 	std::optional<TBVH<FMeshTriangleElement>> TriangleBVH;
 	std::optional<FOBBTree> OBBTree;

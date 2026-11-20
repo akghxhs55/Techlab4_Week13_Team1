@@ -68,8 +68,12 @@ struct FBeamPayloadData
 	float   Pad0;
 	FVector TargetPoint;   // 월드 좌표
 	float   Pad1;
+	FVector SourceTangent;
+	float   Pad2;
+	FVector TargetTangent;
+	float   bHasTangents;
 };
-static_assert(sizeof(FBeamPayloadData) == 32, "FBeamPayloadData 크기 오류, 32여야 합니다.");
+static_assert(sizeof(FBeamPayloadData) == 64, "FBeamPayloadData size must be 64");
 
 // BeamNoise 모듈 Payload의 고정 부분. 바로 뒤에 FBeamNoisePoint가 (Frequency + 1)개 붙는다
 struct FBeamNoiseHeader

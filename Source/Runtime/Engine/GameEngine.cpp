@@ -9,6 +9,8 @@
 #include "Engine/GameViewportClient.h"
 #include "Input/InputSystem.h"
 #include "Input/GameKeyboardInput.h"
+#include "Input/MouseCapture.h"
+#include "GameFramework/PlayerController.h"
 #include "Render/RenderCommand.h"
 #include "Render/Renderer.h"
 #include "Render/SceneRenderer.h"
@@ -94,6 +96,14 @@ void UGameEngine::Tick(float DeltaTime)
 	}
 
 	DispatchInput(Viewport, DeltaTime);
+	if (Viewport.ConsumeExitRequest())
+	{
+		FMouseCapture::Release();
+		RequestEngineExit("game viewport exit request");
+		return;
+	}
+	if (APlayerController* PC = World->GetPlayerController(); PC && PC->GetCursorMode() == ECursorMode::Locked)
+		SetGameMouseCapture(World, true);
 
 	World->Tick(DeltaTime);
 	if (FAudioDevice* AudioDevice = GetMainAudioDevice())
@@ -186,7 +196,20 @@ void UGameEngine::RedrawViewports(FGameViewportClient& Viewport)
 // UObject 일괄 삭제와 Device 해제 전에 월드와 GPU 자원을 먼저 정리한다.
 void UGameEngine::PreExit()
 {
+	FMouseCapture::Release();
 	if (FWorldContext* Context = GetWorldContextFromType(EWorldType::Game))
 		DestroyWorldContext(Context->World());
 	UIRenderer.reset();
+}
+
+bool UGameEngine::SetGameMouseCapture(const UWorld* InWorld, bool bEnabled)
+{
+	FWindow* Window = GetEngineLoop().GetMainWindow();
+	FWorldContext* Context = GetWorldContextFromType(EWorldType::Game);
+	if (!Window || !InWorld || !Context || InWorld != Context->World())
+		return false;
+	RECT Bounds{};
+	::GetClientRect(Window->GetHandle(), &Bounds);
+	::MapWindowPoints(Window->GetHandle(), nullptr, reinterpret_cast<POINT*>(&Bounds), 2);
+	return FMouseCapture::Update(Window->GetHandle(), Bounds, bEnabled);
 }

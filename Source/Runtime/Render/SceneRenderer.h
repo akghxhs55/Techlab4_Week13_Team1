@@ -2,7 +2,7 @@
 
 #include "Core/Types.h"
 #include "Render/SceneView.h"
-#include "Render/RenderPacket.h"
+#include "Render/MeshBatch.h"
 #include "Render/MeshPassProcessor.h"
 #include "Render/SceneRenderData.h"
 #include "Render/SceneRenderOptions.h"
@@ -52,17 +52,16 @@ public:
 	FSceneRenderer(const FSceneRenderer&) = delete;
 	FSceneRenderer& operator=(const FSceneRenderer&) = delete;
 
-	// 가시성 검사 및 렌더 큐 수집
+	// 가시성 검사 및 동적 요소 수집
 	void InitViews(FRenderer* Renderer, const FSceneRenderOptions& Options);
 	static bool SetCascadeCount(uint32 Count);
 	static uint32 GetCascadeCount();
 	static bool SetCascadeLogRatio(float Ratio);
 	static float GetCascadeLogRatio();
 
-	// 뷰 결과를 하나 유지하는 벤치마크에서도 사용한다.
-	static void GatherRenderPackets(FScene& Scene, FSceneRenderData& Data, const FViewContext& View,
+	static void GatherViewVisibilityAndDynamicElements(FScene& Scene, FSceneRenderData& Data,
+		const FViewContext& View, const FSceneRenderOptions& Options,
 		const FFrustumPlanes* Frustum = nullptr, FRenderer* Renderer = nullptr);
-	static void PrepareDrawData(FRenderer* Renderer, const FSceneRenderData& Data);
 	const FRenderStats& GetRenderStats() const { return RenderData.RenderStats; }
 
 	// 한 뷰의 모든 패스를 정해진 순서로 등록한다.
@@ -77,15 +76,13 @@ public:
 	// 반투명 렌더링
 	void RenderTranslucent(FRenderer* Renderer, FConstantBuffer* FogConstants = nullptr);
 
-	// 전체 렌더 큐 조회
-	FRenderQueue& GetRenderQueue() { return RenderData.RenderQueue; }
-	const FRenderQueue& GetRenderQueue() const { return RenderData.RenderQueue; }
-
 	// 뷰 정보 조회
 	const FSceneView& GetView() const { return View; }
 	const FSceneRenderData& GetRenderData() const { return RenderData; }
-	
+
 private:
+	void BuildVisiblePassCommands(const FScene& Scene, EMeshPass Pass, const FSceneRenderOptions& Options,
+		bool bWireframe, TArray<FVisibleMeshDrawCommand>& OutCommands) const;
 	bool AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Renderer, FSceneViewTargets& Targets,
 		const FSceneRenderOptions& Options);
 	bool AddWorldNormalPass(FRenderGraphBuilder& Graph, FRenderer* Renderer, FSceneViewTargets& Targets,
@@ -137,7 +134,6 @@ private:
 	FSceneRenderData& RenderData;
 	bool bLightUploadSucceeded = false;
 	bool bTilesBuilt = false;
-	TArray<FMeshDrawBatch> ForwardBatches;
 	FViewContext CachedViewContext;
 	bool bCorePassSucceeded = true;
 	bool bFXAAPassSucceeded = true;

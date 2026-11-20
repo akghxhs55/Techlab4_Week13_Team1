@@ -4,9 +4,15 @@
 #include "AnimGraphInstance.h"
 #include "AnimSequence.h"
 #include "BlendSpace1D.h"
+#include "BlendSpace2D.h"
+#include "AnimMontageAsset.h"
 #include "AnimNode_SequencePlayer.h"
 #include "AnimNode_BlendSpacePlayer.h"
+#include "AnimNode_BlendSpace2DPlayer.h"
 #include "AnimNode_TwoWayBlend.h"
+#include "AnimNode_Slot.h"
+#include "AnimNode_LayeredBoneBlend.h"
+#include "AnimNode_AimOffset1D.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Render/SkeletalMesh.h"
 #include "UObject/UObjectGlobals.h"
@@ -188,7 +194,9 @@ namespace
         Visiting.Add(NodeId);
         int32 RuntimeIndex = INDEX_NONE;
 
-        if (Node->Type == EAnimBlueprintNodeType::SequencePlayer || Node->Type == EAnimBlueprintNodeType::BlendSpacePlayer)
+        if (Node->Type == EAnimBlueprintNodeType::SequencePlayer ||
+            Node->Type == EAnimBlueprintNodeType::BlendSpacePlayer ||
+            Node->Type == EAnimBlueprintNodeType::BlendSpace2DPlayer)
         {
             if (!std::isfinite(Node->PlayRate) || Node->PlayRate < 0.0f)
             {
@@ -289,7 +297,121 @@ namespace
 
             const FString Variable = Node->FloatInput.bUseVariable ? Node->FloatInput.Variable : FString();
             RuntimeIndex = Instance.AddTwoWayBlend(NodeA, NodeB, Variable);
-            Instance.GetNode<FAnimNode_TwoWayBlend>(RuntimeIndex)->Alpha = Node->FloatInput.Constant;
+            FAnimNode_TwoWayBlend* BlendNode = Instance.GetNode<FAnimNode_TwoWayBlend>(RuntimeIndex);
+            BlendNode->Alpha = Node->FloatInput.Constant;
+            BlendNode->bSyncByNormalizedTime = Node->bSyncByNormalizedTime;
+            break;
+        }
+
+        case EAnimBlueprintNodeType::BlendSpace2DPlayer:
+        {
+            if (!ValidateFloatInput(*Node))
+            {
+                return INDEX_NONE;
+            }
+            if (Node->SecondFloatInput.bUseVariable)
+            {
+                bool bFoundY = false;
+                for (const FAnimBlueprintVariable& Variable : BlueprintData.Variables)
+                {
+                    if (Variable.Name == Node->SecondFloatInput.Variable && Variable.Type == EAnimBlueprintVariableType::Float)
+                    {
+                        bFoundY = true;
+                        break;
+                    }
+                }
+                if (!bFoundY)
+                {
+                    SetError(NodeId, "Select a valid Float variable for Blend Input Y.");
+                    return INDEX_NONE;
+                }
+            }
+            if (Node->BlendSpacePath.empty())
+            {
+                SetError(NodeId, "Select a 2D BlendSpace for the BlendSpace 2D Player.");
+                return INDEX_NONE;
+            }
+            UBlendSpace2D* BlendSpace2D = Instance.LoadBlendSpace2D(Node->BlendSpacePath);
+            if (!BlendSpace2D || BlendSpace2D->GetSampleData().IsEmpty())
+            {
+                SetError(NodeId, "The 2D BlendSpace could not be loaded or has no samples.");
+                return INDEX_NONE;
+            }
+            for (const FBlendSample& Sample : BlendSpace2D->GetSampleData())
+            {
+                if (!std::isfinite(Sample.SampleValue.X) || !std::isfinite(Sample.SampleValue.Y) || !ValidateSequence(Sample.Animation, NodeId))
+                {
+                    SetError(NodeId, "The 2D BlendSpace contains invalid or incompatible samples.");
+                    return INDEX_NONE;
+                }
+            }
+            const FString VarX = Node->FloatInput.bUseVariable ? Node->FloatInput.Variable : FString();
+            const FString VarY = Node->SecondFloatInput.bUseVariable ? Node->SecondFloatInput.Variable : FString();
+            RuntimeIndex = Instance.AddBlendSpace2DPlayer(BlendSpace2D, VarX, VarY, Node->PlayRate);
+            FAnimNode_BlendSpace2DPlayer* Player2D = Instance.GetNode<FAnimNode_BlendSpace2DPlayer>(RuntimeIndex);
+            Player2D->bLooping = Node->bLooping;
+            Player2D->X = Node->FloatInput.Constant;
+            Player2D->Y = Node->SecondFloatInput.Constant;
+            break;
+        }
+
+        case EAnimBlueprintNodeType::Slot:
+        {
+            const int32 SourceNode = BuildPoseInput(Graph, NodeId, Node->InputPosePinId, Instance, Visiting, NodeIndices);
+            if (SourceNode == INDEX_NONE)
+            {
+                return INDEX_NONE;
+            }
+            RuntimeIndex = Instance.AddSlotNode(SourceNode, Node->SlotName.empty() ? FString("UpperBody") : Node->SlotName);
+            break;
+        }
+
+        case EAnimBlueprintNodeType::LayeredBoneBlend:
+        {
+            if (!ValidateFloatInput(*Node))
+            {
+                return INDEX_NONE;
+            }
+            const int32 NodeA = BuildPoseInput(Graph, NodeId, Node->InputPosePinId, Instance, Visiting, NodeIndices);
+            if (NodeA == INDEX_NONE)
+            {
+                return INDEX_NONE;
+            }
+            const int32 NodeB = BuildPoseInput(Graph, NodeId, Node->SecondInputPosePinId, Instance, Visiting, NodeIndices);
+            if (NodeB == INDEX_NONE)
+            {
+                return INDEX_NONE;
+            }
+            const FString Variable = Node->FloatInput.bUseVariable ? Node->FloatInput.Variable : FString();
+            RuntimeIndex = Instance.AddLayeredBoneBlend(NodeA, NodeB,
+                Node->StartBoneName.empty() ? FString("spine_01") : Node->StartBoneName,
+                Variable, Node->bMeshSpaceRotationBlend);
+            Instance.GetNode<FAnimNode_LayeredBoneBlend>(RuntimeIndex)->Alpha = Node->FloatInput.Constant;
+            break;
+        }
+
+        case EAnimBlueprintNodeType::AimOffset1D:
+        {
+            if (!ValidateFloatInput(*Node))
+            {
+                return INDEX_NONE;
+            }
+            const int32 SourceNode = BuildPoseInput(Graph, NodeId, Node->InputPosePinId, Instance, Visiting, NodeIndices);
+            if (SourceNode == INDEX_NONE)
+            {
+                return INDEX_NONE;
+            }
+            const FString AlphaVar = Node->FloatInput.bUseVariable ? Node->FloatInput.Variable : FString();
+            const FString PitchVar = Node->SecondFloatInput.bUseVariable ? Node->SecondFloatInput.Variable : FString();
+            RuntimeIndex = Instance.AddAimOffset1D(SourceNode, Node->AimOffsetPath, PitchVar, AlphaVar);
+            if (RuntimeIndex == INDEX_NONE)
+            {
+                SetError(NodeId, "Failed to load AimOffset asset.");
+                return INDEX_NONE;
+            }
+            FAnimNode_AimOffset1D* AimNode = Instance.GetNode<FAnimNode_AimOffset1D>(RuntimeIndex);
+            AimNode->Alpha = Node->FloatInput.Constant;
+            AimNode->Pitch = Node->SecondFloatInput.Constant;
             break;
         }
 

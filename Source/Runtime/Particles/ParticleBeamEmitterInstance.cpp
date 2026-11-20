@@ -5,6 +5,9 @@
 #include "ParticleEmitter.h"
 #include "Module/ParticleModuleTypeDataBeam.h"
 #include "Module/ParticleModuleBeamNoise.h"
+#include "Module/ParticleModuleBeamSource.h"
+#include "Module/ParticleModuleBeamTarget.h"
+#include "GameFramework/Actor.h"
 
 #include "Components/ParticleSystemComponent.h"
 
@@ -32,6 +35,10 @@ void FParticleBeamEmitterInstance::UpdateDynamicData(TUniquePtr<FDynamicEmitterD
 		Source.Sheets = BeamTypeData->GetSheets();
 		Source.Segments = BeamTypeData->GetSegments();
 		Source.TextureTile = BeamTypeData->GetTextureTile();
+		Source.TextureTileDistance = BeamTypeData->GetTextureTileDistance();
+		Source.TaperMethod = static_cast<uint8>(BeamTypeData->GetTaperMethod());
+		Source.TaperFactor = BeamTypeData->GetTaperFactor().GetFloatValue(EmitterTime, RandomStream);
+		Source.TaperScale = BeamTypeData->GetTaperScale().GetFloatValue(EmitterTime, RandomStream);
 	}
 
 	Source.NoiseOffset = 0;
@@ -107,7 +114,54 @@ void FParticleBeamEmitterInstance::ResolveBeamPoints(FBeamPayloadData& Payload) 
 
 	// Payload는 월드 좌표다. 시뮬레이션 공간 함수(GetEmitterOrigin 등)는 로컬 스페이스에서 원점을 돌려주므로 쓰지 않는다
 	const FMatrix& WorldMatrix = Component->GetWorldMatrix();
+	const UParticleModuleBeamSource* SourceModule = nullptr;
+	const UParticleModuleBeamTarget* TargetModule = nullptr;
+	if (CurrentLODLevel)
+	{
+		for (UParticleModule* Module : CurrentLODLevel->GetModules())
+		{
+			if (!Module || !Module->IsEnabled())
+				continue;
+			if (!SourceModule)
+				SourceModule = Cast<UParticleModuleBeamSource>(Module);
+			if (!TargetModule)
+				TargetModule = Cast<UParticleModuleBeamTarget>(Module);
+		}
+	}
+
 	Payload.SourcePoint = WorldMatrix.TransformPosition(FVector::ZeroVector);
+	if (SourceModule)
+	{
+		switch (SourceModule->GetSourceMethod())
+		{
+		case EBeamEndpointMethod::UserSet:
+			Payload.SourcePoint = WorldMatrix.TransformPosition(SourceModule->GetSource().GetVectorValue(EmitterTime, RandomStream));
+			break;
+		case EBeamEndpointMethod::Parameter:
+		{
+			FVector ParamVec = FVector::ZeroVector;
+			if (Component->GetVectorParameterValue(SourceModule->GetSourceParameterName(), ParamVec))
+			{
+				Payload.SourcePoint = ParamVec;
+			}
+			else
+			{
+				Payload.SourcePoint = WorldMatrix.TransformPosition(SourceModule->GetSource().GetVectorValue(EmitterTime, RandomStream));
+			}
+			break;
+		}
+		case EBeamEndpointMethod::Actor:
+		{
+			if (AActor* ParamActor = Component->GetActorParameterValue(SourceModule->GetSourceParameterName()))
+			{
+				Payload.SourcePoint = ParamActor->GetActorLocation();
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
 
 	switch (BeamTypeData->GetBeamMethod())
 	{
@@ -123,5 +177,65 @@ void FParticleBeamEmitterInstance::ResolveBeamPoints(FBeamPayloadData& Payload) 
 		break;
 	default:
 		break;
+	}
+
+	if (TargetModule)
+	{
+		switch (TargetModule->GetTargetMethod())
+		{
+		case EBeamEndpointMethod::Emitter:
+			Payload.TargetPoint = WorldMatrix.TransformPosition(FVector::ZeroVector);
+			break;
+		case EBeamEndpointMethod::UserSet:
+			Payload.TargetPoint = WorldMatrix.TransformPosition(TargetModule->GetTarget().GetVectorValue(EmitterTime, RandomStream));
+			break;
+		case EBeamEndpointMethod::Parameter:
+		{
+			FVector ParamVec = FVector::ZeroVector;
+			if (Component->GetVectorParameterValue(TargetModule->GetTargetParameterName(), ParamVec))
+			{
+				Payload.TargetPoint = ParamVec;
+			}
+			else
+			{
+				Payload.TargetPoint = WorldMatrix.TransformPosition(TargetModule->GetTarget().GetVectorValue(EmitterTime, RandomStream));
+			}
+			break;
+		}
+		case EBeamEndpointMethod::Actor:
+		{
+			if (AActor* ParamActor = Component->GetActorParameterValue(TargetModule->GetTargetParameterName()))
+			{
+				Payload.TargetPoint = ParamActor->GetActorLocation();
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	const bool bUseSourceTan = SourceModule && SourceModule->ShouldUseSourceTangent();
+	const bool bUseTargetTan = TargetModule && TargetModule->ShouldUseTargetTangent();
+	Payload.bHasTangents = (bUseSourceTan || bUseTargetTan) ? 1.0f : 0.0f;
+	if (bUseSourceTan)
+	{
+		const FVector Tan = WorldMatrix.TransformVector(SourceModule->GetSourceTangent().GetVectorValue(EmitterTime, RandomStream)).GetSafeNormal();
+		const float Str = SourceModule->GetSourceStrength().GetFloatValue(EmitterTime, RandomStream);
+		Payload.SourceTangent = Tan * Str;
+	}
+	else
+	{
+		Payload.SourceTangent = (Payload.TargetPoint - Payload.SourcePoint);
+	}
+	if (bUseTargetTan)
+	{
+		const FVector Tan = WorldMatrix.TransformVector(TargetModule->GetTargetTangent().GetVectorValue(EmitterTime, RandomStream)).GetSafeNormal();
+		const float Str = TargetModule->GetTargetStrength().GetFloatValue(EmitterTime, RandomStream);
+		Payload.TargetTangent = Tan * Str;
+	}
+	else
+	{
+		Payload.TargetTangent = (Payload.TargetPoint - Payload.SourcePoint);
 	}
 }

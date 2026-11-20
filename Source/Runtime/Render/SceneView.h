@@ -6,7 +6,7 @@
 #include "Math/Matrix.h"
 #include "Math/Frustum.h"
 #include "Math/Rect.h"
-#include "Render/RenderPacket.h"
+#include "Render/MeshBatch.h"
 #include <algorithm>
 
 // Immutable description of one camera view for the duration of a render.
@@ -61,3 +61,14 @@ struct FSceneView
 		return Context;
 	}
 };
+
+struct FCameraOverlayDebug
+{
+	bool bOverride = false;
+	float FadeColor[3] = { 0.0f, 0.0f, 0.0f };
+	float FadeAmount = 0.0f;
+	float LetterboxAmount = 0.0f;
+	float LetterboxAspect = 2.39f;
+	float VignetteIntensity = 0.0f;
+};
+inline FCameraOverlayDebug GCameraOverlayDebug;
