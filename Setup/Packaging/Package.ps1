@@ -24,6 +24,8 @@ try {
     $projectFile = (Resolve-Path -LiteralPath $Project).ProviderPath
     $projectRoot = Split-Path -Parent $projectFile
     $projectName = [IO.Path]::GetFileNameWithoutExtension($projectFile)
+    # KurisuGame.exe links PhysX dynamically, so these DLLs ship beside it.
+    $physxDllNames = @('PhysX_64.dll', 'PhysXCommon_64.dll', 'PhysXFoundation_64.dll', 'PhysXCooking_64.dll')
 
     if ($isDistribution) {
         # The distribution carries the Release launcher it was built with, and
@@ -35,6 +37,14 @@ try {
         }
         $runtimeDlls = @(Get-ChildItem -LiteralPath $engineRoot -Filter '*.dll' -File |
             Where-Object { $_.Name -match '^(msvcp|vcruntime|concrt)' })
+        # The editor's PhysX DLLs are the Release (profile) build the launcher was linked with.
+        $physxDlls = @($physxDllNames | ForEach-Object {
+            $dll = Join-Path $engineRoot $_
+            if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+                throw "The editor distribution is missing $_. Replace it with a complete Release distribution."
+            }
+            Get-Item -LiteralPath $dll
+        })
     } else {
         $solution = Join-Path $engineRoot 'Kurisu.slnx'
         if (-not $SkipBuild) {
@@ -57,8 +67,15 @@ try {
         }
         $gameExe = Join-Path $engineRoot "Build\Bin\$Configuration-windows-x86_64\KurisuGame.exe"
         if (-not (Test-Path -LiteralPath $gameExe -PathType Leaf)) { throw "Missing executable: $gameExe" }
+        # The KurisuGame post-build step copies the PhysX DLLs of this configuration beside it.
+        $gameBin = Split-Path -Parent $gameExe
+        $physxDlls = @($physxDllNames | ForEach-Object {
+            $dll = Join-Path $gameBin $_
+            if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "Missing PhysX DLL: $dll. Rebuild KurisuGame." }
+            Get-Item -LiteralPath $dll
+        })
         . (Join-Path $PSScriptRoot 'VCRuntime.ps1')
-        $runtimeDlls = @(Get-VCRuntimeDlls -Binaries @($gameExe))
+        $runtimeDlls = @(Get-VCRuntimeDlls -Binaries (@($gameExe) + @($physxDlls | ForEach-Object { $_.FullName })))
     }
     if ($runtimeDlls.Count -eq 0) { throw 'No C++ runtime DLLs found for the game.' }
 
@@ -68,7 +85,7 @@ try {
     if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
     New-Item -ItemType Directory -Path $out -Force | Out-Null
     Copy-Item -LiteralPath $gameExe -Destination (Join-Path $out 'KurisuGame.exe')
-    foreach ($dll in $runtimeDlls) { Copy-Item -LiteralPath $dll.FullName -Destination $out }
+    foreach ($dll in $runtimeDlls + $physxDlls) { Copy-Item -LiteralPath $dll.FullName -Destination $out }
     Copy-Item -LiteralPath $projectFile -Destination $out
 
     function Copy-Content([string]$Source, [string]$RelativeTarget) {
