@@ -63,6 +63,46 @@ if _ACTION then
 	end
 end
 
+-- PhysX 4.1의 DLL + /MD(d) 구성. 현재 SDK의 GetCompilerAndPlatform.cmake는
+-- VS2022/2026도 vc142로 분류하므로 실제 출력 폴더 이름을 그대로 사용한다.
+local PhysXSdkRoot = path.join(ProjectRoot, "Source/ThirdParty/PhysX")
+local PhysXBinRoot = path.join(PhysXSdkRoot, "physx/bin/win.x86_64.vc142.md")
+
+local function ConfigurePhysX(bLinkLibraries)
+	includedirs
+	{
+		path.join(PhysXSdkRoot, "physx/include"),
+		path.join(PhysXSdkRoot, "pxshared/include"),
+	}
+
+	-- 엔진은 정적 라이브러리이므로 PhysX 링크와 DLL 복사는 최종 exe에서만 한다.
+	if not bLinkLibraries then
+		return
+	end
+
+	links
+	{
+		"PhysX_64.lib",
+		"PhysXCommon_64.lib",
+		"PhysXFoundation_64.lib",
+		"PhysXCooking_64.lib",
+		"PhysXExtensions_static_64.lib",
+		"PhysXPvdSDK_static_64.lib",
+		"PhysXCharacterKinematic_static_64.lib",
+	}
+
+	for _, Config in ipairs({ "Debug", "Release", "Shipping" }) do
+		local SdkConfig = (Config == "Debug") and "debug" or "release"
+		local SdkBinDir = path.join(PhysXBinRoot, SdkConfig)
+		filter ("configurations:" .. Config)
+			libdirs { SdkBinDir }
+			for _, Dll in ipairs({ "PhysX_64.dll", "PhysXCommon_64.dll", "PhysXFoundation_64.dll", "PhysXCooking_64.dll" }) do
+				postbuildcommands { '{COPYFILE} "' .. ProjectRelative(path.join(SdkBinDir, Dll)) .. '" "%{cfg.targetdir}"' }
+			end
+	end
+	filter {}
+end
+
 IncludeDir = {}
 IncludeDir["ImGui"] = ProjectRoot .. "/Source/ThirdParty/ImGui"
 IncludeDir["ImGuiNodeEditor"] = ProjectRoot .. "/Source/ThirdParty/ImGuiNodeEditor"
@@ -158,6 +198,7 @@ project "KurisuEngine"
 	location (ProjectRoot .. "/Build/Projects")
 	kind     "StaticLib"
 	CommonSettings()
+	ConfigurePhysX(false)
 
 	pchheader "EnginePCH.h"
 	pchsource (ProjectRoot .. "/Source/Runtime/EnginePCH.cpp")
@@ -186,7 +227,14 @@ project "KurisuEngine"
 	-- Lua는 엔진에 포함한다. 인터프리터/컴파일러 실행 파일의 main은 제외한다.
 	files { "%{IncludeDir.lua}/*.h", "%{IncludeDir.lua}/*.c" }
 	removefiles { "%{IncludeDir.lua}/lua.c", "%{IncludeDir.lua}/luac.c" }
-	vpaths { ["ThirdParty/Lua/*"] = "%{IncludeDir.lua}/*" }
+	-- VS filters are logical names, so keep the runtime tree independent of
+	-- the temporary drive used by GenerateProjects.ps1.
+	vpaths
+	{
+		["Runtime/*"] = ProjectRoot .. "/Source/Runtime/**",
+		["ThirdParty/DDSLoader/*"] = "%{IncludeDir.DDSLoader}/**",
+		["ThirdParty/Lua/*"] = "%{IncludeDir.lua}/*",
+	}
 	filter "files:**/lua/src/**.c"
 		compileas "C"
 		enablepch "Off"
@@ -217,6 +265,7 @@ project "KurisuEditor"
 	location (ProjectRoot .. "/Build/Projects")
 	kind     "WindowedApp"
 	CommonSettings()
+	ConfigurePhysX(true)
 
 	-- FBX 해석은 Editor에서 수행하고 Runtime/Game은 SDK에 의존하지 않는다.
 	includedirs { path.join(FbxSdkRoot, "include"), ProjectRoot, ProjectRoot .. "/Source/Editor/Resources" }
@@ -318,6 +367,7 @@ function ConfigureGameRuntime()
 	location (ProjectRoot .. "/Build/Projects")
 	kind     "WindowedApp"
 	CommonSettings()
+	ConfigurePhysX(true)
 
 	pchheader "EnginePCH.h"
 	pchsource (ProjectRoot .. "/Source/Game/GamePCH.cpp")
