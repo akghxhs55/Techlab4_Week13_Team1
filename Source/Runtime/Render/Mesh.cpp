@@ -3,6 +3,7 @@
 #include "Renderer.h"
 #include "Asset/AssetManager.h"
 #include "Engine/PrimitiveSceneProxy.h"
+#include "Physics/BodySetup.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -13,6 +14,28 @@ UStaticMesh::~UStaticMesh()
         Proxy->OnMeshDestroyed();
 	VertexBuffer = nullptr;
 	IndexBuffer = nullptr;
+    delete BodySetup;
+}
+
+UBodySetup* UStaticMesh::GetBodySetup()
+{
+    if (BodySetup)
+        return BodySetup;
+
+    BodySetup = NewObject<UBodySetup>(this);
+
+    // RenderBounds는 RebuildRenderData 때만 채워지므로 원본 AABB를 쓴다
+    const FBox& Bounds = MeshData.AABB;
+    // 평면 메시(바닥 Plane 등)는 두께가 0이라 PhysX가 박스를 만들지 못한다. 최소 두께를 준다
+    constexpr float MinThickness = 0.01f;
+
+    FBoxElem& Box = BodySetup->AggGeom.BoxElems.Emplace_GetRef();
+    Box.Center = (Bounds.Min + Bounds.Max) * 0.5f;
+    Box.X = std::max(Bounds.Max.X - Bounds.Min.X, MinThickness);
+    Box.Y = std::max(Bounds.Max.Y - Bounds.Min.Y, MinThickness);
+    Box.Z = std::max(Bounds.Max.Z - Bounds.Min.Z, MinThickness);
+
+    return BodySetup;
 }
 
 UMaterial* UStaticMesh::GetMaterial(uint32 SlotIndex) const

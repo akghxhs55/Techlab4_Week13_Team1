@@ -1,7 +1,22 @@
 #include "EnginePCH.h"
 #include "CapsuleComponent.h"
+
+#include "Physics/AggregateGeom.h"
+#include "Physics/BodySetup.h"
 #include "Physics/Collision.h"
 #include "Render/LineBatcher.h"
+
+void UCapsuleComponent::UpdateBodySetup()
+{
+	FAggregateGeom& AggGeom = GetBodySetup()->AggGeom;
+
+	AggGeom.EmptyElements();
+
+	uint32 Index = AggGeom.CapsuleElems.Emplace();
+	FCapsuleElem& CapsuleElem = AggGeom.CapsuleElems[Index];
+	CapsuleElem.Radius = CapsuleRadius;
+	CapsuleElem.Length = FMath::Max(CapsuleHalfHeight - CapsuleRadius, 0.0f) * 2.0f;
+}
 
 float UCapsuleComponent::GetScaledCapsuleHalfHeight() const
 {

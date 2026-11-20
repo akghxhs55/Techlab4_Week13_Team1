@@ -16,6 +16,8 @@
 #include "Render/SceneRenderData.h"
 #include "Script/CoroutineScheduler.h"
 #include <functional>
+#include "Physics/PhysScene.h"
+#include "Physics/PhysicsSettings.h"
 #include "World.generated.h"
 
 class ULevel;
@@ -144,6 +146,10 @@ public:
 	void AddRenderedViewLocation(const FVector& ViewLocation);
 	const TArray<FVector>& GetViewLocationsRenderedLastFrame() const { return ViewLocationsRenderedLastFrame; }
 
+	FPhysScene* GetPhysicsScene() const { return PhysicsScene.get(); }
+	void StartPhysicsSim();
+	void FinishPhysicsSim();
+
 private:
 
 	void GameWorldTick(float DeltaTime);
@@ -196,4 +202,14 @@ private:
 
 	static constexpr float MinTimeDilation = 0.0001f;
 	static constexpr float MaxTimeDilation = 20.0f;
+
+	// 물리 엔진
+	TUniquePtr<FPhysScene> PhysicsScene;
+	FPhysicsSettings PhysicsSettings;
+	FStartPhysicsTickFunction StartPhysicsTickFunction;
+	FEndPhysicsTickFunction EndPhysicsTickFunction;
+	bool bShouldSimulatePhysics = false;
+
+	void CreatePhysicsScene();
+	void SetupPhysicsTickFunctions(float DeltaSeconds);
 };

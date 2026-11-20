@@ -4,12 +4,13 @@
 #include "Containers/Array.h"
 #include "Math/EngineMath.h"
 
+class UWorld;
 class AActor;
 class UActorComponent;
 class FTickTaskManager;
 
 // 같은 그룹 안에서는 등록 순서대로, 그룹끼리는 선언 순서대로 실행
-enum class ETickingGroup : uint8 { PrePhysics, DuringPhysics, PostPhysics, PostUpdateWork, Max };
+enum class ETickingGroup : uint8 { PrePhysics, StartPhysics, DuringPhysics, EndPhysics, PostPhysics, PostUpdateWork, Max };
 
 // UE의 FTickFunction 축소판. bCanEverTick이 켜진 함수만 FTickTaskManager에 등록되어
 // 등록되지 않은 Actor·Component는 매 프레임 순회 대상에서 빠진다.
@@ -51,6 +52,18 @@ private:
 	FTickTaskManager* Manager = nullptr;
 	// 매니저 배열 상의 위치
 	int32 ManagerIndex = INDEX_NONE;          // 해제 시 O(1) RemoveAtSwap
+};
+
+struct FStartPhysicsTickFunction : public FTickFunction
+{
+	UWorld* Target = nullptr;
+	void ExecuteTick(float DeltaTime) override;
+};
+
+struct FEndPhysicsTickFunction : public FTickFunction
+{
+	UWorld* Target = nullptr;
+	void ExecuteTick(float DeltaTime) override;
 };
 
 struct FActorTickFunction : public FTickFunction

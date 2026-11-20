@@ -63,41 +63,53 @@ if _ACTION then
 	end
 end
 
--- PhysX 4.1의 DLL + /MD(d) 구성. 현재 SDK의 GetCompilerAndPlatform.cmake는
--- VS2022/2026도 vc142로 분류하므로 실제 출력 폴더 이름을 그대로 사용한다.
+-- 물리는 저장소에 포함한 PhysX 5 SDK(DLL 링크, /MD·/MDd CRT)를 사용한다. 빌드 방법은 VENDORED.md에 있다.
+-- 엔진 구성별로 PhysX 구성을 고른다. Release는 PVD가 되는 profile, Shipping은 PVD가 빠진 release.
 local PhysXSdkRoot = path.join(ProjectRoot, "Source/ThirdParty/PhysX")
-local PhysXBinRoot = path.join(PhysXSdkRoot, "physx/bin/win.x86_64.vc142.md")
-
-local function ConfigurePhysX(bLinkLibraries)
-	includedirs
-	{
-		path.join(PhysXSdkRoot, "physx/include"),
-		path.join(PhysXSdkRoot, "pxshared/include"),
-	}
-
-	-- 엔진은 정적 라이브러리이므로 PhysX 링크와 DLL 복사는 최종 exe에서만 한다.
-	if not bLinkLibraries then
-		return
+local PhysXConfigs =
+{
+	Debug    = { Dir = "debug",   Defines = { "PX_DEBUG=1", "PX_CHECKED=1", "PX_SUPPORT_PVD=1" } },
+	Release  = { Dir = "profile", Defines = { "PX_PROFILE=1", "PX_SUPPORT_PVD=1" } },
+	Shipping = { Dir = "release", Defines = { "PX_SUPPORT_PVD=0", "PX_SUPPORT_OMNI_PVD=0" } },
+}
+local PhysXDlls = { "PhysX_64", "PhysXCommon_64", "PhysXFoundation_64", "PhysXCooking_64" }
+local PhysXStaticLibs = { "PhysXExtensions_static_64", "PhysXPvdSDK_static_64", "PhysXCharacterKinematic_static_64", "PhysXVehicle_static_64", "PhysXTask_static_64" }
+if _ACTION then
+	local Required = { "include/PxPhysicsAPI.h", "include/PxConfig.h" }
+	for _, Config in pairs(PhysXConfigs) do
+		for _, Name in ipairs(PhysXDlls) do
+			table.insert(Required, "lib/x64/" .. Config.Dir .. "/" .. Name .. ".lib")
+			table.insert(Required, "lib/x64/" .. Config.Dir .. "/" .. Name .. ".dll")
+		end
+		for _, Name in ipairs(PhysXStaticLibs) do
+			table.insert(Required, "lib/x64/" .. Config.Dir .. "/" .. Name .. ".lib")
+		end
 	end
+	for _, File in ipairs(Required) do
+		if not os.isfile(path.join(PhysXSdkRoot, File)) then
+			error("Bundled PhysX SDK file is missing: " .. File)
+		end
+	end
+end
 
-	links
-	{
-		"PhysX_64.lib",
-		"PhysXCommon_64.lib",
-		"PhysXFoundation_64.lib",
-		"PhysXCooking_64.lib",
-		"PhysXExtensions_static_64.lib",
-		"PhysXPvdSDK_static_64.lib",
-		"PhysXCharacterKinematic_static_64.lib",
-	}
+-- 엔진·에디터·게임이 같은 PhysX 헤더 정의를 보도록 모든 사용 프로젝트에서 호출한다.
+-- 링크와 DLL 복사는 exe에서만 한다. 정적 라이브러리(엔진)가 임포트 라이브러리를 품으면 LNK2005가 난다(아래 엔진 주석 참고).
+function ConfigurePhysX(bLinkRuntime)
+	includedirs { path.join(PhysXSdkRoot, "include") }
 
-	for _, Config in ipairs({ "Debug", "Release", "Shipping" }) do
-		local SdkConfig = (Config == "Debug") and "debug" or "release"
-		local SdkBinDir = path.join(PhysXBinRoot, SdkConfig)
+	for Config, PhysX in pairs(PhysXConfigs) do
 		filter ("configurations:" .. Config)
-			libdirs { SdkBinDir }
-			for _, Dll in ipairs({ "PhysX_64.dll", "PhysXCommon_64.dll", "PhysXFoundation_64.dll", "PhysXCooking_64.dll" }) do
-				postbuildcommands { '{COPYFILE} "' .. ProjectRelative(path.join(SdkBinDir, Dll)) .. '" "%{cfg.targetdir}"' }
+			defines (PhysX.Defines)
+			if bLinkRuntime then
+				local LibDir = path.join(PhysXSdkRoot, "lib/x64", PhysX.Dir)
+				libdirs { LibDir }
+				for _, Name in ipairs(PhysXDlls) do
+					links { Name .. ".lib" }
+					postbuildcommands { '{COPYFILE} "' .. ProjectRelative(path.join(LibDir, Name .. ".dll")) .. '" "%{cfg.targetdir}"' }
+				end
+				for _, Name in ipairs(PhysXStaticLibs) do
+					links { Name .. ".lib" }
+				end
 			end
 	end
 	filter {}
@@ -227,13 +239,14 @@ project "KurisuEngine"
 	-- Lua는 엔진에 포함한다. 인터프리터/컴파일러 실행 파일의 main은 제외한다.
 	files { "%{IncludeDir.lua}/*.h", "%{IncludeDir.lua}/*.c" }
 	removefiles { "%{IncludeDir.lua}/lua.c", "%{IncludeDir.lua}/luac.c" }
-	-- VS filters are logical names, so keep the runtime tree independent of
-	-- the temporary drive used by GenerateProjects.ps1.
+	-- vpaths를 쓰는 프로젝트는 패턴에 안 걸린 파일의 경로를 그대로 필터 이름으로 쓴다.
+	-- GenerateProjects.ps1이 드라이브 루트(subst)에서 생성하면 그 경로가 "Z:\..."처럼 절대 경로가 되어
+	-- 필터가 깨지므로, 프로젝트의 모든 파일이 어느 패턴에든 걸리게 한다.
 	vpaths
 	{
 		["Runtime/*"] = ProjectRoot .. "/Source/Runtime/**",
-		["ThirdParty/DDSLoader/*"] = "%{IncludeDir.DDSLoader}/**",
 		["ThirdParty/Lua/*"] = "%{IncludeDir.lua}/*",
+		["ThirdParty/DDSLoader/*"] = "%{IncludeDir.DDSLoader}/*",
 	}
 	filter "files:**/lua/src/**.c"
 		compileas "C"
@@ -259,6 +272,8 @@ project "KurisuEngine"
 	filter "files:**/Audio/MiniaudioImpl.cpp"
 		enablepch "Off"
 	filter {}
+
+	ConfigurePhysX(false)
 
 -- 에디터 애플리케이션. 정적 메시와 스켈레탈 메시 뷰어는 에디터 내부에서 실행한다.
 project "KurisuEditor"
@@ -297,8 +312,11 @@ project "KurisuEditor"
 		"%{IncludeDir.ImGuiNodeEditor}/*.cpp",
 		"%{IncludeDir.ImGuiNodeEditor}/*.inl",
 	}
+	-- 엔진과 같은 이유로 모든 파일이 어느 패턴에든 걸리게 한다.
 	vpaths
 	{
+		["Editor/*"] = ProjectRoot .. "/Source/Editor/**",
+		["Runtime/Launch/*"] = ProjectRoot .. "/Source/Runtime/Launch/*",
 		["ThirdParty/ImGui/*"] = "%{IncludeDir.ImGui}/**",
 		["ThirdParty/ImGuiNodeEditor/*"] = "%{IncludeDir.ImGuiNodeEditor}/**",
 	}
@@ -310,6 +328,9 @@ project "KurisuEditor"
 	-- 그 클래스가 등록되지 않아 씬 로드 때 액터가 사라진다. 엔진 .obj를 lib가 아닌 obj로 전부 링크해 막는다
 	-- (위 projectReferences 재정의의 UseLibraryDependencyInputs).
 	ConfigureSourceLink()
+
+	-- 아래 Release 배포 postbuild보다 먼저 선언해 PhysX DLL이 복사된 뒤 배포본을 만든다.
+	ConfigurePhysX(true)
 
 	files
 	{
@@ -376,6 +397,8 @@ function ConfigureGameRuntime()
 
 	-- 에디터와 같은 이유로 엔진 .obj를 직접 링크한다. 게임 코드는 라이트 액터 등을 직접 참조하지 않아 특히 빠지기 쉽다.
 	ConfigureSourceLink()
+
+	ConfigurePhysX(true)
 
 	files
 	{

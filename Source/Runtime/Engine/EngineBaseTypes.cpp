@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "EngineBaseTypes.h"
 
+#include "World.h"
 #include "GameFramework/Actor.h"
 #include "Components/ActorComponent.h"
 
@@ -27,6 +28,22 @@ void FTickFunction::SetTickFunctionEnable(bool bEnable)
 {
 	TickState = bEnable ? ETickState::Enabled : ETickState::Disabled;
 	RelativeTickCooldown = TickInterval;
+}
+
+void FStartPhysicsTickFunction::ExecuteTick(float DeltaTime)
+{
+	if (Target)
+	{
+		Target->StartPhysicsSim();
+	}
+}
+
+void FEndPhysicsTickFunction::ExecuteTick(float DeltaTime)
+{
+	if (Target)
+	{
+		Target->FinishPhysicsSim();
+	}
 }
 
 void FActorTickFunction::ExecuteTick(float DeltaTime)

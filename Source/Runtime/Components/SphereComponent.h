@@ -11,6 +11,8 @@ public:
 	UPROPERTY(EditAnywhere)
 	float SphereRadius = 0.5f;
 
+	void UpdateBodySetup() override;
+
 	// 비균일 스케일이면 가장 큰 축을 쓴다
 	float GetScaledSphereRadius() const;
 	virtual FBox CalcLocalBounds() const override;

@@ -1,7 +1,20 @@
 #include "EnginePCH.h"
 #include "SphereComponent.h"
-#include "Physics/Collision.h"
+
+#include "Physics/AggregateGeom.h"
+#include "Physics/BodySetup.h"
 #include "Render/LineBatcher.h"
+
+void USphereComponent::UpdateBodySetup()
+{
+	FAggregateGeom& AggGeom = GetBodySetup()->AggGeom;
+	
+	AggGeom.EmptyElements();
+
+	uint32 Index = AggGeom.SphereElems.Emplace();
+	FSphereElem& SphereElem = AggGeom.SphereElems[Index];
+	SphereElem.Radius = SphereRadius;
+}
 
 float USphereComponent::GetScaledSphereRadius() const
 {
