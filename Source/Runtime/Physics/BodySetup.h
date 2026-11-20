@@ -9,7 +9,7 @@ class UBodySetup : public UObject
 	GENERATED_BODY()
 public:
 	UPROPERTY(EditAnywhere)
-	FKAggregateGeom AggGeom;
+	FAggregateGeom AggGeom;
 
 private:
 };

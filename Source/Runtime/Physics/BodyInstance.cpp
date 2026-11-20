@@ -22,7 +22,7 @@ namespace
 	FVector Abs(const FVector& V) { return { std::abs(V.X), std::abs(V.Y), std::abs(V.Z) }; }
 	FVector Mul(const FVector& A, const FVector& B) { return { A.X * B.X, A.Y * B.Y, A.Z * B.Z }; }
 
-	PxTransform MakeLocalPose(const FKShapeElem& Elem, const FVector& Scale)
+	PxTransform MakeLocalPose(const FShapeElem& Elem, const FVector& Scale)
 	{
 		return { K2PVector(Mul(Elem.Center, Scale)), K2PQuat(Elem.Rotation.Quaternion().Normalized()) };
 	}
@@ -35,7 +35,7 @@ namespace
 		Shape->setFlag(PxShapeFlag::eSCENE_QUERY_SHAPE, bQuery);
 	}
 
-	int32 CreateShapes(PxRigidActor& Actor, const FKAggregateGeom& Geom, const FVector& InScale, ECollisionEnabled Enabled)
+	int32 CreateShapes(PxRigidActor& Actor, const FAggregateGeom& Geom, const FVector& InScale, ECollisionEnabled Enabled)
 	{
 		PxMaterial& Material = *FPhysicsCore::GetDefaultMaterial();
 		const FVector S = Abs(InScale);
@@ -51,22 +51,22 @@ namespace
 			}
 		};
 
-		for (const FKSphereElem& Element : Geom.SphereElems)
+		for (const FSphereElem& Element : Geom.SphereElems)
 		{
 			const float Radius = Element.Radius * std::max({ S.X, S.Y, S.Z });
 			Attach(PxSphereGeometry(Radius), MakeLocalPose(Element, InScale));
 		}
 
-		for (const FKBoxElem& Element : Geom.BoxElems)
+		for (const FBoxElem& Element : Geom.BoxElems)
 		{
 			const PxVec3 HalfExtents(0.5f * Element.X * S.X, 0.5f * Element.Y * S.Y, 0.5f * Element.Z * S.Z);
 			Attach(PxBoxGeometry(HalfExtents), MakeLocalPose(Element, InScale));
 		}
 
-		for (const FKSphylElem& Element : Geom.SphylElems)
+		for (const FCapsuleElem& Element : Geom.CapsuleElems)
 		{
-			const float Radius = Element.Radius * std::max(S.X, S.Y);
-			const float HalfHeight = 0.5f * Element.Length * S.Z;
+			const float Radius = Element.Radius * FMath::Max(S.X, S.Y);
+			const float HalfHeight = FMath::Max(0.0f, (0.5f * Element.Length + Element.Radius) * S.Z - Radius);
 			PxTransform Pose = MakeLocalPose(Element, InScale);
 			Pose.q = Pose.q * SphylBasis;
 			Attach(PxCapsuleGeometry(Radius, HalfHeight), Pose);

@@ -14,6 +14,8 @@ public:
 	UPROPERTY(EditAnywhere)
 	float CapsuleRadius = 0.5f;
 
+	virtual void UpdateBodySetup() override;
+
 	float GetScaledCapsuleHalfHeight() const;
 	float GetScaledCapsuleRadius() const;
 	virtual FBox CalcLocalBounds() const override;

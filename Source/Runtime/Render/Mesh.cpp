@@ -29,7 +29,7 @@ UBodySetup* UStaticMesh::GetBodySetup()
     // 평면 메시(바닥 Plane 등)는 두께가 0이라 PhysX가 박스를 만들지 못한다. 최소 두께를 준다
     constexpr float MinThickness = 0.01f;
 
-    FKBoxElem& Box = BodySetup->AggGeom.BoxElems.Emplace_GetRef();
+    FBoxElem& Box = BodySetup->AggGeom.BoxElems.Emplace_GetRef();
     Box.Center = (Bounds.Min + Bounds.Max) * 0.5f;
     Box.X = std::max(Bounds.Max.X - Bounds.Min.X, MinThickness);
     Box.Y = std::max(Bounds.Max.Y - Bounds.Min.Y, MinThickness);

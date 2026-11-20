@@ -3,7 +3,7 @@
 #include "AggregateGeom.generated.h"
 
 USTRUCT()
-struct FKShapeElem
+struct FShapeElem
 {
 	GENERATED_BODY()
 
@@ -14,7 +14,7 @@ struct FKShapeElem
 };
 
 USTRUCT()
-struct FKSphereElem : public FKShapeElem
+struct FSphereElem : public FShapeElem
 {
 	GENERATED_BODY()
 
@@ -23,7 +23,7 @@ struct FKSphereElem : public FKShapeElem
 };
 
 USTRUCT()
-struct FKBoxElem : public FKShapeElem
+struct FBoxElem : public FShapeElem
 {
 	GENERATED_BODY()
 
@@ -38,7 +38,7 @@ struct FKBoxElem : public FKShapeElem
 };
 
 USTRUCT()
-struct FKSphylElem : public FKShapeElem
+struct FCapsuleElem : public FShapeElem
 {
 	GENERATED_BODY()
 
@@ -49,20 +49,20 @@ struct FKSphylElem : public FKShapeElem
 };
 
 USTRUCT()
-struct FKAggregateGeom
+struct FAggregateGeom
 {
 	GENERATED_BODY()
 
 	UPROPERTY()
-	TArray<FKSphereElem> SphereElems;
+	TArray<FSphereElem> SphereElems;
 	UPROPERTY()
-	TArray<FKBoxElem> BoxElems;
+	TArray<FBoxElem> BoxElems;
 	UPROPERTY()
-	TArray<FKSphylElem> SphylElems;
-	int32 GetElementCount() const { return SphereElems.Num() + BoxElems.Num() + SphylElems.Num(); }
+	TArray<FCapsuleElem> CapsuleElems;
+	int32 GetElementCount() const { return SphereElems.Num() + BoxElems.Num() + CapsuleElems.Num(); }
 	void EmptyElements() {
 		SphereElems.Empty();
 		BoxElems.Empty();
-		SphylElems.Empty();
+		CapsuleElems.Empty();
 	}
 };

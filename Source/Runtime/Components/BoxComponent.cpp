@@ -6,11 +6,11 @@
 
 void UBoxComponent::UpdateBodySetup()
 {
-	FKAggregateGeom& AggGeom = GetBodySetup()->AggGeom;
+	FAggregateGeom& AggGeom = GetBodySetup()->AggGeom;
 	AggGeom.EmptyElements();
 	
-	int32 Index = AggGeom.BoxElems.Emplace();
-	FKBoxElem& BoxElem = AggGeom.BoxElems[Index];
+	uint32 Index = AggGeom.BoxElems.Emplace();
+	FBoxElem& BoxElem = AggGeom.BoxElems[Index];
 	BoxElem.X = BoxExtent.X * 2.0f;
 	BoxElem.Y = BoxExtent.Y * 2.0f;
 	BoxElem.Z = BoxExtent.Z * 2.0f;
