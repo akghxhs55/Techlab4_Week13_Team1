@@ -10,6 +10,7 @@
 #include <vector>
 #include "Mesh.generated.h"
 
+class UBodySetup;
 class FPrimitiveSceneProxy;
 
 struct FStaticMeshLODResource
@@ -82,8 +83,10 @@ public:
 	}
     void RebuildRenderData();
 	const FLODSphere& GetLocalLODSphere() const { return LocalLODSphere; }
-    const FBox& GetRenderBounds() const { return RenderBounds; }
-    TSharedPtr<const FMeshRenderState> GetRenderState(const std::vector<UMaterialInterface*>& Materials);
+	const FBox& GetRenderBounds() const { return RenderBounds; }
+	// 처음 부를 때 메시 AABB로 박스 하나를 만든다 콜리전 편집이 생기면 저장된 형상으로 바꾼다
+	UBodySetup* GetBodySetup();
+	TSharedPtr<const FMeshRenderState> GetRenderState(const std::vector<UMaterialInterface*>& Materials);
     void RegisterProxy(FPrimitiveSceneProxy* Proxy);
     void UnregisterProxy(FPrimitiveSceneProxy* Proxy);
 
@@ -99,4 +102,5 @@ private:
     mutable FLocalVertexFactory VertexFactory;
     std::unordered_map<std::vector<UMaterialInterface*>, TWeakPtr<const FMeshRenderState>, FMaterialSlotsHash> RenderStates;
     TArray<FPrimitiveSceneProxy*> RenderProxies;
+    UBodySetup* BodySetup = nullptr;
 };

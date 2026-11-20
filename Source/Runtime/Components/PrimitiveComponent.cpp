@@ -88,6 +88,11 @@ void UPrimitiveComponent::OnTransformDirty()
 {
 	if (SceneProxy)
 		SceneProxy->GetScene()->MarkDirty(SceneProxy);
+
+	if (!bSyncingFromPhysics && BodyInstance.IsValidBodyInstance())
+	{
+		BodyInstance.SetBodyTransform({ GetWorldRotation(), GetWorldLocation(), GetWorldScale3D() }, BodyInstance.IsDynamic());
+	}
 }
 
 bool UPrimitiveComponent::MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit)
@@ -122,6 +127,31 @@ void UPrimitiveComponent::SetReceiveShadow(bool NewValue)
 	}
 }
 
+bool UPrimitiveComponent::ShouldCreatePhysicsState() const
+{
+	return GetWorld() &&
+		GetWorld()->IsGameWorld() &&
+		GetWorld()->GetPhysicsScene() &&
+		BodyInstance.CollisionEnabled != ECollisionEnabled::NoCollision;
+}
+
+void UPrimitiveComponent::SyncComponentToRBPhysics()
+{
+	if (!BodyInstance.IsDynamic())
+	{
+		return;
+	}
+
+	// 시뮬레이션 바디는 OnCreatePhysicsState/SetSimulatePhysics에서 부모와 분리된다.
+	// 이후 다시 붙였더라도 SetWorldTransform이 부모 기준 로컬로 바꿔 넣으므로 그대로 둔다.
+	bSyncingFromPhysics = true;
+
+	FTransform NewTransform = BodyInstance.GetUnrealWorldTransform();
+	SetWorldTransform(NewTransform.GetLocalMatrix(), false);
+
+	bSyncingFromPhysics = false;
+}
+
 void UPrimitiveComponent::CreateRenderState()
 {
 	Super::CreateRenderState();
@@ -132,6 +162,35 @@ void UPrimitiveComponent::DestroyRenderState()
 {
 	GetWorld()->GetScene().RemovePrimitive(this);
 	Super::DestroyRenderState();
+}
+
+void UPrimitiveComponent::SetSimulatePhysics(bool bSimulate)
+{
+	// 물리 상태가 있는(게임 월드) 경우에만 계층을 바꾼다. 에디터 월드의 부착 관계는 건드리지 않는다
+	if (bSimulate && IsPhysicsStateCreated() && GetAttachParent())
+	{
+		DetachFromParent(EAttachmentRule::KeepWorld);
+	}
+	BodyInstance.SetInstanceSimulatePhysics(bSimulate);
+}
+
+void UPrimitiveComponent::OnCreatePhysicsState()
+{
+	if (auto* BodySetup = GetBodySetup())
+	{
+		// 씬에 저장된 시뮬레이션 컴포넌트(예: StaticMeshActor의 메시)는 바디를 만들기 전에 부모에서 떼어 낸다
+		if (BodyInstance.bSimulatePhysics && GetAttachParent())
+		{
+			DetachFromParent(EAttachmentRule::KeepWorld);
+		}
+
+		BodyInstance.InitBody(BodySetup, { GetWorldRotation(), GetWorldLocation(), GetWorldScale3D() }, this, GetWorld()->GetPhysicsScene());
+	}
+}
+
+void UPrimitiveComponent::OnDestroyPhysicsState()
+{
+	BodyInstance.TermBody();
 }
 
 bool UPrimitiveComponent::TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult)

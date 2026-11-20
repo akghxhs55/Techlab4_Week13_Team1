@@ -1,7 +1,20 @@
 #include "EnginePCH.h"
 #include "BoxComponent.h"
-#include "Physics/Collision.h"
+
+#include "Physics/BodySetup.h"
 #include "Render/LineBatcher.h"
+
+void UBoxComponent::UpdateBodySetup()
+{
+	FAggregateGeom& AggGeom = GetBodySetup()->AggGeom;
+	AggGeom.EmptyElements();
+	
+	uint32 Index = AggGeom.BoxElems.Emplace();
+	FBoxElem& BoxElem = AggGeom.BoxElems[Index];
+	BoxElem.X = BoxExtent.X * 2.0f;
+	BoxElem.Y = BoxExtent.Y * 2.0f;
+	BoxElem.Z = BoxExtent.Z * 2.0f;
+}
 
 FVector UBoxComponent::GetScaledBoxExtent() const
 {

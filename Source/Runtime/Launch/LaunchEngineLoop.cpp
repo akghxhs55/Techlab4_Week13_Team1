@@ -25,6 +25,7 @@
 #include "Core/SplashScreen.h"
 #include "Core/Stats/LightweightStats.h"
 #include "Core/Async/TaskPool.h"
+#include "Physics/PhysicsCore.h"
 #include "Tasks/Tasks.h"
 
 #include "Render/RealtimeGPUProfiler.h"
@@ -313,6 +314,7 @@ void FEngineLoop::Exit()
 	FRenderResourceManager::Shutdown();
 
 	DestroyAllObjectsExceptEngine();
+	FPhysicsCore::Shutdown();
 	delete GEngine;
 	GEngine = nullptr;
 

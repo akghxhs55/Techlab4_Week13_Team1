@@ -29,6 +29,9 @@ public:
 	{
 	};
 
+	virtual bool ShouldCreatePhysicsState() const { return false; }
+	bool IsPhysicsStateCreated() const { return bPhysicsStateCreated; }
+
 	void SetOwner(AActor* InOwner) { Owner = InOwner; }
 	AActor* GetOwner() const { return Owner; }
 
@@ -69,6 +72,8 @@ public:
 
 	UWorld* GetWorld() const { return WorldPrivate; }
 protected:
+	virtual void OnCreatePhysicsState() {}
+	virtual void OnDestroyPhysicsState() {}
 
 	virtual void OnRegister();
 	virtual void OnUnregister();
@@ -91,12 +96,16 @@ protected:
 	void ExecuteUnregisterEvents();
 
 private:
+	void CreatePhysicsState();
+	void DestroyPhysicsState();
+
 	AActor* Owner = nullptr;
 	bool bHiddenInDetails = false;
 	bool bIsActive = false;
 	bool bRegistered = false;
 	bool bIsInitialized = false;
 	bool bHasBegunPlay = false;
+	bool bPhysicsStateCreated = false;
 
 	UWorld* WorldPrivate = nullptr;
 	bool bRenderStateCreated = false;

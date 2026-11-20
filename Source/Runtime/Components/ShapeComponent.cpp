@@ -1,5 +1,7 @@
 #include "EnginePCH.h"
 #include "ShapeComponent.h"
+
+#include "Physics/BodySetup.h"
 #include "Render/LineBatcher.h"
 #include "UObject/UObjectIterator.h"
 
@@ -7,6 +9,21 @@ UShapeComponent::UShapeComponent()
 {
 	bCastShadow = false;
 	bReceiveShadow = false;
+}
+
+UShapeComponent::~UShapeComponent()
+{
+	delete ShapeBodySetup;
+}
+
+UBodySetup* UShapeComponent::GetBodySetup()
+{
+	if (ShapeBodySetup == nullptr)
+	{
+		ShapeBodySetup = NewObject<UBodySetup>(this);
+		UpdateBodySetup();
+	}
+	return ShapeBodySetup;
 }
 
 FBox UShapeComponent::GetWorldAABB() const

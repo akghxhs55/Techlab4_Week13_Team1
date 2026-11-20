@@ -7,6 +7,7 @@
 #include "Render/GeometryGenerator.h"
 #include "Collision/HitResult.h"
 #include "Core/Delegate/Delegate.h"
+#include "Physics/BodyInstance.h"
 #include "PrimitiveComponent.generated.h"
 
 class FPrimitiveSceneProxy;
@@ -80,12 +81,26 @@ public:
 	void SetCastShadow(bool NewValue);
 	void SetReceiveShadow(bool NewValue);
 
+	virtual UBodySetup* GetBodySetup() { return nullptr; }
+
+	bool ShouldCreatePhysicsState() const override;
+
+	// 시뮬레이션을 켜면 부모에서 떼어 낸다(월드 위치 유지). 부모가 움직일 때 바디가 끌려가지 않게 하는 UE 규칙이다
+	void SetSimulatePhysics(bool bSimulate);
+	bool IsSimulatingPhysics() const { return BodyInstance.bSimulatePhysics; }
+	void AddImpulse(const FVector& Impulse, bool bVelocityChange = false) { BodyInstance.AddImpulse(Impulse, bVelocityChange); }
+
+	void SyncComponentToRBPhysics();
+
 	UPROPERTY(EditAnywhere)
 	bool bCastShadow = true;
 	UPROPERTY(EditAnywhere)
 	bool bReceiveShadow = true;
 	UPROPERTY(EditAnywhere)
 	bool bReceivesDecals = true;
+
+	UPROPERTY(EditAnywhere)
+	FBodyInstance BodyInstance;
 
 	// ---- 충돌 이벤트 (담당: C) ----
 	FComponentOverlapSignature OnComponentBeginOverlap;
@@ -117,6 +132,8 @@ protected:
 	virtual void CreateRenderState() override;
 	virtual void DestroyRenderState() override;
 
+	void OnCreatePhysicsState() override;
+	void OnDestroyPhysicsState() override;
 
 	bool TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult);
 	bool TraceMeshLocal(const FRay& LocalRay, const FStaticMeshData& Mesh, float& OutT);
@@ -124,4 +141,6 @@ protected:
 private:
 	friend class FScene;
 	FPrimitiveSceneProxy* SceneProxy = nullptr;
+
+	bool bSyncingFromPhysics = false;
 };

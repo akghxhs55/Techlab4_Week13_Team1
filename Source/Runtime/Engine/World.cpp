@@ -70,7 +70,6 @@ UWorld::UWorld()
 
 UWorld::~UWorld()
 {
-
 }
 
 bool UWorld::Init()
@@ -95,6 +94,8 @@ bool UWorld::Init()
 	// 디버그 선 도구를 만든다. FLineBatcher::Init의 렌더러 인자는 쓰이지 않는다.
 	LineBatcher = MakeUnique<FLineBatcher>();
 	LineBatcher->Init(nullptr, this);
+
+	CreatePhysicsScene();
 
 	return true;
 }
@@ -215,6 +216,22 @@ void UWorld::AddRenderedViewLocation(const FVector& ViewLocation)
 	}
 }
 
+void UWorld::StartPhysicsSim()
+{
+	if (PhysicsScene)
+	{
+		PhysicsScene->StartFrame();
+	}
+}
+
+void UWorld::FinishPhysicsSim()
+{
+	if (PhysicsScene)
+	{
+		PhysicsScene->EndFrame();
+	}
+}
+
 void UWorld::GameWorldTick(float DeltaTime)
 {
 	// 새로운 Actor들의 BeginPlay 실행
@@ -234,6 +251,8 @@ void UWorld::GameWorldTick(float DeltaTime)
 	{
 		return;
 	}
+
+	SetupPhysicsTickFunctions(DeltaTime);
 
 	// 모든 Actor를 도는 대신 등록된 Tick 함수만 실행한다
 	{
@@ -464,6 +483,38 @@ void UWorld::FlushPendingDestroyActors()
 	for (AActor* Actor : ToDelete)
 	{
 		delete Actor;
+	}
+}
+
+void UWorld::CreatePhysicsScene()
+{
+	PhysicsScene = MakeUnique<FPhysScene>(this);
+	if (!PhysicsScene->GetPxScene())
+	{
+		PhysicsScene.reset();
+	}
+}
+
+void UWorld::SetupPhysicsTickFunctions(float DeltaSeconds)
+{
+	const bool bNeedTicks = bShouldSimulatePhysics && PhysicsScene;
+
+	if (bNeedTicks && !StartPhysicsTickFunction.IsTickFunctionRegistered())
+	{
+		StartPhysicsTickFunction.bCanEverTick = true;
+		StartPhysicsTickFunction.TickGroup = ETickingGroup::StartPhysics;
+		StartPhysicsTickFunction.Target = this;
+		StartPhysicsTickFunction.RegisterTickFunction(TickTaskManager);
+
+		EndPhysicsTickFunction.bCanEverTick = true;
+		EndPhysicsTickFunction.TickGroup = ETickingGroup::EndPhysics;
+		EndPhysicsTickFunction.Target = this;
+		EndPhysicsTickFunction.RegisterTickFunction(TickTaskManager);
+	}
+
+	if (bNeedTicks)
+	{
+		PhysicsScene->SetUpForFrame(DeltaSeconds, PhysicsSettings);
 	}
 }
 
@@ -885,6 +936,8 @@ void UWorld::BeginPlay()
 		BeginPlayList.Dequeue();
 		if (Actor) Actor->BeginPlay();
 	}
+
+	bShouldSimulatePhysics = (PhysicsScene != nullptr);
 }
 
 void UWorld::EndPlay()
@@ -903,6 +956,10 @@ void UWorld::EndPlay()
 	GameMode = nullptr;
 	HUD = nullptr;
 	bIsPaused = false;
+
+	bShouldSimulatePhysics = false;
+	StartPhysicsTickFunction.UnRegisterTickFunction();
+	EndPhysicsTickFunction.UnRegisterTickFunction();
 }
 
 namespace

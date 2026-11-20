@@ -16,6 +16,10 @@ class UShapeComponent : public UPrimitiveComponent
 	GENERATED_BODY()
 public:
 	UShapeComponent();
+	virtual ~UShapeComponent() override;
+
+	virtual UBodySetup* GetBodySetup() override;
+	virtual void UpdateBodySetup() {}
 
 	// 넓은 범위 판정용. 월드 스케일과 회전이 반영된 AABB
 	virtual FBox GetWorldAABB() const;
@@ -37,6 +41,9 @@ protected:
 	// 중심, 원이 놓일 평면의 두 축, 반지름, 시작~끝 각도(라디안)
 	static void AddWireArc(FLineBatcher* LineBatcher, const FVector& Center, const FVector& AxisA, const FVector& AxisB,
 		float Radius, float StartRad, float EndRad, const FVector4& Color, int32 Segments = 24);
+
+private:
+	UBodySetup* ShapeBodySetup = nullptr;
 };
 
 

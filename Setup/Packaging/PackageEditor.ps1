@@ -19,7 +19,10 @@ try {
     foreach ($path in @($stage, $output)) {
         if ((Split-Path -Parent $path) -ne $distributionRoot) { throw 'Invalid distribution output path.' }
     }
-    $binaries = @('KurisuEditor.exe', 'libfbxsdk.dll')
+    # The PhysX DLLs sit beside KurisuEditor.exe and also serve the bundled KurisuGame.exe,
+    # because both are Release builds that use the same PhysX profile DLLs.
+    $physxDlls = @('PhysX_64.dll', 'PhysXCommon_64.dll', 'PhysXFoundation_64.dll', 'PhysXCooking_64.dll')
+    $binaries = @('KurisuEditor.exe', 'libfbxsdk.dll') + $physxDlls
     foreach ($name in $binaries) {
         if (-not (Test-Path -LiteralPath (Join-Path $bin $name) -PathType Leaf)) {
             throw "Missing $name. Build the corresponding Release target first."
