@@ -41,7 +41,6 @@ private:
 	FPipelineState CoCPipeline;
 	FPipelineState TilePipeline;
 	FPipelineState GatherPipeline;
-	FPipelineState CompositePipeline;
 	FPipelineState DebugPipeline;
 	TUniquePtr<FConstantBuffer> ConstantBuffer;
 	TUniquePtr<FTexture2D> OutputTarget;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Containers/Array.h"
+#include "ClothBridge.h"
 
 struct FPhysicsSettings;
 
@@ -10,6 +11,7 @@ namespace physx {
 
 class UWorld;
 class USkeletalMeshComponent;
+class UClothComponent;
 
 class FPhysScene
 {
@@ -25,15 +27,19 @@ public:
 	UWorld* GetOwningWorld() const { return Owner; }
 	void RegisterSimulatingSkeletalMesh(USkeletalMeshComponent* Component);
 	void UnregisterSimulatingSkeletalMesh(USkeletalMeshComponent* Component);
+	void RegisterClothComponent(UClothComponent* Component);
+	void UnregisterClothComponent(UClothComponent* Component);
 
 private:
 	void SyncComponentsToBodies();
 
 	UWorld* Owner = nullptr;
 	physx::PxScene* Scene = nullptr;
+	FClothSolverHandle ClothSolver = nullptr;
 	float FrameDeltaTime = 0.0f;
 	float SubstepDeltaTime = 0.0f;
 	int32 NumSubsteps = 0;
 	bool bPhysXSceneExecuting = false;
 	TArray<USkeletalMeshComponent*> SimulatingSkeletalMeshes;
+	TArray<UClothComponent*> ClothComponents;
 };

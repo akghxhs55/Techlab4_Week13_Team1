@@ -12,7 +12,16 @@ bool UFont::LoadFontAtlasJson(const FString& JsonPath)
 	json Root;
 	File >> Root;
 
-	const auto& AtlasJson = Root["atlas"];
+	if (!Root.is_object() || !Root.contains("atlas") || !Root["atlas"].is_object() || !Root.contains("metrics") || !Root["metrics"].is_object())
+	{
+		return false;
+	}
+
+	const json& AtlasJson = Root["atlas"];
+	if (!AtlasJson.contains("width") || !AtlasJson.contains("height") || !AtlasJson.contains("distanceRange") || !Root["metrics"].contains("lineHeight"))
+	{
+		return false;
+	}
 	Width = AtlasJson["width"].get<float>();
 	Height = AtlasJson["height"].get<float>();
 	DistanceRange = AtlasJson["distanceRange"].get<float>();

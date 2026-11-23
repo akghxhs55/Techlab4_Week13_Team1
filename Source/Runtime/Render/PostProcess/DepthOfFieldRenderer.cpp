@@ -49,7 +49,6 @@ void FDepthOfFieldRenderer::Init()
 	SetupLayeredPipeline(CoCPipeline, "EngineResources/Shaders/DepthOfFieldCoC.hlsl");
 	SetupLayeredPipeline(TilePipeline, "EngineResources/Shaders/DepthOfFieldTile.hlsl");
 	SetupLayeredPipeline(GatherPipeline, "EngineResources/Shaders/DepthOfFieldGather.hlsl");
-	SetupLayeredPipeline(CompositePipeline, "EngineResources/Shaders/DepthOfFieldComposite.hlsl");
 	SetupLayeredPipeline(DebugPipeline, "EngineResources/Shaders/DepthOfFieldDebug.hlsl");
 	ConstantBuffer = RenderCommand::CreateConstantBuffer(sizeof(FDepthOfFieldData));
 }
@@ -62,7 +61,7 @@ bool FDepthOfFieldRenderer::PrepareOutput(FTexture2D* ColorTarget, bool bVisuali
 		};
 	if (!ColorTarget || !ConstantBuffer || !IsReady(CoCPipeline) ||
 		(bVisualizeDOF ? !IsReady(DebugPipeline) :
-			(!IsReady(TilePipeline) || !IsReady(GatherPipeline) || !IsReady(CompositePipeline))))
+			(!IsReady(TilePipeline) || !IsReady(GatherPipeline))))
 		return false;
 	if (!OutputTarget || OutputTarget->GetWidth() != ColorTarget->GetWidth() ||
 		OutputTarget->GetHeight() != ColorTarget->GetHeight() ||
@@ -106,7 +105,7 @@ bool FDepthOfFieldRenderer::AddLayeredPasses(FRenderGraphBuilder& Graph, const F
 	if (!SceneColor || !Depth || !Output || !OutputTarget || !ConstantBuffer ||
 		!IsReady(CoCPipeline) ||
 		(bVisualizeDOF ? !IsReady(DebugPipeline) :
-			(!IsReady(TilePipeline) || !IsReady(GatherPipeline) || !IsReady(CompositePipeline))))
+			(!IsReady(TilePipeline) || !IsReady(GatherPipeline))))
 		return false;
 	const uint32 Width = OutputTarget->GetWidth();
 	const uint32 Height = OutputTarget->GetHeight();
@@ -137,11 +136,7 @@ bool FDepthOfFieldRenderer::AddLayeredPasses(FRenderGraphBuilder& Graph, const F
 
 	const FRenderGraphTextureRef Tiles = Graph.CreateTexture({ (Width + 15) / 16, (Height + 15) / 16,
 		ETextureFormat::R16G16_Float }, "DOFTileRanges");
-	const FRenderGraphTextureRef Near = Graph.CreateTexture({ Width, Height,
-		ETextureFormat::R16G16B16A16_Float }, "DOFNear");
-	const FRenderGraphTextureRef Far = Graph.CreateTexture({ Width, Height,
-		ETextureFormat::R16G16B16A16_Float }, "DOFFar");
-	if (!Tiles || !Near || !Far) return false;
+	if (!Tiles) return false;
 
 	FRenderGraphRasterPassDesc TilePass{};
 	TilePass.Name = "DOFTileRanges";
@@ -153,20 +148,11 @@ bool FDepthOfFieldRenderer::AddLayeredPasses(FRenderGraphBuilder& Graph, const F
 		})) return false;
 
 	FRenderGraphRasterPassDesc GatherPass{};
-	GatherPass.Name = "DOFGather";
+	GatherPass.Name = "DOFGatherComposite";
 	GatherPass.ReadTextures = { SceneColor, Depth, CoC, Tiles };
-	GatherPass.ColorAttachments = { { Near, ERenderGraphLoadAction::Clear }, { Far, ERenderGraphLoadAction::Clear } };
-	if (!Graph.AddRasterPass(std::move(GatherPass), [this, Data]
+	GatherPass.ColorAttachments = { { Output, ERenderGraphLoadAction::Clear } };
+	return Graph.AddRasterPass(std::move(GatherPass), [this, Data]
 		{
 			bLayeredPassSucceeded &= DrawLayered(GatherPipeline, Data);
-		})) return false;
-
-	FRenderGraphRasterPassDesc CompositePass{};
-	CompositePass.Name = "DOFComposite";
-	CompositePass.ReadTextures = { SceneColor, Near, Far };
-	CompositePass.ColorAttachments = { { Output, ERenderGraphLoadAction::Clear } };
-	return Graph.AddRasterPass(std::move(CompositePass), [this, Data]
-		{
-			bLayeredPassSucceeded &= DrawLayered(CompositePipeline, Data);
 		});
 }

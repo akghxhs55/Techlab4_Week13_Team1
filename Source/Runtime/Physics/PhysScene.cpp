@@ -7,14 +7,21 @@
 #include <extensions/PxDefaultSimulationFilterShader.h>
 
 #include "BodyInstance.h"
+#include "ClothCore.h"
 #include "PhysicsCore.h"
 #include "PhysicsSettings.h"
+#include "Components/ClothComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 
 FPhysScene::FPhysScene(UWorld* InOwner)
 	: Owner(InOwner)
 {
+	if (FClothCore::GetFactory())
+	{
+		ClothSolver = ClothBridge_CreateSolver(FClothCore::GetFactory());
+	}
+
 	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
 	if (!Physics)
 	{
@@ -43,6 +50,20 @@ FPhysScene::FPhysScene(UWorld* InOwner)
 
 FPhysScene::~FPhysScene()
 {
+	if (ClothSolver)
+	{
+		for (UClothComponent* ClothComp : ClothComponents)
+		{
+			if (ClothComp)
+			{
+				ClothBridge_RemoveClothFromSolver(ClothSolver, ClothComp->GetClothHandle());
+			}
+		}
+		ClothComponents.Reset();
+		ClothBridge_DestroySolver(ClothSolver);
+		ClothSolver = nullptr;
+	}
+
 	if (Scene)
 	{
 		if (bPhysXSceneExecuting)
@@ -95,6 +116,17 @@ void FPhysScene::SetUpForFrame(float DeltaSeconds, const FPhysicsSettings& Setti
 
 void FPhysScene::StartFrame()
 {
+	if (ClothSolver && FrameDeltaTime > 0.0f)
+	{
+		for (UClothComponent* ClothComp : ClothComponents)
+		{
+			if (ClothComp && ClothComp->IsRegistered())
+			{
+				ClothComp->PreClothSimulate();
+			}
+		}
+	}
+
 	if (!Scene || NumSubsteps == 0)
 	{
 		return;
@@ -122,6 +154,18 @@ void FPhysScene::EndFrame()
 	for (USkeletalMeshComponent* Component : SimulatingSkeletalMeshes)
 		if (Component && Component->IsRegistered())
 			Component->SyncPhysicsToBones();
+
+	if (ClothSolver && FrameDeltaTime > 0.0f && !ClothComponents.IsEmpty())
+	{
+		ClothBridge_StepSolver(ClothSolver, FrameDeltaTime);
+		for (UClothComponent* ClothComp : ClothComponents)
+		{
+			if (ClothComp && ClothComp->IsRegistered())
+			{
+				ClothComp->PostClothSimulate();
+			}
+		}
+	}
 }
 
 void FPhysScene::RegisterSimulatingSkeletalMesh(USkeletalMeshComponent* Component)
@@ -133,6 +177,35 @@ void FPhysScene::RegisterSimulatingSkeletalMesh(USkeletalMeshComponent* Componen
 void FPhysScene::UnregisterSimulatingSkeletalMesh(USkeletalMeshComponent* Component)
 {
 	SimulatingSkeletalMeshes.Remove(Component);
+}
+
+void FPhysScene::RegisterClothComponent(UClothComponent* Component)
+{
+	if (!Component || !ClothSolver || !Component->GetClothHandle())
+	{
+		return;
+	}
+	if (!ClothComponents.Contains(Component))
+	{
+		ClothComponents.Add(Component);
+		ClothBridge_AddClothToSolver(ClothSolver, Component->GetClothHandle());
+	}
+}
+
+void FPhysScene::UnregisterClothComponent(UClothComponent* Component)
+{
+	if (!Component)
+	{
+		return;
+	}
+	if (ClothComponents.Contains(Component))
+	{
+		if (ClothSolver && Component->GetClothHandle())
+		{
+			ClothBridge_RemoveClothFromSolver(ClothSolver, Component->GetClothHandle());
+		}
+		ClothComponents.Remove(Component);
+	}
 }
 
 void FPhysScene::SyncComponentsToBodies()

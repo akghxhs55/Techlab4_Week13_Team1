@@ -10,13 +10,7 @@ DOFVSOutput mainVS(uint VertexID : SV_VertexID)
     return DOFMainVS(VertexID);
 }
 
-struct DOFGatherOutput
-{
-    float4 NearColor : SV_Target0;
-    float4 FarColor : SV_Target1;
-};
-
-DOFGatherOutput mainPS(DOFVSOutput Input)
+float4 mainPS(DOFVSOutput Input) : SV_Target
 {
     int2 Pixel = int2(Input.Position.xy);
     int2 ImageSize = int2(1.0f / InvWidth, 1.0f / InvHeight);
@@ -98,8 +92,8 @@ DOFGatherOutput mainPS(DOFVSOutput Input)
 
     float NearAlpha = saturate(NearWeight / NearKernelWeight);
     float FarAlpha = CenterCoC > 0.5f ? saturate(CenterCoC / 2.0f) : 0.0f;
-    DOFGatherOutput Output;
-    Output.NearColor = float4(NearWeight > 0.0f ? NearSum / NearWeight * NearAlpha : float3(0.0f, 0.0f, 0.0f), NearAlpha);
-    Output.FarColor = float4(FarWeight > 0.0f ? FarSum / FarWeight : CenterColor.rgb, FarAlpha);
-    return Output;
+    float3 NearColor = NearWeight > 0.0f ? NearSum / NearWeight * NearAlpha : float3(0.0f, 0.0f, 0.0f);
+    float3 FarColor = FarWeight > 0.0f ? FarSum / FarWeight : CenterColor.rgb;
+    float3 Background = lerp(CenterColor.rgb, FarColor, FarAlpha);
+    return float4(NearColor + Background * (1.0f - NearAlpha), CenterColor.a);
 }

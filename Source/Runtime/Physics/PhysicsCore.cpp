@@ -1,5 +1,6 @@
 #include "EnginePCH.h"
 #include "PhysicsCore.h"
+#include "ClothCore.h"
 
 #include "PxPhysicsAPI.h"
 
@@ -77,11 +78,15 @@ bool FPhysicsCore::Init()
 
 	KRS_LOG(Info, "[PhysX] Initialized {}.{}.{}", PX_PHYSICS_VERSION_MAJOR, PX_PHYSICS_VERSION_MINOR, PX_PHYSICS_VERSION_BUGFIX);
 
+	FClothCore::Init();
+
 	return true;
 }
 
 void FPhysicsCore::Shutdown()
 {
+	FClothCore::Shutdown();
+
 	if (DefaultMaterial)
 	{
 		DefaultMaterial->release();

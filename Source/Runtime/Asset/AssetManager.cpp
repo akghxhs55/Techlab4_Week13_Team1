@@ -55,7 +55,7 @@ namespace
 		if (Extension == ".png" || Extension == ".dds") {
 			return EAssetType::Texture;
 		}
-		if (Extension == ".json") {
+		if (Extension == ".json" && !Path.ends_with(".sockets.json")) {
 			return EAssetType::Font;
 		}
 		if (Extension == ".obj") {
