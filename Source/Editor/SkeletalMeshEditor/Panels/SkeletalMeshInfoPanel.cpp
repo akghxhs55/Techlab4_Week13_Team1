@@ -38,13 +38,21 @@ void FSkeletalMeshInfoPanel::DrawContent()
 	ImGui::Text("Physics Asset: %s", Mesh->GetPhysicsAsset() ? "Loaded" : "None");
 	ImGui::SliderFloat("Min Bone Size", &MinBoneSize, 0.01f, 0.5f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderInt("Min Vertices", &MinVertexCount, 1, 100, "%d", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::Combo("Primitive Type", &PrimitiveType, "Capsule\0Box\0");
+	ImGui::Checkbox("Auto Orient to Bone", &bAutoOrientToBone);
+	ImGui::Checkbox("Include Child Bones", &bIncludeChildBones);
+	ImGui::Combo("Angular Constraint", &AngularMode, "Limited\0Locked\0Free\0");
 	if (ImGui::Button("Create Physics Asset"))
 	{
 		FPhysAssetCreateParams Params;
 		Params.MinBoneSize = MinBoneSize;
 		Params.MinVertexCount = MinVertexCount;
+		Params.GeomType = PrimitiveType == 0 ? EPhysAssetFitGeomType::Capsule : EPhysAssetFitGeomType::Box;
+		Params.AngularMode = static_cast<EPhysAssetAngularMode>(AngularMode);
+		Params.bAutoOrientToBone = bAutoOrientToBone;
+		Params.bIncludeChildBones = bIncludeChildBones;
 		if (Editor.CreatePhysicsAsset(Params, PhysicsAssetMessage))
-			PhysicsAssetMessage = "Physics Asset created";
+			if (PhysicsAssetMessage.empty()) PhysicsAssetMessage = "Physics Asset created";
 	}
 	if (!PhysicsAssetMessage.empty())
 		ImGui::TextWrapped("%s", PhysicsAssetMessage.c_str());

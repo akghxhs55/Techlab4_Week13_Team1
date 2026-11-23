@@ -6,11 +6,15 @@
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "Physics/ConstraintInstance.h"
+#include "Physics/PhysicsCore.h"
 #include "Physics/PhysScene.h"
 #include "Physics/PhysicsAsset.h"
 #include "Physics/PhysXConversion.h"
 #include "Render/SkeletalMesh.h"
 #include <PxRigidDynamic.h>
+#include <PxAggregate.h>
+#include <PxPhysics.h>
+#include <PxScene.h>
 #include <PxShape.h>
 #include <geometry/PxGeometryQuery.h>
 
@@ -119,6 +123,34 @@ bool USkeletalMeshComponent::InitArticulated()
 		BodyBoneIndices.Add(BoneIndex);
 	}
 
+	physx::PxU32 ShapeCount = 0;
+	for (FBodyInstance* Body : Bodies)
+		ShapeCount += Body->GetPxRigidDynamic()->getNbShapes();
+	BodyAggregate = FPhysicsCore::GetPhysics()->createAggregate(
+		static_cast<physx::PxU32>(Bodies.Num()), ShapeCount,
+		physx::PxGetAggregateFilterHint(physx::PxAggregateType::eGENERIC, false));
+	if (!BodyAggregate)
+	{
+		TermArticulated();
+		return false;
+	}
+	physx::PxScene* PxScene = World->GetPhysicsScene()->GetPxScene();
+	for (FBodyInstance* Body : Bodies)
+	{
+		physx::PxRigidDynamic* Actor = Body->GetPxRigidDynamic();
+		PxScene->removeActor(*Actor);
+		if (!BodyAggregate->addActor(*Actor))
+		{
+			TermArticulated();
+			return false;
+		}
+	}
+	if (!PxScene->addAggregate(*BodyAggregate))
+	{
+		TermArticulated();
+		return false;
+	}
+
 	for (UPhysicsConstraintTemplate* Template : Asset->ConstraintSetup)
 	{
 		auto* Instance = new FConstraintInstance(Template->DefaultInstance);
@@ -144,6 +176,7 @@ void USkeletalMeshComponent::TermArticulated()
 		if (FPhysScene* Scene = World->GetPhysicsScene())
 			Scene->UnregisterSimulatingSkeletalMesh(this);
 	bRagdollActive = false;
+	bLogNextRagdollStep = false;
 	for (FConstraintInstance* Constraint : Constraints)
 	{
 		Constraint->TermConstraint();
@@ -156,6 +189,11 @@ void USkeletalMeshComponent::TermArticulated()
 		delete Body;
 	}
 	Bodies.Reset();
+	if (BodyAggregate)
+	{
+		BodyAggregate->release();
+		BodyAggregate = nullptr;
+	}
 	BodyBoneIndices.Reset();
 }
 
@@ -272,9 +310,16 @@ bool USkeletalMeshComponent::StartRagdoll()
 	{
 		Bodies[Index]->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		Bodies[Index]->SetInstanceSimulatePhysics(true);
+		physx::PxRigidDynamic* Actor = Bodies[Index]->GetPxRigidDynamic();
+		Actor->setLinearVelocity(physx::PxVec3(0.0f));
+		Actor->setAngularVelocity(physx::PxVec3(0.0f));
 	}
 	bRagdollActive = true;
+	bLogNextRagdollStep = true;
+	RagdollStartBodyPosition = Bodies[0]->GetUnrealWorldTransform().Location;
 	GetWorld()->GetPhysicsScene()->RegisterSimulatingSkeletalMesh(this);
+	KRS_LOG(Info, "[Ragdoll] simulation started: component={}, asset={}, bodies={}", GetName(),
+		GetPhysicsAsset()->GetAssetPath(), Bodies.Num());
 	return true;
 }
 
@@ -306,6 +351,20 @@ void USkeletalMeshComponent::SyncPhysicsToBones()
 {
 	if (Bodies.IsEmpty() || !IsAnyBodySimulatingPhysics())
 		return;
+	if (bLogNextRagdollStep)
+	{
+		bLogNextRagdollStep = false;
+		float MaxSpeed = 0.0f;
+		int32 FastestBody = 0;
+		for (int32 Index = 0; Index < Bodies.Num(); ++Index)
+		{
+			const float Speed = Bodies[Index]->GetLinearVelocity().Size();
+			if (Speed > MaxSpeed) { MaxSpeed = Speed; FastestBody = Index; }
+		}
+		const FVector Delta = Bodies[0]->GetUnrealWorldTransform().Location - RagdollStartBodyPosition;
+		KRS_LOG(Info, "[Ragdoll] first step: rootDelta=({},{},{}), fastestBone={}, speed={}",
+			Delta.X, Delta.Y, Delta.Z, GetBones()[BodyBoneIndices[FastestBody]].Name, MaxSpeed);
+	}
 	const TArray<FBoneInfo>& Skeleton = GetBones();
 	TArray<FMatrix> NewComponentSpace;
 	NewComponentSpace.SetNum(Skeleton.Num());
@@ -360,7 +419,7 @@ bool USkeletalMeshComponent::RaycastPhysicsBodies(const FRay& WorldRay, FHitResu
 		Actor->getShapes(Shapes.GetData(), ShapeCount);
 		for (physx::PxShape* Shape : Shapes)
 		{
-			physx::PxRaycastHit Hit;
+			physx::PxGeomRaycastHit Hit;
 			if (!physx::PxGeometryQuery::raycast(K2PVector(WorldRay.Origin), K2PVector(Direction),
 				Shape->getGeometry(), BodyPose * Shape->getLocalPose(), Nearest,
 				physx::PxHitFlag::eDEFAULT, 1, &Hit))

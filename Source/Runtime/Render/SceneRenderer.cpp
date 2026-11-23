@@ -14,6 +14,7 @@
 #include "Render/PostProcess/HeightFogRenderer.h"
 #include "Render/PostProcess/CameraOverlayRenderer.h"
 #include "Render/PostProcess/FXAARenderer.h"
+#include "Render/PostProcess/DepthOfFieldRenderer.h"
 #include "Render/PostProcess/ToneMapData.h"
 #include "Render/DecalData.h"
 #include "Render/SkyboxRenderer.h"
@@ -1019,6 +1020,7 @@ bool FSceneRenderer::AddViewportPasses(FRenderGraphBuilder& Graph, FRenderer* Re
 	const FRenderGraphTextureRef SceneColor = Graph.ImportTexture(Targets.SceneColor.get(), "SceneColor");
 	const FRenderGraphTextureRef Depth = Graph.ImportTexture(Targets.Depth.get(), "SceneDepth");
 	if (!SceneColor || !Depth) return false;
+	const bool bVisualizeDOF = Options.bVisualizeDOF && Callbacks.DepthOfFieldOutput;
 	bHasFog = false;
 	bFXAAPassSucceeded = true;
 
@@ -1039,23 +1041,32 @@ bool FSceneRenderer::AddViewportPasses(FRenderGraphBuilder& Graph, FRenderer* Re
 			RenderTranslucent(Renderer, GetFog ? GetFog(bHasFog) : nullptr);
 			})) return false;
 	}
-	if (!Options.bShowWorldNormal && Callbacks.SceneText &&
-		!Graph.AddRasterPass(MakeViewportPass("SceneText", SceneColor, Depth), Callbacks.SceneText))
+	FRenderGraphTextureRef ActiveColor = SceneColor;
+	if (Callbacks.DepthOfFieldOutput)
+	{
+		ActiveColor = Graph.ImportTexture(Callbacks.DepthOfFieldOutput, "DepthOfFieldOutput");
+		if (!ActiveColor) return false;
+		FDepthOfFieldRenderer* DOF = Renderer->GetDepthOfField();
+		if (!DOF || !DOF->AddLayeredPasses(Graph, View, SceneColor, Depth, ActiveColor,
+			Options.bVisualizeDOF)) return false;
+	}
+	if (!Options.bShowWorldNormal && !bVisualizeDOF && Callbacks.SceneText &&
+		!Graph.AddRasterPass(MakeViewportPass("SceneText", ActiveColor, Depth), Callbacks.SceneText))
 		return false;
 
 	if (!Options.bShowWorldNormal && Options.bShowSceneDepth && Callbacks.DepthVisualization)
 	{
-		FRenderGraphRasterPassDesc Pass = MakeViewportPass("SceneDepthVisualization", SceneColor);
+		FRenderGraphRasterPassDesc Pass = MakeViewportPass("SceneDepthVisualization", ActiveColor);
 		Pass.ReadTextures = { Depth };
 		if (!Graph.AddRasterPass(std::move(Pass), Callbacks.DepthVisualization)) return false;
 	}
 
-	if (!Options.bShowWorldNormal && !Options.bShowSceneDepth &&
+	if (!Options.bShowWorldNormal && !Options.bShowSceneDepth && !bVisualizeDOF &&
 		View.NeedsCameraOverlay(Options.bShowVignette, Options.bShowCameraOverlay))
 	{
 		const uint32 Width = Targets.SceneColor->GetWidth();
 		const uint32 Height = Targets.SceneColor->GetHeight();
-		if (!Graph.AddRasterPass(MakeViewportPass("CameraOverlay", SceneColor),
+		if (!Graph.AddRasterPass(MakeViewportPass("CameraOverlay", ActiveColor),
 			[this, Renderer, Width, Height,
 			bVignette = Options.bShowVignette, bOverlay = Options.bShowCameraOverlay]
 			{
@@ -1064,20 +1075,20 @@ bool FSceneRenderer::AddViewportPasses(FRenderGraphBuilder& Graph, FRenderer* Re
 			})) return false;
 	}
 
-	FRenderGraphTextureRef FinalColor = SceneColor;
+	FRenderGraphTextureRef FinalColor = ActiveColor;
 	if (!Options.bShowWorldNormal && Callbacks.FXAAOutput && Callbacks.FXAA)
 	{
 		FinalColor = Graph.ImportTexture(Callbacks.FXAAOutput, "FXAAOutput");
 		if (!FinalColor) return false;
 		FRenderGraphRasterPassDesc Pass = MakeViewportPass("FXAA", FinalColor);
-		Pass.ReadTextures = { SceneColor };
+		Pass.ReadTextures = { ActiveColor };
 		if (!Graph.AddRasterPass(std::move(Pass), [this, ApplyFXAA = Callbacks.FXAA]
 			{
 			bFXAAPassSucceeded = ApplyFXAA();
 			})) return false;
 	}
 
-	if (Options.bShowLightCulling && Options.bDrawPrimitives && !Options.bShowWorldNormal)
+	if (Options.bShowLightCulling && Options.bDrawPrimitives && !Options.bShowWorldNormal && !bVisualizeDOF)
 	{
 		FRenderGraphRasterPassDesc Debug = MakeViewportPass("LightCullingDebug", FinalColor);
 		Debug.ReadTextures = { Depth };
@@ -1150,23 +1161,38 @@ bool FSceneRenderer::Render(FRenderer* Renderer, FSceneViewTargets& Targets, con
 			return Fog ? Fog->GetTranslucentFogConstants(bHasFog) : nullptr;
 		};
 	Callbacks.SceneText = [this, Renderer] { RenderSceneText(Renderer); };
+	FDepthOfFieldRenderer* DOF = Renderer->GetDepthOfField();
+	const FDepthOfFieldSettings& DOFSettings = View.DepthOfField;
+	const bool bUseDOF = Options.bEnableDOF && DOFSettings.bEnabled && View.bIsPerspective &&
+		!View.bIsWireframe && !Options.bShowSceneDepth && !Options.bShowWorldNormal &&
+		((DOFSettings.FocalDistance > 0.0f && DOFSettings.ApertureFStop > 0.0f) ||
+			(DOFSettings.DepthBlurRadius > 0.0f && DOFSettings.DepthBlurKmFor50Percent > 0.0f)) &&
+		DOF && DOF->PrepareOutput(ColorTarget, Options.bVisualizeDOF);
+	if (bUseDOF)
+	{
+		Callbacks.DepthOfFieldOutput = DOF->GetOutputTarget().get();
+	}
 
 	FFXAARenderer* FXAA = Renderer->GetFXAA();
-	const bool bUseFXAA = Options.bEnableFXAA && !Options.bShowSceneDepth &&
-		!Options.bShowWorldNormal && FXAA && FXAA->PrepareOutput(ColorTarget);
+	FTexture2D* PostDOFColor = bUseDOF ? DOF->GetOutputTarget().get() : ColorTarget;
+	const bool bUseFXAA = Options.bEnableFXAA && !Options.bShowSceneDepth && !(bUseDOF && Options.bVisualizeDOF) &&
+		!Options.bShowWorldNormal && FXAA && FXAA->PrepareOutput(PostDOFColor);
 	if (bUseFXAA)
 	{
 		Callbacks.FXAAOutput = FXAA->GetOutputTarget().get();
-		Callbacks.FXAA = [FXAA, ColorTarget] { return FXAA->OnRender(ColorTarget); };
+		Callbacks.FXAA = [FXAA, PostDOFColor] { return FXAA->OnRender(PostDOFColor); };
 	}
 
 	if (ExtraPasses) ExtraPasses(Callbacks);
 
 	FRenderGraphBuilder Graph;
 	if (!AddViewportPasses(Graph, Renderer, Targets, Options, Callbacks) ||
-		!Graph.Execute() || !DidCorePassSucceed() || !DidFXAAPassSucceed())
+		!Graph.Execute() || !DidCorePassSucceed() ||
+		(bUseDOF && !DOF->DidLayeredPassSucceed()) || !DidFXAAPassSucceed())
 		return false;
 	if (bUseFXAA && !Targets.SwapSceneColorAndBind(FXAA->GetOutputTarget()))
+		return false;
+	if (!bUseFXAA && bUseDOF && !Targets.SwapSceneColorAndBind(DOF->GetOutputTarget()))
 		return false;
 
 	RenderCommand::EndRenderPass();

@@ -15,4 +15,8 @@ private:
 	FString PhysicsAssetMessage;
 	float MinBoneSize = 0.08f;
 	int32 MinVertexCount = 8;
+	int32 PrimitiveType = 0;
+	int32 AngularMode = 0;
+	bool bAutoOrientToBone = true;
+	bool bIncludeChildBones = true;
 };

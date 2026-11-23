@@ -90,6 +90,10 @@ void APlayerController::InputKey(int32 Key, bool bDown)
 	ACharacter* Character = Cast<ACharacter>(PossessedPawn);
 	const bool bInputAllowed = GetWorld() && !GetWorld()->IsPaused() &&
 		(!GetWorld()->GetGameMode() || GetWorld()->GetGameMode()->AllowsPlayerControllerInput());
+	if (bJustPressed && (Key == static_cast<int32>(EKeyCode::K) || Key == static_cast<int32>(EKeyCode::L)))
+		KRS_LOG(Info, "[RagdollInput] key={}, allowed={}, pawn={}, testCharacter={}", Key,
+			bInputAllowed, PossessedPawn ? PossessedPawn->GetName() : FString("none"),
+			Cast<ATestCharacter>(PossessedPawn) != nullptr);
 	if (Key == static_cast<int32>(EKeyCode::RButton))
 	{
 		if (ATestCharacter* TestCharacter = Cast<ATestCharacter>(PossessedPawn))
@@ -126,6 +130,24 @@ void APlayerController::InputKey(int32 Key, bool bDown)
 	{
 		if (Character->GetSkeletalMeshComponent()->IsRagdollActive()) Character->StopRagdoll();
 		else Character->StartRagdoll();
+	}
+	if (bJustPressed && bInputAllowed)
+	{
+		if (ATestCharacter* TestCharacter = Cast<ATestCharacter>(PossessedPawn))
+		{
+			if (Key == static_cast<int32>(EKeyCode::K))
+			{
+				const bool bStarted = TestCharacter->StartRagdoll();
+				KRS_LOG(Info, "[RagdollInput] K start result={}, assetPresent={}", bStarted,
+					TestCharacter->GetSkeletalMeshComponent()->GetPhysicsAsset() != nullptr);
+			}
+			else if (Key == static_cast<int32>(EKeyCode::L))
+			{
+				TestCharacter->StopRagdoll();
+				KRS_LOG(Info, "[RagdollInput] L stop, active={}",
+					TestCharacter->GetSkeletalMeshComponent()->IsRagdollActive());
+			}
+		}
 	}
 	if (!bInputAllowed)
 		return;

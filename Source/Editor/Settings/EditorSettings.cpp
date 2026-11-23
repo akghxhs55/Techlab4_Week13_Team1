@@ -49,6 +49,8 @@ bool FEditorSettingsManager::SaveSettings() const
 	File << "DrawCascadeBounds=" << Settings.bDrawCascadeBounds << "\n";
 	File << "SceneDepthMaxRange=" << Settings.SceneDepthMaxRange << "\n";
 	File << "EnableFXAA=" << Settings.bEnableFXAA << "\n";
+	File << "EnableDOF=" << Settings.bEnableDOF << "\n";
+	File << "VisualizeDOF=" << Settings.bVisualizeDOF << "\n";
 
 	File << "GammaCorrection=" << Settings.bGammaCorrection << "\n";
 	File << "DisplayGamma=" << Settings.DisplayGamma << "\n";
@@ -206,6 +208,8 @@ bool FEditorSettingsManager::LoadSettings()
 				else if (Key == "DrawCascadeBounds") Settings.bDrawCascadeBounds = std::stoi(ValueStr);
 				else if (Key == "SceneDepthMaxRange") Settings.SceneDepthMaxRange = std::stof(ValueStr);
 				else if (Key == "EnableFXAA") Settings.bEnableFXAA = std::stoi(ValueStr);
+				else if (Key == "EnableDOF") Settings.bEnableDOF = std::stoi(ValueStr);
+				else if (Key == "VisualizeDOF") Settings.bVisualizeDOF = std::stoi(ValueStr);
 
 				else if (Key == "GammaCorrection")   Settings.bGammaCorrection = std::stoi(ValueStr);
 				else if (Key == "DisplayGamma")      Settings.DisplayGamma = std::stof(ValueStr);

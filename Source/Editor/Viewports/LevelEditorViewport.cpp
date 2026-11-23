@@ -52,6 +52,8 @@ void FLevelEditorViewportClient::Draw(FRenderer* Renderer)
 
 		// 모든 뷰포트에 똑같이 적용되는 에디터 설정
 		EngineShowFlags.bEnableFXAA = S.bEnableFXAA;
+		EngineShowFlags.bEnableDOF = S.bEnableDOF;
+		EngineShowFlags.bVisualizeDOF = S.bVisualizeDOF;
 		EngineShowFlags.bCacheShadows = S.bCacheShadows;
 		EngineShowFlags.PcfMode = S.PcfMode;
 		EngineShowFlags.LightingModel = S.LightingModel;

@@ -23,6 +23,25 @@ namespace
 		return FRotator(Degrees.X, Degrees.Y, Degrees.Z);
 	}
 
+	EConstraintAngularMotion ReadAngularMotion(const json& Value, const char* Field)
+	{
+		const FString Motion = Value.value(Field, FString("Limited"));
+		if (Motion == "Locked") return EConstraintAngularMotion::Locked;
+		if (Motion == "Limited") return EConstraintAngularMotion::Limited;
+		if (Motion == "Free") return EConstraintAngularMotion::Free;
+		throw std::runtime_error("invalid angular constraint mode");
+	}
+
+	const char* WriteAngularMotion(EConstraintAngularMotion Motion)
+	{
+		switch (Motion)
+		{
+		case EConstraintAngularMotion::Locked: return "Locked";
+		case EConstraintAngularMotion::Free: return "Free";
+		default: return "Limited";
+		}
+	}
+
 	void ReadShapes(const json& Shapes, FAggregateGeom& Geometry)
 	{
 		for (const json& Shape : Shapes)
@@ -118,10 +137,21 @@ bool PhysicsAssetFile::Read(const std::filesystem::path& Path, UPhysicsAsset& As
 			Default.ConstraintBone1 = Constraint.at("Child").get<FString>();
 			Default.ConstraintBone2 = Constraint.at("Parent").get<FString>();
 			Default.TwistLimitRadians = FMath::DegreesToRadians(Constraint.value("TwistDegrees", 45.0f));
+			Default.TwistLowerRadians = FMath::DegreesToRadians(Constraint.value("TwistLowerDegrees",
+				-FMath::RadiansToDegrees(Default.TwistLimitRadians)));
+			Default.TwistUpperRadians = FMath::DegreesToRadians(Constraint.value("TwistUpperDegrees",
+				FMath::RadiansToDegrees(Default.TwistLimitRadians)));
+			if (Constraint.contains("JointFrameRotation"))
+				Default.JointFrameRotation = ReadRotation(Constraint.at("JointFrameRotation"));
 			Default.Swing1LimitRadians = FMath::DegreesToRadians(Constraint.value("Swing1Degrees", 30.0f));
 			Default.Swing2LimitRadians = FMath::DegreesToRadians(Constraint.value("Swing2Degrees", 30.0f));
+			Default.TwistMotion = ReadAngularMotion(Constraint, "TwistMotion");
+			Default.Swing1Motion = ReadAngularMotion(Constraint, "Swing1Motion");
+			Default.Swing2Motion = ReadAngularMotion(Constraint, "Swing2Motion");
 			Default.bDisableCollision = Constraint.value("DisableCollision", true);
 			if (Default.TwistLimitRadians <= 0.0f || Default.TwistLimitRadians >= PI ||
+				Default.TwistLowerRadians >= Default.TwistUpperRadians ||
+				Default.TwistLowerRadians <= -PI || Default.TwistUpperRadians >= PI ||
 				Default.Swing1LimitRadians <= 0.0f || Default.Swing1LimitRadians >= PI ||
 				Default.Swing2LimitRadians <= 0.0f || Default.Swing2LimitRadians >= PI)
 				throw std::runtime_error("invalid constraint angle");
@@ -179,8 +209,14 @@ bool PhysicsAssetFile::Write(const std::filesystem::path& Path, const UPhysicsAs
 		const FConstraintInstance& Constraint = Template->DefaultInstance;
 		Data["Constraints"].push_back({ {"Child", Constraint.ConstraintBone1}, {"Parent", Constraint.ConstraintBone2},
 			{"TwistDegrees", FMath::RadiansToDegrees(Constraint.TwistLimitRadians)},
+			{"TwistLowerDegrees", FMath::RadiansToDegrees(Constraint.TwistLowerRadians)},
+			{"TwistUpperDegrees", FMath::RadiansToDegrees(Constraint.TwistUpperRadians)},
+			{"JointFrameRotation", WriteRotation(Constraint.JointFrameRotation)},
 			{"Swing1Degrees", FMath::RadiansToDegrees(Constraint.Swing1LimitRadians)},
 			{"Swing2Degrees", FMath::RadiansToDegrees(Constraint.Swing2LimitRadians)},
+			{"TwistMotion", WriteAngularMotion(Constraint.TwistMotion)},
+			{"Swing1Motion", WriteAngularMotion(Constraint.Swing1Motion)},
+			{"Swing2Motion", WriteAngularMotion(Constraint.Swing2Motion)},
 			{"DisableCollision", Constraint.bDisableCollision} });
 	}
 	std::filesystem::path Temp = Path;

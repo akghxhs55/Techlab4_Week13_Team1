@@ -707,7 +707,10 @@ UPhysicsAsset* UAssetManager::LoadPhysicsAsset(const FString& Path)
 {
 	const FString Key = FAssetUtils::GetAssetKey(Path);
 	if (UPhysicsAsset** Found = Get().PhysicsAssetMap.Find(Key))
+	{
+		KRS_LOG(Info, "[PhysicsAsset] cache hit: {}", Key);
 		return *Found;
+	}
 
 	const FString Resolved = FAssetUtils::ResolveAssetFilePath(Path);
 	auto* Asset = NewObject<UPhysicsAsset>();
@@ -722,7 +725,17 @@ UPhysicsAsset* UAssetManager::LoadPhysicsAsset(const FString& Path)
 	}
 	Asset->SetAssetPath(Key);
 	Get().PhysicsAssetMap[Key] = Asset;
+	KRS_LOG(Info, "[PhysicsAsset] loaded: {} (bodies={}, constraints={})", Key,
+		Asset->SkeletalBodySetups.Num(), Asset->ConstraintSetup.Num());
 	return Asset;
+}
+
+void UAssetManager::RegisterPhysicsAsset(const FString& Path, UPhysicsAsset* Asset)
+{
+	if (!Asset) return;
+	const FString Key = FAssetUtils::GetAssetKey(Path);
+	Asset->SetAssetPath(Key);
+	Get().PhysicsAssetMap[Key] = Asset;
 }
 
 bool UAssetManager::ReorientStaticMesh(UStaticMesh& Mesh, const std::function<FVector(const FVector&)>& Rotate)

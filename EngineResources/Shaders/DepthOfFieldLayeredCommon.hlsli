@@ -1,0 +1,62 @@
+cbuffer DepthOfFieldConstants : register(b0)
+{
+    float InvWidth;
+    float InvHeight;
+    float ProjectionA;
+    float ProjectionB;
+    float FocusDistanceMM;
+    float FocalLengthMM;
+    float SensorHeightMM;
+    float ApertureFStop;
+    float DepthBlurHalfDistanceCM;
+    float DepthBlurRadiusPixels;
+    float MaxRadiusPixels;
+    float MinimumFStop;
+    float DiaphragmBladeCount;
+    float SkyDepthCM;
+    float2 Padding;
+};
+
+struct DOFVSOutput
+{
+    float4 Position : SV_Position;
+};
+
+DOFVSOutput DOFMainVS(uint VertexID)
+{
+    float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
+    DOFVSOutput Output;
+    Output.Position = float4(UV * float2(2, -2) + float2(-1, 1), 0, 1);
+    return Output;
+}
+
+float DOFViewDepth(float DeviceZ)
+{
+    return DeviceZ >= 1.0f ? SkyDepthCM : max(ProjectionB / (DeviceZ - ProjectionA), 0.0f);
+}
+
+float DOFSignedCoC(float Z)
+{
+    if (Z <= 0.0f) return 0.0f;
+    float LensRadius = 0.0f;
+    if (FocusDistanceMM > FocalLengthMM)
+    {
+        float Zmm = Z * 10.0f;
+        float CocMM = FocalLengthMM * FocalLengthMM * abs(Zmm - FocusDistanceMM) /
+            (ApertureFStop * Zmm * (FocusDistanceMM - FocalLengthMM));
+        LensRadius = 0.5f * CocMM / SensorHeightMM / InvHeight;
+    }
+    float DistanceRadius = DepthBlurHalfDistanceCM > 0.0f
+        ? DepthBlurRadiusPixels * Z / (Z + DepthBlurHalfDistanceCM) : 0.0f;
+    float Radius = min(max(LensRadius, DistanceRadius), MaxRadiusPixels);
+    return FocusDistanceMM > 0.0f && Z * 10.0f < FocusDistanceMM ? -Radius : Radius;
+}
+
+float DOFBladeScale(float Angle)
+{
+    float Sector = 6.2831853f / DiaphragmBladeCount;
+    float LocalAngle = frac((Angle + 3.14159265f) / Sector) * Sector - 0.5f * Sector;
+    float Polygon = cos(0.5f * Sector) / max(cos(LocalAngle), 0.01f);
+    float PolygonWeight = saturate((ApertureFStop - MinimumFStop) / max(MinimumFStop, 0.1f));
+    return lerp(1.0f, Polygon, PolygonWeight);
+}

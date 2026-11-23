@@ -55,6 +55,7 @@ struct FBodyInstance // Component와 PhysX의 Rigid Body를 연결하고 관리
 	void SetBodyTransform(const FTransform& WorldTransform, bool bTeleport);
 	FTransform GetUnrealWorldTransform() const;
 	void SetInstanceSimulatePhysics(bool bSimulate);
+	void SetCollisionEnabled(ECollisionEnabled InCollisionEnabled);
 	void AddImpulse(const FVector& Impulse, bool bVelocityChange);
 	void AddForce(const FVector& Force);
 	void SetLinearVelocity(const FVector& Velocity);
@@ -65,4 +66,5 @@ struct FBodyInstance // Component와 PhysX의 Rigid Body를 연결하고 관리
 	UBodySetup* BodySetup = nullptr;
 	FPhysScene* PhysScene = nullptr;
 	FVector Scale3D = FVector(1.0f, 1.0f, 1.0f);
+	bool bIsSkeletalBody = false;
 };

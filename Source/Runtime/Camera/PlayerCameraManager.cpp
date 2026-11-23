@@ -59,6 +59,17 @@ void FMinimalViewInfo::BlendViewInfo(const FMinimalViewInfo& Other, float Alpha)
 	OrthoWidth = FMath::Lerp(OrthoWidth, Other.OrthoWidth, Alpha);
 	NearClip = FMath::Lerp(NearClip, Other.NearClip, Alpha);
 	FarClip = FMath::Lerp(FarClip, Other.FarClip, Alpha);
+	DepthOfField.FocalDistance = FMath::Lerp(DepthOfField.FocalDistance, Other.DepthOfField.FocalDistance, Alpha);
+	DepthOfField.ApertureFStop = FMath::Lerp(DepthOfField.ApertureFStop, Other.DepthOfField.ApertureFStop, Alpha);
+	DepthOfField.DepthBlurKmFor50Percent = FMath::Lerp(DepthOfField.DepthBlurKmFor50Percent, Other.DepthOfField.DepthBlurKmFor50Percent, Alpha);
+	DepthOfField.DepthBlurRadius = FMath::Lerp(DepthOfField.DepthBlurRadius, Other.DepthOfField.DepthBlurRadius, Alpha);
+	if (Alpha >= 0.5f)
+	{
+		DepthOfField.bEnabled = Other.DepthOfField.bEnabled;
+		DepthOfField.MinimumFStop = Other.DepthOfField.MinimumFStop;
+		DepthOfField.DiaphragmBladeCount = Other.DepthOfField.DiaphragmBladeCount;
+		DepthOfField.SensorWidthMM = Other.DepthOfField.SensorWidthMM;
+	}
 	if (Alpha >= 0.5f) bIsOrthogonal = Other.bIsOrthogonal;
 }
 // =======================FViewTargetTransitionParams===============

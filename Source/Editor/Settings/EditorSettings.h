@@ -26,6 +26,8 @@ struct FEditorSettings
 	bool bDrawBatchLine = true;
 	bool bDrawCascadeBounds = false;
 	bool bEnableFXAA = false;
+	bool bEnableDOF = true;
+	bool bVisualizeDOF = false;
 	bool bDrawDecals = true;
 	bool bDecalCulling = true;
 	bool bDecalNarrowCulling = true;

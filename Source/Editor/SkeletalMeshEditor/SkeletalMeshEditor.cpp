@@ -84,26 +84,62 @@ bool FSkeletalMeshEditor::CreatePhysicsAsset(const FPhysAssetCreateParams& Param
 		return false;
 	}
 	const std::filesystem::path AssetFile = std::filesystem::path(MeshFile + ".physicsasset");
-	if (std::filesystem::exists(AssetFile))
+	const bool bExists = std::filesystem::exists(AssetFile);
+	std::filesystem::path OutputFile = AssetFile;
+	if (bExists)
 	{
-		OutError = "A Physics Asset already exists for this mesh";
-		return false;
+		int32 Suffix = 0;
+		do
+		{
+			OutputFile = AssetFile.string() + ".generated" + (Suffix ? std::to_string(Suffix) : FString());
+			++Suffix;
+		} while (std::filesystem::exists(OutputFile));
 	}
 	auto* Asset = NewObject<UPhysicsAsset>();
 	const bool bGenerated = FPhysicsAssetUtils::CreateFromSkeletalMesh(*Mesh, *Asset, Params, OutError);
-	const bool bSaved = bGenerated && PhysicsAssetFile::Write(AssetFile, *Asset, OutError);
-	for (USkeletalBodySetup* Setup : Asset->SkeletalBodySetups) delete Setup;
-	for (UPhysicsConstraintTemplate* Template : Asset->ConstraintSetup) delete Template;
-	delete Asset;
-	if (!bSaved) return false;
-	if (UPhysicsAsset* Loaded = UAssetManager::LoadPhysicsAsset(MeshFile + ".physicsasset"))
+	const bool bSaved = bGenerated && PhysicsAssetFile::Write(OutputFile, *Asset, OutError);
+	auto DiscardAsset = [&]
 	{
-		Mesh->SetPhysicsAsset(Loaded);
+		for (USkeletalBodySetup* Setup : Asset->SkeletalBodySetups) delete Setup;
+		for (UPhysicsConstraintTemplate* Template : Asset->ConstraintSetup) delete Template;
+		delete Asset;
+	};
+	if (!bSaved) { DiscardAsset(); return false; }
+	if (bExists)
+	{
+		std::filesystem::path BackupFile;
+		int32 Suffix = 0;
+		do
+		{
+			BackupFile = AssetFile.string() + ".bak" + (Suffix ? std::to_string(Suffix) : FString());
+			++Suffix;
+		} while (std::filesystem::exists(BackupFile));
+		std::error_code Error;
+		if (!std::filesystem::copy_file(AssetFile, BackupFile, std::filesystem::copy_options::none, Error))
+		{
+			std::filesystem::remove(OutputFile);
+			DiscardAsset();
+			OutError = "Could not back up the existing Physics Asset";
+			return false;
+		}
+		std::filesystem::remove(AssetFile, Error);
+		if (!Error) std::filesystem::rename(OutputFile, AssetFile, Error);
+		if (Error)
+		{
+			std::filesystem::copy_file(BackupFile, AssetFile, std::filesystem::copy_options::none);
+			std::filesystem::remove(OutputFile);
+			DiscardAsset();
+			OutError = "Could not replace Physics Asset; backup saved at " + BackupFile.string();
+			return false;
+		}
+		UAssetManager::RegisterPhysicsAsset(MeshFile + ".physicsasset", Asset);
+		Mesh->SetPhysicsAsset(Asset);
+		OutError = "Physics Asset regenerated. Backup: " + BackupFile.string();
 		return true;
 	}
-	std::filesystem::remove(AssetFile);
-	OutError = "Generated Physics Asset could not be loaded";
-	return false;
+	UAssetManager::RegisterPhysicsAsset(MeshFile + ".physicsasset", Asset);
+	Mesh->SetPhysicsAsset(Asset);
+	return true;
 }
 
 void FSkeletalMeshEditor::SyncBoneGizmo()

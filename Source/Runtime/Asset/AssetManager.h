@@ -95,6 +95,7 @@ public:
 	static UBlendSpace2D* LoadBlendSpace2D(const FString& Path);
 	static UParticleSystem* LoadParticleSystem(const FString& Path);
 	static UPhysicsAsset* LoadPhysicsAsset(const FString& Path);
+	static void RegisterPhysicsAsset(const FString& Path, UPhysicsAsset* Asset);
 	static UMaterialInterface* LoadMaterialAsset(const FString& AssetPath);
 	static bool SaveMaterialAsset(const FString& AssetPath, const UMaterialInterface& Material);
 	static void RegisterMaterialAsset(const FString& AssetPath, UMaterialInterface* Material);

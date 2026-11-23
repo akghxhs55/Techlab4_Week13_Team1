@@ -114,6 +114,11 @@ void FViewportsPanel::DrawRenderMenu()
 
     ImGui::SeparatorText("Post Process");
     ImGui::Checkbox("FXAA", &Settings.bEnableFXAA);
+    ImGui::Checkbox("Depth of Field", &Settings.bEnableDOF);
+    ImGui::BeginDisabled(!Settings.bEnableDOF);
+    ImGui::Checkbox("Visualize DOF", &Settings.bVisualizeDOF);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("PIE camera only. Near: green, in focus: black, far: blue. Brighter means a larger blur radius.");
+    ImGui::EndDisabled();
     ImGui::Checkbox("Gamma Correction", &Settings.bGammaCorrection);
     ImGui::BeginDisabled(!Settings.bGammaCorrection);
     ImGui::SliderFloat("Display Gamma", &Settings.DisplayGamma, 1.0f, 3.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);

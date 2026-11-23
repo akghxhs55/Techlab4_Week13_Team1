@@ -67,6 +67,9 @@ private:
 
 	char                  InputBuf[256];
 	TArray<FLogData>       Items;
+	TArray<uint8>         SelectedLogFlags;
+	int32                 SelectionAnchor = -1;
+	bool                  bDraggingLogSelection = false;
 	TArray<FConsoleCommand> ConsoleCommands;
 	TArray<FString>		  Commands;
 	TArray<FConsoleSuggestion> AllSuggestions;

@@ -15,9 +15,18 @@ ADefaultPawn::ADefaultPawn()
 	// 에디터 뷰는 게임 뷰가 아니므로 F8로 빠져나오면(SIE) 구가 보인다.
 	StaticMeshComponent->SetHiddenInGame(true);
 	CameraComponent->SetupAttachment(StaticMeshComponent);
-	CameraComponent->SetRelativeLocation({-5.0f, 0.0f, 8.0f});
-	CameraComponent->SetRelativeRotation({45.0f, 0.0f, 0.0f});
+	CameraComponent->SetRelativeLocation({0.0f, 0.0f, 0.0f});
+	CameraComponent->SetRelativeRotation({0.0f, 0.0f, 0.0f});
 	CameraComponent->SetExternalInputManaged(true);
+	CameraComponent->bEnableDepthOfField = true;
+	CameraComponent->FocalDistance = 5.0f;
+	CameraComponent->ApertureFStop = 20.0f;
+	CameraComponent->MinimumFStop = 1.2f;
+	CameraComponent->DiaphragmBladeCount = 5;
+	CameraComponent->SensorWidthMM = 36.0f;
+	CameraComponent->DepthBlurKmFor50Percent = 1.0f;
+	CameraComponent->DepthBlurRadius = 0.0f;
+	CameraComponent->bUsePawnControlRotation = false;
 }
 
 void ADefaultPawn::Tick(float DeltaTime)
@@ -38,8 +47,13 @@ void ADefaultPawn::AddControllerYawInput(float Value)
 
 void ADefaultPawn::AddControllerPitchInput(float Value)
 {
-	if (!GetRootComponent()) return;
-	FRotator Rotation = GetActorRotation();
+	if (!CameraComponent) return;
+	FRotator Rotation = CameraComponent->GetRelativeRotation();
 	Rotation.Pitch = FMath::Clamp(Rotation.Pitch + Value, -89.0f, 89.0f);
-	GetRootComponent()->SetRelativeRotation(Rotation);
+	CameraComponent->SetRelativeRotation(Rotation);
+}
+
+FRotator ADefaultPawn::GetMovementInputRotation() const
+{
+	return FRotator(0.0f, GetActorRotation().Yaw, 0.0f);
 }

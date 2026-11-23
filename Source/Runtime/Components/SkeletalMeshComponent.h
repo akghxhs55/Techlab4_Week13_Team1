@@ -2,6 +2,7 @@
 
 #include "SkinnedMeshComponent.h"
 #include "Animation/AnimInstance.h"
+#include "Serialization/StructuredArchive.h"
 #include "SkeletalMeshComponent.generated.h"
 
 class UAnimInstance;
@@ -18,6 +19,7 @@ class UAnimationAsset;
 class UAnimSingleNodeInstance;
 class UAnimGraphInstance;
 class UPhysicsAsset;
+namespace physx { class PxAggregate; }
 struct FConstraintInstance;
 struct FHitResult;
 struct FRay;
@@ -130,9 +132,12 @@ private:
 
 	UPhysicsAsset* PhysicsAssetOverride = nullptr;
 	TArray<FBodyInstance*> Bodies;
+	physx::PxAggregate* BodyAggregate = nullptr;
 	TArray<FConstraintInstance*> Constraints;
 	TArray<int32> BodyBoneIndices;
 	bool bRagdollActive = false;
+	bool bLogNextRagdollStep = false;
+	FVector RagdollStartBodyPosition = FVector::ZeroVector;
     UPROPERTY()
     FString AnimBlueprintPath;
 

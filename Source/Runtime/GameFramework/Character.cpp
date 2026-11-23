@@ -30,9 +30,10 @@ bool ACharacter::StartRagdoll()
 	if (SkeletalMeshComponent && SkeletalMeshComponent->IsRagdollActive())
 		return true;
 	const FVector InheritedVelocity = GetVelocity();
-	if (!SkeletalMeshComponent || !CapsuleComponent || !SkeletalMeshComponent->StartRagdoll())
+	KRS_LOG(Info, "[Ragdoll] inherited velocity=({},{},{})",
+		InheritedVelocity.X, InheritedVelocity.Y, InheritedVelocity.Z);
+	if (!SkeletalMeshComponent || !CapsuleComponent)
 		return false;
-	SkeletalMeshComponent->SetRagdollLinearVelocity(InheritedVelocity);
 	if (CharacterMovementComponent)
 	{
 		bMovementTickBeforeRagdoll = CharacterMovementComponent->IsComponentTickEnabled();
@@ -45,6 +46,12 @@ bool ACharacter::StartRagdoll()
 	CapsuleComponent->bGenerateOverlapEvents = false;
 	CapsuleComponent->bBlockComponent = false;
 	CapsuleComponent->BodyInstance.SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	if (!SkeletalMeshComponent->StartRagdoll())
+	{
+		RestoreRagdollMovementAndCollision();
+		return false;
+	}
+	SkeletalMeshComponent->SetRagdollLinearVelocity(InheritedVelocity);
 	return true;
 }
 
