@@ -31,8 +31,11 @@ namespace
 	{
 		const bool bSim = Enabled == ECollisionEnabled::PhysicsOnly || Enabled == ECollisionEnabled::QueryAndPhysics;
 		const bool bQuery = Enabled == ECollisionEnabled::QueryOnly || Enabled == ECollisionEnabled::QueryAndPhysics;
+		const bool bTrigger = Enabled == ECollisionEnabled::QueryOnly;
+
 		Shape->setFlag(PxShapeFlag::eSIMULATION_SHAPE, bSim);
 		Shape->setFlag(PxShapeFlag::eSCENE_QUERY_SHAPE, bQuery);
+		Shape->setFlag(PxShapeFlag::eTRIGGER_SHAPE, bTrigger);
 	}
 
 	int32 CreateShapes(PxRigidActor& Actor, const FAggregateGeom& Geom, const FVector& InScale, ECollisionEnabled Enabled)
