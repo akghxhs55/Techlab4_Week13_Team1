@@ -1,0 +1,304 @@
+{
+    "Version": 4,
+    "World": {
+        "PersistentLevel": {
+            "Actors": [
+                {
+                    "Class": "ADirectionalLightActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "DefaultSubobjectName": "DefaultSceneRoot",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": 10.0 },
+                                    "Rotation": { "Pitch": 45.0, "Roll": 0.0, "Yaw": -45.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        },
+                        {
+                            "Class": "UDirectionalLightComponent",
+                            "DefaultSubobjectName": "UDirectionalLightComponent",
+                            "Name": "UDirectionalLightComponent",
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "Intensity": 1.5,
+                                "LightColor": 4294967295,
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": 0.0 },
+                                    "Rotation": { "Pitch": 45.0, "Roll": 0.0, "Yaw": -45.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bCastShadows": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Name": "DirectionalLight",
+                    "ParentActor": "",
+                    "ParentComponent": "",
+                    "Properties": {
+                        "ScriptPath": "",
+                        "bActorEnableCollision": false
+                    },
+                    "RootComponentName": "DefaultSceneRoot"
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "DefaultSubobjectName": "DefaultSceneRoot",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": -0.5 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 20.0, "Y": 20.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "DefaultSubobjectName": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "BodyInstance": {
+                                    "AngularDamping": 0.05,
+                                    "CollisionEnabled": "QueryAndPhysics",
+                                    "LinearDamping": 0.01,
+                                    "MassInKgOverride": 0.0,
+                                    "bEnableGravity": false,
+                                    "bSimulatePhysics": false
+                                },
+                                "StaticMesh": "Cube",
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": 0.0 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bBlockComponent": true,
+                                "bCastShadow": true,
+                                "bGenerateOverlapEvents": true,
+                                "bHiddenInGame": false,
+                                "bReceiveShadow": true,
+                                "bReceivesDecals": true,
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Name": "Floor",
+                    "ParentActor": "",
+                    "ParentComponent": "",
+                    "Properties": {
+                        "ScriptPath": "",
+                        "bActorEnableCollision": true
+                    },
+                    "RootComponentName": "DefaultSceneRoot"
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "DefaultSubobjectName": "DefaultSceneRoot",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": { "X": -2.0, "Y": 0.0, "Z": 8.0 },
+                                    "Rotation": { "Pitch": 25.0, "Roll": 35.0, "Yaw": 15.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "DefaultSubobjectName": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "BodyInstance": {
+                                    "AngularDamping": 0.05,
+                                    "CollisionEnabled": "QueryAndPhysics",
+                                    "LinearDamping": 0.01,
+                                    "MassInKgOverride": 10.0,
+                                    "bEnableGravity": true,
+                                    "bSimulatePhysics": true
+                                },
+                                "StaticMesh": "Cube",
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": 0.0 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bBlockComponent": true,
+                                "bCastShadow": true,
+                                "bGenerateOverlapEvents": true,
+                                "bHiddenInGame": false,
+                                "bReceiveShadow": true,
+                                "bReceivesDecals": true,
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Name": "FallingBox",
+                    "ParentActor": "",
+                    "ParentComponent": "",
+                    "Properties": {
+                        "ScriptPath": "",
+                        "bActorEnableCollision": true
+                    },
+                    "RootComponentName": "DefaultSceneRoot"
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "DefaultSubobjectName": "DefaultSceneRoot",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": { "X": 2.0, "Y": 0.0, "Z": 10.0 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "DefaultSubobjectName": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "BodyInstance": {
+                                    "AngularDamping": 0.05,
+                                    "CollisionEnabled": "QueryAndPhysics",
+                                    "LinearDamping": 0.01,
+                                    "MassInKgOverride": 5.0,
+                                    "bEnableGravity": true,
+                                    "bSimulatePhysics": true
+                                },
+                                "StaticMesh": "Sphere",
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": 0.0 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bBlockComponent": true,
+                                "bCastShadow": true,
+                                "bGenerateOverlapEvents": true,
+                                "bHiddenInGame": false,
+                                "bReceiveShadow": true,
+                                "bReceivesDecals": true,
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Name": "FallingSphere",
+                    "ParentActor": "",
+                    "ParentComponent": "",
+                    "Properties": {
+                        "ScriptPath": "",
+                        "bActorEnableCollision": true
+                    },
+                    "RootComponentName": "DefaultSceneRoot"
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "DefaultSubobjectName": "DefaultSceneRoot",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": { "X": -2.0, "Y": 0.0, "Z": 4.0 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 2.5, "Y": 2.5, "Z": 1.5 }
+                                },
+                                "bAutoActivate": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "DefaultSubobjectName": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "BodyInstance": {
+                                    "AngularDamping": 0.05,
+                                    "CollisionEnabled": "QueryOnly",
+                                    "LinearDamping": 0.01,
+                                    "MassInKgOverride": 0.0,
+                                    "bEnableGravity": false,
+                                    "bSimulatePhysics": false
+                                },
+                                "StaticMesh": "Cube",
+                                "Transform": {
+                                    "Location": { "X": 0.0, "Y": 0.0, "Z": 0.0 },
+                                    "Rotation": { "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0 },
+                                    "Scale": { "X": 1.0, "Y": 1.0, "Z": 1.0 }
+                                },
+                                "bAutoActivate": true,
+                                "bBlockComponent": false,
+                                "bCastShadow": false,
+                                "bGenerateOverlapEvents": true,
+                                "bHiddenInGame": false,
+                                "bReceiveShadow": false,
+                                "bReceivesDecals": false,
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Name": "TriggerZone",
+                    "ParentActor": "",
+                    "ParentComponent": "",
+                    "Properties": {
+                        "ScriptPath": "",
+                        "bActorEnableCollision": true
+                    },
+                    "RootComponentName": "DefaultSceneRoot"
+                }
+            ],
+            "Properties": {}
+        },
+        "Properties": {
+            "GameModeClassName": "AGameMode",
+            "HUDClassName": "",
+            "PlayerControllerClassName": "",
+            "PlayerPawnClassName": ""
+        }
+    }
+}
