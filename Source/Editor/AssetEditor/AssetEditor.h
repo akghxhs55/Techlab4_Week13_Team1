@@ -49,6 +49,8 @@ public:
 
 	virtual const char* GetEditorTypeName() const = 0;
 	const FString& GetAssetPath() const { return AssetPath; }
+	// 같은 에셋을 서로 다른 에디터로 열 때 사용할 문서 식별자입니다.
+	virtual const FString& GetDocumentKey() const { return AssetPath; }
 	FPreviewScene& GetPreviewScene() { return PreviewScene; }
 	FEditorViewportClient* GetViewportClient() const { return ViewportClient.get(); }
 	virtual const FGizmo* GetPreviewGizmo() const { return nullptr; }

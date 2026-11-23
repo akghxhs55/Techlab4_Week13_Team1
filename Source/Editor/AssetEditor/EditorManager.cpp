@@ -2,6 +2,7 @@
 #include "Editor/AssetEditor/EditorManager.h"
 #include "Editor/StaticMeshEditor/StaticMeshEditor.h"
 #include "Editor/SkeletalMeshEditor/SkeletalMeshEditor.h"
+#include "Editor/PhysicsAssetEditor/PhysicsAssetEditor.h"
 #include "Asset/AssetManager.h"
 #include "Asset/AssetUtils.h"
 #include "Asset/FbxImporter/FbxMeshBake.h"
@@ -23,6 +24,7 @@
 
 namespace
 {
+	constexpr int32 PhysicsAssetEditorLauncherIndex = 7;
 	struct FEditorLauncher
 	{
 		const char* Label;
@@ -38,6 +40,7 @@ namespace
 		{ "Blend Space Editor...", L"Open Blend Space Editor", L"Blend Space (*.blendspace)\0*.blendspace\0" },
 		{ "UI Editor...", L"Open UI Editor", L"Widget (*.widget)\0*.widget\0" },
 		{ "Particle System Editor...", L"Open Particle System Editor", L"Particle System (*.particle)\0*.particle\0" },
+		{ "Physics Asset Editor...", L"Open Physics Asset Editor - Select Skeletal Mesh", L"Skeletal Mesh (*.fbx.bin)\0*.fbx.bin\0" },
 	};
 }
 
@@ -84,13 +87,14 @@ void FEditorManager::ShowEditorAssetPicker(int32 EditorType)
 		(EditorType == 2 && AnimSequenceFile::IsAnimSequencePath(Path)) ||
 		(EditorType == 3 && AnimBlueprintFile::IsAnimBlueprintPath(Path)) ||
 		(EditorType == 4 && BlendSpaceFile::IsBlendSpacePath(Path)) ||
-		(EditorType == 5 && FUIEditor::IsWidgetPath(Path));
+		(EditorType == 5 && FUIEditor::IsWidgetPath(Path)) ||
+		(EditorType == PhysicsAssetEditorLauncherIndex && FFbxMeshBake::IsBakedPath(Path));
 	if (!bMatchesType)
 	{
 		MessageBoxW(Dialog.hwndOwner, L"Select an asset matching the editor type.", Launcher.Title, MB_OK | MB_ICONWARNING);
 		return;
 	}
-	if (EditorType <= 1 && FFbxMeshBake::IsBakedPath(Path))
+	if ((EditorType <= 1 || EditorType == PhysicsAssetEditorLauncherIndex) && FFbxMeshBake::IsBakedPath(Path))
 	{
 		FFbxBakedMesh Mesh;
 		FString Error;
@@ -107,7 +111,10 @@ void FEditorManager::ShowEditorAssetPicker(int32 EditorType)
 			return;
 		}
 	}
-	OpenEditor(Path);
+	if (EditorType == PhysicsAssetEditorLauncherIndex)
+		OpenPhysicsAssetEditor(Path);
+	else
+		OpenEditor(Path);
 }
 
 void FEditorManager::OpenEditor(const FString& AssetPath)
@@ -131,7 +138,7 @@ FAssetEditor* FEditorManager::FindEditor(const FString& Path) const
 {
 	for (const auto& Editor : Editors)
 	{
-		if (Editor->GetAssetPath() == Path)
+		if (Editor->GetDocumentKey() == Path)
 		{
 			return Editor.get();
 		}
@@ -393,6 +400,13 @@ void FEditorManager::LateTick()
 	{
 		CreateAnimBlueprintPreview(Path);
 	}
+
+	TArray<FString> PhysicsRequests = std::move(PendingPhysicsAssetOpens);
+	PendingPhysicsAssetOpens = {};
+	for (const FString& Path : PhysicsRequests)
+	{
+		CreatePhysicsAssetEditor(Path);
+	}
 }
 
 void FEditorManager::Shutdown()
@@ -406,6 +420,7 @@ void FEditorManager::Shutdown()
 	
 	PendingOpens.Empty();
 	PendingAnimBlueprintPreviews.Empty();
+	PendingPhysicsAssetOpens.Empty();
 
 	for (auto& Editor : Editors)
 	{
@@ -464,4 +479,55 @@ void FEditorManager::CreateAnimBlueprintPreview(const FString& PreviewMeshPath)
 	}
 
 	Editors.Add(std::move(Editor));
+}
+
+void FEditorManager::OpenPhysicsAssetEditor(const FString& PreviewMeshPath)
+{
+	if (bShuttingDown) return;
+	const FString Path = FAssetUtils::GetAssetKey(PreviewMeshPath);
+	if (Path.empty())
+	{
+		KRS_LOG(Warning, "Cannot open Physics Asset Editor for an empty or invalid mesh path.");
+		return;
+	}
+	// ImGui 렌더링이 끝난 LateTick에서 월드와 탭을 생성합니다.
+	PendingPhysicsAssetOpens.Add(Path);
+}
+
+void FEditorManager::CreatePhysicsAssetEditor(const FString& PreviewMeshPath)
+{
+	if (FAssetEditor* Existing = FindEditor(FPhysicsAssetEditor::MakePreviewDocumentKey(PreviewMeshPath)))
+	{
+		Existing->Activate();
+		return;
+	}
+
+	USkeletalMesh* Mesh = UAssetManager::GetAssetByPath<USkeletalMesh>(PreviewMeshPath);
+	const FString FilePath = FAssetUtils::ResolveAssetFilePath(PreviewMeshPath);
+	if (!Mesh && !FilePath.empty())
+	{
+		Mesh = UAssetManager::GetAssetByPath<USkeletalMesh>(FilePath);
+	}
+	FString Error;
+	if (!Mesh && FFbxMeshBake::IsBakedPath(FilePath))
+	{
+		Mesh = Cast<USkeletalMesh>(UAssetManager::LoadFbxMesh(FilePath, Error));
+	}
+	if (!Mesh)
+	{
+		KRS_LOG(Warning, "Cannot load skeletal mesh for Physics Asset Editor: {} ({})", PreviewMeshPath, Error);
+		MessageBoxW(GetActiveWindow(), L"Cannot load the skeletal mesh. See Output Log.", L"Open Physics Asset Editor", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	TUniquePtr<FAssetEditor> Editor = MakeUnique<FPhysicsAssetEditor>(EditorEngine, *this, PreviewMeshPath, *Mesh);
+	if (!Editor->Initialize())
+	{
+		Editor->Shutdown();
+		KRS_LOG(Warning, "Physics Asset Editor initialization failed: {}", PreviewMeshPath);
+		MessageBoxW(GetActiveWindow(), L"Cannot initialize the mesh preview. See Output Log.", L"Open Physics Asset Editor", MB_OK | MB_ICONERROR);
+		return;
+	}
+	Editors.Add(std::move(Editor));
+	KRS_LOG(Info, "Opened Physics Asset Editor: {}", PreviewMeshPath);
 }
