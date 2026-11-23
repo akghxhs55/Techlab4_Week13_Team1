@@ -22,6 +22,57 @@
 #include "Render/Material.h"
 #include "Render/MaterialInstance.h"
 #include "Components/ParticleSystemComponent.h"
+#include "Physics/PhysicsAsset.h"
+#include "Physics/BodySetup.h"
+
+namespace
+{
+	void AddLocalArc(FLineBatcher* LineBatcher, const FMatrix& ShapeToWorld, const FVector& Center, const FVector& AxisA, const FVector& AxisB,
+		float Radius, float StartRad, float EndRad, const FVector4& Color, int32 Segments = 16)
+	{
+		auto PointAt = [&](float T)
+		{
+			return ShapeToWorld.TransformPosition(Center + AxisA * (std::cos(T) * Radius) + AxisB * (std::sin(T) * Radius));
+		};
+		FVector Prev = PointAt(StartRad);
+		for (int32 i = 1; i <= Segments; ++i)
+		{
+			const FVector P = PointAt(StartRad + (EndRad - StartRad) * i / Segments);
+			LineBatcher->AddLine(Prev, P, Color);
+			Prev = P;
+		}
+	}
+
+	const FVector LocalX(1.0f, 0.0f, 0.0f);
+	const FVector LocalY(0.0f, 1.0f, 0.0f);
+	const FVector LocalZ(0.0f, 0.0f, 1.0f);
+
+	void DrawLocalSphere(FLineBatcher* LineBatcher, const FMatrix& M, float R, const FVector4& Color)
+	{
+		const FVector O = FVector::ZeroVector;
+		AddLocalArc(LineBatcher, M, O, LocalX, LocalY, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, O, LocalX, LocalZ, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, O, LocalY, LocalZ, R, 0.0f, 2.0f * PI, Color);
+	}
+
+	void DrawLocalCapsule(FLineBatcher* LineBatcher, const FMatrix& M, float R, float Length, const FVector4& Color)
+	{
+		const float H = FMath::Max(0.0f, 0.5f * Length);
+		const FVector Top = LocalZ * H;
+		const FVector Bottom = LocalZ * -H;
+
+		AddLocalArc(LineBatcher, M, Top, LocalX, LocalY, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, Bottom, LocalX, LocalY, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, Top, LocalX, LocalZ, R, 0.0f, PI, Color);
+		AddLocalArc(LineBatcher, M, Top, LocalY, LocalZ, R, 0.0f, PI, Color);
+		AddLocalArc(LineBatcher, M, Bottom, LocalX, LocalZ, R, 0.0f, -PI, Color);
+		AddLocalArc(LineBatcher, M, Bottom, LocalY, LocalZ, R, 0.0f, -PI, Color);
+		for (const FVector& Side : { LocalX, LocalX * -1.0f, LocalY, LocalY * -1.0f })
+		{
+			LineBatcher->AddLine(M.TransformPosition(Top + Side * R), M.TransformPosition(Bottom + Side * R), Color);
+		}
+	}
+}
 
 void USkeletalMeshComponent::SetAnimInstance(UAnimInstance* InInstance)
 {
@@ -566,6 +617,62 @@ void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher)
 		const USkeletalMeshComponent* Mesh = *It;
 		if (!Mesh || Mesh->GetWorld() != World || !Mesh->IsRegistered()) continue;
 		Mesh->DrawRootDebug(LineBatcher);
+	}
+}
+
+void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher)
+{
+	if (!World || !LineBatcher) return;
+	for (TObjectIterator<USkeletalMeshComponent> It; It; ++It)
+	{
+		const USkeletalMeshComponent* Mesh = *It;
+		if (!Mesh || Mesh->GetWorld() != World || !Mesh->IsRegistered()) continue;
+		Mesh->DrawPhysicsAssetDebug(LineBatcher);
+	}
+}
+
+void USkeletalMeshComponent::DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const
+{
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	const UPhysicsAsset* PhysicsAsset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	if (!LineBatcher || !PhysicsAsset)
+	{
+		return;
+	}
+
+	const FVector4 ShapeColor(0.2f, 1.0f, 0.4f, 1.0f);
+	const FVector4 OffsetColor(1.0f, 0.9f, 0.2f, 1.0f);
+
+	for (const UBodySetup* Body : PhysicsAsset->BodySetups)
+	{
+		if (!Body) continue;
+		const int32 BoneIndex = Mesh->FindBoneIndex(Body->BoneName);
+		if (BoneIndex < 0 || BoneIndex >= ComponentSpaceTransforms.Num()) continue;
+
+		const FMatrix BoneToWorld = GetBoneWorldMatrix(BoneIndex);
+		const FVector BoneOrigin = BoneToWorld.TransformPosition(FVector::ZeroVector);
+		const FAggregateGeom& Geom = Body->AggGeom;
+
+		auto ShapeToWorld = [&](const FShapeElem& Elem)
+		{
+			const FMatrix M = FTransform(Elem.Rotation, Elem.Center).GetLocalMatrix() * BoneToWorld;
+			LineBatcher->AddLine(BoneOrigin, M.TransformPosition(FVector::ZeroVector), OffsetColor);
+			return M;
+		};
+
+		for (const FSphereElem& Elem : Geom.SphereElems)
+		{
+			DrawLocalSphere(LineBatcher, ShapeToWorld(Elem), Elem.Radius, ShapeColor);
+		}
+		for (const FBoxElem& Elem : Geom.BoxElems)
+		{
+			const FVector E(0.5f * Elem.X, 0.5f * Elem.Y, 0.5f * Elem.Z);
+			LineBatcher->AddOrientedBox(FBox{ E * -1.0f, E }, ShapeToWorld(Elem), ShapeColor);
+		}
+		for (const FCapsuleElem& Elem : Geom.CapsuleElems)
+		{
+			DrawLocalCapsule(LineBatcher, ShapeToWorld(Elem), Elem.Radius, Elem.Length, ShapeColor);
+		}
 	}
 }
 

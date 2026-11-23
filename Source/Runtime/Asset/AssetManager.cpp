@@ -30,12 +30,11 @@
 #include "Particles/ParticleSystem.h"
 #include "Particles/ParticleSystemFile.h"
 #include "Asset/AssetUtils.h"
-
+#include "Physics/PhysicsAsset.h"
 #include "Render/ImageLoader.h"
 #include "Asset/AssetLoadProfiler.h"
 #include "Core/Misc/Paths.h"
 #include <cctype>
-
 
 namespace
 {
@@ -48,12 +47,23 @@ namespace
 		return Extension;
 	}
 
+	bool IsMeshSidecarJsonPath(const FString& Path) {
+		FString Lower = Path;
+		for (char& Character : Lower) {
+			Character = static_cast<char>(std::tolower(static_cast<unsigned char>(Character)));
+		}
+		return Lower.ends_with(".fbx.bin.physics.json") || Lower.ends_with(".fbx.bin.sockets.json");
+	}
+
 	EAssetType GetAssetTypeFromPath(const FString& Path) {
 		const FString Extension{ GetAssetExtension(Path) };
 		if (Extension == ".png" || Extension == ".dds") {
 			return EAssetType::Texture;
 		}
 		if (Extension == ".json") {
+			if (IsMeshSidecarJsonPath(Path)) {
+				return EAssetType::None;
+			}
 			return EAssetType::Font;
 		}
 		if (Extension == ".obj") {
@@ -670,6 +680,22 @@ URenderAsset* UAssetManager::LoadFbxMesh(const FString& Path, FString& OutError)
 		if (!ResolvedFile.empty())
 		{
 			SkelMesh->LoadSocketsFromFile(ResolvedFile + ".sockets.json");
+
+			const FString PhysicsPath = ResolvedFile + ".physics.json";
+			if (std::filesystem::exists(PhysicsPath))
+			{
+				UPhysicsAsset* PhysicsAsset = NewObject<UPhysicsAsset>();
+				if (FJsonArchive::LoadObject(PhysicsAsset, PhysicsPath))
+				{
+					PhysicsAsset->Validate(*SkelMesh, Key);
+					SkelMesh->SetPhysicsAsset(PhysicsAsset);
+				}
+				else
+				{
+					KRS_LOG(Warning, "[PhysicsAsset] Failed to load {}", PhysicsPath);
+					delete PhysicsAsset;
+				}
+			}
 		}
 	}
 	return Asset;

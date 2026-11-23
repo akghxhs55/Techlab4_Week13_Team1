@@ -14,6 +14,7 @@ class FLineBatcher;
 void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher);
 // Settings > Debug Draw (PIE) > Show Root 값. 에디터가 매 프레임 갱신하고, 런타임 액터("root" 라벨 등)가 읽는다
 extern bool GShowSkeletalRootDebug;
+void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher);
 class UAnimationAsset;
 class UAnimSingleNodeInstance;
 class UAnimGraphInstance;
@@ -84,6 +85,9 @@ public:
 
 	// 디버그: root 본 구체 + 액터 위치(root 높이)에서 root까지의 선
 	void DrawRootDebug(FLineBatcher* LineBatcher) const;
+
+	// 디버그: 메시의 Physics 에셋 바디(구·박스·캡슐)를 각 본의 현재 월드 행렬 위에 그린다
+	void DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const;
 
 	void StartPreviewDissolve(float InDuration, const FVector4& InEdgeColor);
 	void UpdatePreviewDissolve(float DeltaTime);
