@@ -312,3 +312,81 @@ void FPhysScene::DispatchPendingEvents()
 		}
 	}
 }
+
+void FPhysScene::LockRead(const char* File, uint32 Line)
+{
+	if (Scene)
+	{
+		Scene->lockRead(File, Line);
+	}
+}
+
+void FPhysScene::UnlockRead()
+{
+	if (Scene)
+	{
+		Scene->unlockRead();
+	}
+}
+
+void FPhysScene::LockWrite(const char* File, uint32 Line)
+{
+	if (Scene)
+	{
+		Scene->lockWrite(File, Line);
+	}
+}
+
+void FPhysScene::UnlockWrite()
+{
+	if (Scene)
+	{
+		Scene->unlockWrite();
+	}
+}
+
+FPhysSceneReadLock::FPhysSceneReadLock(FPhysScene* InScene, const char* InFile, uint32 InLine)
+	: PhysScene(InScene)
+{
+	if (PhysScene)
+	{
+		PhysScene->LockRead(InFile, InLine);
+	}
+}
+
+FPhysSceneReadLock::FPhysSceneReadLock(FPhysScene& InScene, const char* InFile, uint32 InLine)
+	: PhysScene(&InScene)
+{
+	PhysScene->LockRead(InFile, InLine);
+}
+
+FPhysSceneReadLock::~FPhysSceneReadLock()
+{
+	if (PhysScene)
+	{
+		PhysScene->UnlockRead();
+	}
+}
+
+FPhysSceneWriteLock::FPhysSceneWriteLock(FPhysScene* InScene, const char* InFile, uint32 InLine)
+	: PhysScene(InScene)
+{
+	if (PhysScene)
+	{
+		PhysScene->LockWrite(InFile, InLine);
+	}
+}
+
+FPhysSceneWriteLock::FPhysSceneWriteLock(FPhysScene& InScene, const char* InFile, uint32 InLine)
+	: PhysScene(&InScene)
+{
+	PhysScene->LockWrite(InFile, InLine);
+}
+
+FPhysSceneWriteLock::~FPhysSceneWriteLock()
+{
+	if (PhysScene)
+	{
+		PhysScene->UnlockWrite();
+	}
+}

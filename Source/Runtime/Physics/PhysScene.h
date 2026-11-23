@@ -26,6 +26,37 @@ struct FPendingTriggerEvent
 	bool bIsBegin = true; // true: BeginOverlap, false: EndOverlap
 };
 
+class FPhysScene;
+
+// 2. 멀티스레드 씬 락 (Scoped Lock)
+class FPhysSceneReadLock
+{
+public:
+	explicit FPhysSceneReadLock(FPhysScene* InScene, const char* InFile = nullptr, uint32 InLine = 0);
+	explicit FPhysSceneReadLock(FPhysScene& InScene, const char* InFile = nullptr, uint32 InLine = 0);
+	~FPhysSceneReadLock();
+
+	FPhysSceneReadLock(const FPhysSceneReadLock&) = delete;
+	FPhysSceneReadLock& operator=(const FPhysSceneReadLock&) = delete;
+
+private:
+	FPhysScene* PhysScene = nullptr;
+};
+
+class FPhysSceneWriteLock
+{
+public:
+	explicit FPhysSceneWriteLock(FPhysScene* InScene, const char* InFile = nullptr, uint32 InLine = 0);
+	explicit FPhysSceneWriteLock(FPhysScene& InScene, const char* InFile = nullptr, uint32 InLine = 0);
+	~FPhysSceneWriteLock();
+
+	FPhysSceneWriteLock(const FPhysSceneWriteLock&) = delete;
+	FPhysSceneWriteLock& operator=(const FPhysSceneWriteLock&) = delete;
+
+private:
+	FPhysScene* PhysScene = nullptr;
+};
+
 class FPhysScene
 {
 public:
@@ -38,6 +69,12 @@ public:
 
 	physx::PxScene* GetPxScene() const { return Scene; }
 	UWorld* GetOwningWorld() const { return Owner; }
+
+	// ---- 멀티스레드 락 인터페이스 ----
+	void LockRead(const char* File = nullptr, uint32 Line = 0);
+	void UnlockRead();
+	void LockWrite(const char* File = nullptr, uint32 Line = 0);
+	void UnlockWrite();
 
 	void AddPendingHit(UPrimitiveComponent* A, UPrimitiveComponent* B);
 	void AddPendingTrigger(UPrimitiveComponent* TriggerComp, UPrimitiveComponent* OtherComp, bool bIsBegin);
