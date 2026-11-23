@@ -1,5 +1,8 @@
 #include "EnginePCH.h"
 #include "SkeletalMeshComponent.h"
+
+#include <PxPhysics.h>
+#include <PxScene.h>
 #include "Serialization/MathSerialization.h"
 #include "Animation/BonePose.h"
 #include "Animation/AnimNodeBase.h"
@@ -22,8 +25,10 @@
 #include "Render/Material.h"
 #include "Render/MaterialInstance.h"
 #include "Components/ParticleSystemComponent.h"
+#include "Engine/World.h"
 #include "Physics/PhysicsAsset.h"
 #include "Physics/BodySetup.h"
+#include "Physics/PhysicsCore.h"
 
 namespace
 {
@@ -159,6 +164,121 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
 	}
 	UpdatePreviewDissolve(DeltaTime);
 	Super::TickComponent(DeltaTime);
+
+	UpdateKinematicBonesToAnim(ETeleportType::None);
+}
+
+void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
+{
+	for (auto& Body : Bodies)
+	{
+		Body->SetInstanceSimulatePhysics(bSimulate);
+	}
+}
+
+void USkeletalMeshComponent::OnTransformDirty(ETeleportType TeleportType)
+{
+	Super::OnTransformDirty(TeleportType);
+	if (TeleportType != ETeleportType::None)
+	{
+		UpdateKinematicBonesToAnim(TeleportType);
+	}
+}
+
+void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
+{
+	USkeletalMesh* Mesh = GetSkeletalMesh();
+	UPhysicsAsset* Asset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
+	if (!Asset || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
+	{
+		return;
+	}
+
+	RefreshBoneTransformsNow();
+	if (ComponentSpaceTransforms.Num() != Mesh->GetNumBones())
+	{
+		KRS_LOG(Warning, "[Ragdoll] bone transforms not ready");
+		return;
+	}
+
+	physx::PxU32 NumShapes = 0;
+	for (const UBodySetup* Body : Asset->BodySetups)
+	{
+		if (Body)
+		{
+			NumShapes += Body->AggGeom.GetElementCount();
+		}
+	}
+
+	Aggregate = Physics->createAggregate(Asset->BodySetups.Num(), NumShapes, physx::PxGetAggregateFilterHint(physx::PxAggregateType::eGENERIC, false));
+	if (!Aggregate)
+	{
+		return;
+	}
+
+	const FTransform LocalToWorld(GetWorldRotation(), GetWorldLocation(), GetWorldScale3D());
+
+	int32 NumFailed = 0;
+	for (UBodySetup* Body : Asset->BodySetups)
+	{
+		const int32 BoneIndex = Body ? Mesh->FindBoneIndex(Body->BoneName) : INDEX_NONE;
+		if (BoneIndex == INDEX_NONE)
+		{
+			NumFailed++;
+			continue;
+		}
+
+		TUniquePtr<FBodyInstance> BodyInstance = MakeUnique<FBodyInstance>();
+		BodyInstance->bSimulatePhysics = false;
+		BodyInstance->BoneIndex = BoneIndex;
+		BodyInstance->InitBody(Body, GetBoneTransform(BoneIndex, LocalToWorld), this, PhysScene, Aggregate);
+
+		if (BodyInstance->IsValidBodyInstance())
+		{
+			Bodies.Add(std::move(BodyInstance));
+		}
+		else
+		{
+			NumFailed++;
+		}
+	}
+
+	PhysScene->GetPxScene()->addAggregate(*Aggregate);
+	KRS_LOG(Warning, "[Ragdoll] bodies created: {}, failed: {}", Bodies.Num(), NumFailed);
+}
+
+void USkeletalMeshComponent::TermArticulated()
+{
+	for (auto& Body : Bodies)
+	{
+		Body->TermBody();
+	}
+	Bodies.Empty();
+
+	if (Aggregate)
+	{
+		Aggregate->release();
+		Aggregate = nullptr;
+	}
+}
+
+void USkeletalMeshComponent::UpdateKinematicBonesToAnim(ETeleportType TeleportType)
+{
+	if (Bodies.Num() == 0)
+	{
+		return;
+	}
+
+	const FTransform LocalToWorld(GetWorldRotation(), GetWorldLocation(), GetWorldScale3D());
+	for (auto& Body : Bodies)
+	{
+		if (Body->IsDynamic())
+		{
+			continue;
+		}
+		Body->SetBodyTransform(GetBoneTransform(Body->BoneIndex, LocalToWorld), TeleportType);
+	}
 }
 
 const TArray<FBoneInfo>& USkeletalMeshComponent::GetBones() const
@@ -933,4 +1053,16 @@ void USkeletalMeshComponent::SetDissolveHidden(bool bHidden)
 	}
 	bDissolveHidden = bHidden;
 	SetVisibility(!bHidden);
+}
+
+void USkeletalMeshComponent::OnCreatePhysicsState()
+{
+	Super::OnCreatePhysicsState();
+	InitArticulated(GetWorld() ? GetWorld()->GetPhysicsScene() : nullptr);
+}
+
+void USkeletalMeshComponent::OnDestroyPhysicsState()
+{
+	TermArticulated();
+	Super::OnDestroyPhysicsState();
 }

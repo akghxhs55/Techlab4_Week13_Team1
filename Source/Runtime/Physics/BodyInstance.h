@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/EngineBaseTypes.h"
 #include "BodyInstance.generated.h"
 
 class FPhysScene;
@@ -11,6 +12,7 @@ namespace physx
 {
 	class PxRigidActor;
 	class PxRigidDynamic;
+	class PxAggregate;
 }
 
 UENUM()
@@ -45,14 +47,14 @@ struct FBodyInstance
 	UPROPERTY(EditAnywhere)
 	ECollisionEnabled CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 
-	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene);
+	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene, physx::PxAggregate* Aggregate = nullptr);
 	void TermBody();
 	bool IsValidBodyInstance() const { return RigidActor != nullptr; }
 
 	physx::PxRigidDynamic* GetPxRigidDynamic() const;
 	bool IsDynamic() const;
 
-	void SetBodyTransform(const FTransform& WorldTransform, bool bTeleport);
+	void SetBodyTransform(const FTransform& WorldTransform, ETeleportType TeleportType);
 	FTransform GetUnrealWorldTransform() const;
 	void SetInstanceSimulatePhysics(bool bSimulate);
 	void AddImpulse(const FVector& Impulse, bool bVelocityChange);
@@ -65,4 +67,5 @@ struct FBodyInstance
 	UBodySetup* BodySetup = nullptr;
 	FPhysScene* PhysScene = nullptr;
 	FVector Scale3D = FVector(1.0f, 1.0f, 1.0f);
+	int32 BoneIndex = INDEX_NONE;
 };

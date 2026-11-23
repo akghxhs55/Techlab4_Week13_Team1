@@ -9,6 +9,10 @@ class UAnimSequence;
 class UBlendSpace1D;
 class UWorld;
 class FLineBatcher;
+namespace physx
+{
+	class PxAggregate;
+}
 
 // World의 SkeletalMeshComponent마다 root 디버그를 그린다 (DrawCollisionShapes와 같은 방식). PIE의 Show Root에서 호출
 void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher);
@@ -37,6 +41,13 @@ public:
 	UAnimInstance* GetAnimInstance() const { return AnimInstance; }
 	void BeginPlay() override;
 	void TickComponent(float DeltaTime) override;
+
+	virtual void SetSimulatePhysics(bool bSimulate) override;
+	virtual void OnTransformDirty(ETeleportType TeleportType) override;
+
+	void InitArticulated(FPhysScene* PhysScene);
+	void TermArticulated();
+	void UpdateKinematicBonesToAnim(ETeleportType TeleportType);
 
 	const TArray<FBoneInfo>& GetBones() const;
 	int32 FindBoneIndex(const FString& Name) const;
@@ -97,6 +108,9 @@ public:
 	bool IsPreviewDissolveActive() const { return bPreviewDissolveActive; }
 
 protected:
+	virtual void OnCreatePhysicsState() override;
+	virtual void OnDestroyPhysicsState() override;
+
 	// 단일 애니메이션 에셋 경로/루프/재생 속도를 씬에 저장·복원한다 (Serialize에서 부른다)
 	void SerializeSingleAnimation(FStructuredArchive::FRecord& Record);
 
@@ -119,6 +133,9 @@ private:
 
 	FTransform PendingRootMotion;           // 월드 공간 누적값
 	bool bHasPendingRootMotion = false;
+
+	TArray<TUniquePtr<FBodyInstance>> Bodies;
+	physx::PxAggregate* Aggregate = nullptr;
 
 	bool bPreviewDissolveActive = false;
 	bool bDissolveHidden = false;

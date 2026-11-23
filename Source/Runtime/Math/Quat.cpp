@@ -18,6 +18,39 @@ FQuat::FQuat(FRotator InRotator)
 	*this = InRotator.Quaternion();
 }
 
+FQuat::FQuat(const FMatrix& M)
+{
+	// UE FQuat(const FMatrix&)와 같은 알고리즘. ToFMatrix와 같은 행 기준 배치를 가정한다
+	const float Trace = M.M[0][0] + M.M[1][1] + M.M[2][2];
+	if (Trace > 0.0f)
+	{
+		const float Root = std::sqrt(Trace + 1.0f);
+		W = 0.5f * Root;
+		const float S = 0.5f / Root;
+		X = (M.M[1][2] - M.M[2][1]) * S;
+		Y = (M.M[2][0] - M.M[0][2]) * S;
+		Z = (M.M[0][1] - M.M[1][0]) * S;
+	}
+	else
+	{
+		// 대각 성분이 가장 큰 축을 기준으로 계산해 수치 오차를 줄인다
+		int32 i = 0;
+		if (M.M[1][1] > M.M[0][0]) i = 1;
+		if (M.M[2][2] > M.M[i][i]) i = 2;
+
+		static constexpr int32 Next[3] = { 1, 2, 0 };
+		const int32 j = Next[i];
+		const int32 k = Next[j];
+
+		const float Root = std::sqrt(M.M[i][i] - M.M[j][j] - M.M[k][k] + 1.0f);
+		V[i] = 0.5f * Root;
+		const float S = 0.5f / Root;
+		V[3] = (M.M[j][k] - M.M[k][j]) * S;
+		V[j] = (M.M[i][j] + M.M[j][i]) * S;
+		V[k] = (M.M[i][k] + M.M[k][i]) * S;
+	}
+}
+
 /* Functions */
 
 FQuat FQuat::operator * (const FQuat& Other) const
