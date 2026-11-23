@@ -19,6 +19,13 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/Actor/GundamCharacter.h"
 #include "GameFramework/Actor/SonicCharacter.h"
+#include "GameFramework/Actor/PlayerStart.h"
+#include "GameFramework/SwordCharacter.h"
+#include "GameFramework/TestCharacter.h"
+#include "GameFramework/TestCharacter1d.h"
+#include "GameFramework/Actor/ZombieActor.h"
+#include "GameFramework/Actor/ParticleEventManager.h"
+#include "GameFramework/Actor/ParticleHitEffectActor.h"
 #include "Core/StatOverlay.h"
 #include "Core/Stats/LightweightStats.h"
 #include <algorithm>
@@ -448,9 +455,14 @@ void FViewportsPanel::DrawSpawnMenu(FEditorViewportClient& Client)
     };
     ImGui::SeparatorText("Basic");
     Spawn("Camera", ACameraActor::StaticClass());
+    Spawn("Player Start", APlayerStart::StaticClass());
     Spawn("Character", ACharacter::StaticClass());
     Spawn("Gundam Character", AGundamCharacter::StaticClass());
     Spawn("Sonic Character", ASonicCharacter::StaticClass());
+    Spawn("Sword Character", ASwordCharacter::StaticClass());
+    Spawn("Test Character", ATestCharacter::StaticClass());
+    Spawn("Test Character 1D", ATestCharacter1d::StaticClass());
+    Spawn("Zombie", AZombieActor::StaticClass());
     Spawn("Text", ATextRenderActor::StaticClass());
     ImGui::SeparatorText("Meshes");
     Spawn("Skeletal Mesh", ASkeletalMeshActor::StaticClass());
@@ -464,6 +476,8 @@ void FViewportsPanel::DrawSpawnMenu(FEditorViewportClient& Client)
     Spawn("Decal", ADecalActor::StaticClass());
     Spawn("Height Fog", AExponentialHeightFogActor::StaticClass());
     Spawn("Particle System", AParticleSystemActor::StaticClass());
+    Spawn("Particle Event Manager", AParticleEventManager::StaticClass());
+    Spawn("Particle Hit Effect", AParticleHitEffectActor::StaticClass());
     ImGui::EndDisabled();
     if (World) ImGui::TextDisabled("%d actors", World->GetActorNum());
 }

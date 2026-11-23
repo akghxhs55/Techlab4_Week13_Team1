@@ -24,16 +24,16 @@ void UMeshComponent::TickComponent(float DeltaTime)
 	Super::TickComponent(DeltaTime);
 }
 
-UMaterial* UMeshComponent::GetMaterial(int32 SlotIndex) const
+UMaterialInterface* UMeshComponent::GetMaterial(int32 SlotIndex) const
 {
-	if (UMaterial* Override = GetOverrideMaterial(SlotIndex))
+	if (UMaterialInterface* Override = GetOverrideMaterial(SlotIndex))
 	{
 		return Override;
 	}
 	return GetDefaultMaterial(SlotIndex);
 }
 
-UMaterial* UMeshComponent::GetOverrideMaterial(int32 SlotIndex) const
+UMaterialInterface* UMeshComponent::GetOverrideMaterial(int32 SlotIndex) const
 {
 	if (SlotIndex < 0 || SlotIndex >= OverrideMaterials.Num())
 	{
@@ -42,7 +42,7 @@ UMaterial* UMeshComponent::GetOverrideMaterial(int32 SlotIndex) const
 	return OverrideMaterials[SlotIndex];
 }
 
-void UMeshComponent::SetMaterial(int32 SlotIndex, UMaterial* InMaterial)
+void UMeshComponent::SetMaterial(int32 SlotIndex, UMaterialInterface* InMaterial)
 {
 	if (SlotIndex < 0)
 	{
@@ -70,7 +70,7 @@ void UMeshComponent::Serialize(FStructuredArchive::FRecord Record)
 	FStructuredArchive::FArray SlotArray = Record.EnterArray("OverrideMaterials", Num);
 	for (int32 i = 0; i < Num; ++i)
 	{
-		UMaterial* Material = Ar.IsSaving() ? OverrideMaterials[i] : nullptr;
+		UMaterialInterface* Material = Ar.IsSaving() ? OverrideMaterials[i] : nullptr;
 		UMaterial::SerializeMaterialReference(SlotArray.EnterElement(), Material);
 
 		if (Ar.IsLoading() && Material)

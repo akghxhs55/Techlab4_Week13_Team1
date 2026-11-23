@@ -39,7 +39,9 @@ public:
 
 	static TUniquePtr<FConstantBuffer> CreateConstantBuffer(uint32 BufferSize);
 	static TUniquePtr<FStructuredBuffer> CreateDynamicStructuredBuffer(uint32 Capacity, uint32 Stride);
+	static TUniquePtr<FStructuredBuffer> CreateDefaultStructuredBuffer(uint32 Capacity, uint32 Stride);
 	static TUniquePtr<FStructuredBuffer> CreateRWStructuredBuffer(uint32 Stride, uint32 Count);
+	static void UpdateStructuredBufferRange(FStructuredBuffer* Buffer, uint32 StartElement, uint32 ElementCount, uint32 ElementStride, const void* Data);
 
 	static TUniquePtr<FTexture2D> CreateTexture2D(const FTextureDesc& Desc, const void* InitialData = nullptr);
 	// 포맷은 Desc.Format 대신 Image의 포맷을 쓴다.
@@ -99,12 +101,13 @@ public:
 
 	// 크기·포맷이 같은 두 텍스처의 내용을 통째로 복사한다.
 	static void CopyTexture(FTexture2D* Dst, FTexture2D* Src);
+	static void UpdateTextureSubregion(FTexture2D* Texture, uint32 X, uint32 Y, uint32 Width, uint32 Height, const void* Data, uint32 RowPitch);
 
 	static void SetViewport(uint32 InX, uint32 InY, uint32 InWidth, uint32 InHeight);
 
 	static void SetRasterizerState(ERasterizerState State);
 	static void SetBlendState(EBlendState State);
-	static void SetDepthStencilState(EDepthStencilState State);
+	static void SetDepthStencilState(EDepthStencilState State, uint32 StencilRef = 0);
 	static void BindSamplerState(uint32 Slot, ESamplerState SamplerState, EShaderBindFlagBits FlagBits);
 
 	//Compute Shader Commands

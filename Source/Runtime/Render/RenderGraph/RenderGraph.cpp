@@ -289,7 +289,7 @@ bool FRenderGraphBuilder::Execute() // 등록되어 있던
 		RenderCommand::SetRenderTargets(static_cast<uint32>(Pass.Desc.ColorAttachments.size()), ColorTargets,
 			Depth, Pass.Desc.DepthAttachment.DSVIndex);
 		for (uint32 Slot = 0; Slot < Pass.Desc.ReadTextures.size(); ++Slot)
-			RenderCommand::BindShaderResource(Slot, Resolve(Pass.Desc.ReadTextures[Slot]), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+			RenderCommand::BindShaderResource(Pass.Desc.ReadTextureStartSlot + Slot, Resolve(Pass.Desc.ReadTextures[Slot]), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
 		FShadowAtlasRect Viewport = Pass.Desc.Viewport;
 		if (Viewport.Width == 0)
@@ -303,6 +303,9 @@ bool FRenderGraphBuilder::Execute() // 등록되어 있던
 
 		RenderCommand::SetViewport(Viewport.X, Viewport.Y, Viewport.Width, Viewport.Height);
 		Pass.Execute();
+		if (!Pass.Desc.ReadTextures.empty())
+			RenderCommand::UnbindShaderResources(Pass.Desc.ReadTextureStartSlot, static_cast<uint32>(Pass.Desc.ReadTextures.size()),
+				EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 		RenderCommand::EndRenderPass();
 	}
 	return true;

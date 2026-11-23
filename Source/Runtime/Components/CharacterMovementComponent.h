@@ -68,6 +68,10 @@ public:
 
 	// 바닥에 있을 때만 JumpZVelocity로 위로 띄우고 Falling으로 바꾼다. 뛰었으면 true
 	bool DoJump();
+	void StopJumping();
+	void Launch(const FVector& LaunchVelocity);
+	bool IsLaunchActive() const { return bLaunchActive; }
+	void StopMovementImmediately() override;
 
 protected:
 	// UE: 입력 벡터를 가속도로 바꾼 뒤 PerformMovement
@@ -106,4 +110,5 @@ protected:
 
 	FVector Acceleration;
 	ECharacterMovementMode MovementMode = ECharacterMovementMode::Walking;
+	bool bLaunchActive = false;
 };

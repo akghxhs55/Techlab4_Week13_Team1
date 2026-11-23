@@ -1,16 +1,15 @@
 // Resources/Shader/ShadowDepth.hlsl
 #pragma pack_matrix(row_major)
 #include "VertexFactory.hlsli"
+#include "GPUSceneCommon.hlsli"
 
 cbuffer ViewConstants : register(b0)
 {
     matrix VP;
-};                       // Renderer->UploadViewMatrix(ShadowViewProjection)
-cbuffer WorldConstants : register(b2)
-{
-    matrix World;
-    matrix NormalMatrix;
-}; // 그림자 Build가 b2(Vertex)에 오브젝트 상수를 묶음
+    matrix View;
+    matrix Projection;
+    float4 ViewTimeParams;
+};
 
 cbuffer ShadowDepthPass : register(b3)
 {
@@ -19,6 +18,8 @@ cbuffer ShadowDepthPass : register(b3)
     float ShadowNear;
     uint bPerspective;
     float3 ShadowPadding;
+    float3 PreShadowTranslation;
+    float PreShadowPadding;
 };
 
 struct VS_OUTPUT
@@ -36,11 +37,12 @@ float ComputeDepthBias(float3 WorldNormal)
     return ShadowParams.x + ShadowParams.y * Slope;
 }
 
-VS_OUTPUT mainVS(FVertexFactoryInput Input)
+VS_OUTPUT mainVS(FVertexFactoryInput Input, uint InstanceId : SV_InstanceID)
 {
     VS_OUTPUT Output;
-    const FVFIntermediates VF = VF_GetIntermediates(Input, World, NormalMatrix);
-    const float4 WorldPosition = float4(VF.WorldPosition, 1.0f);
+    const FPrimitiveSceneData Prim = LoadScenePrimitive(InstanceId);
+    const FVFIntermediates VF = VF_GetIntermediates(Input, Prim.LocalToWorld, Prim.NormalMatrix);
+    float4 WorldPosition = float4(VF.WorldPosition + PreShadowTranslation, 1.0f);
     const float3 WorldNormal = normalize(VF.WorldNormal);
     Output.Position = mul(WorldPosition, VP);
 

@@ -60,10 +60,35 @@ TUniquePtr<FStructuredBuffer> RenderCommand::CreateDynamicStructuredBuffer(uint3
 	return std::make_unique<FStructuredBuffer>(RenderDevice->GetDevice(), Desc, Capacity);
 }
 
+TUniquePtr<FStructuredBuffer> RenderCommand::CreateDefaultStructuredBuffer(uint32 Capacity, uint32 Stride)
+{
+	assert(RenderDevice);
+	if (!Capacity || !Stride || Capacity > UINT32_MAX / Stride)
+		return nullptr;
+	return RenderDevice->CreateDefaultStructuredBuffer(Stride, Capacity);
+}
+
 TUniquePtr<FStructuredBuffer> RenderCommand::CreateRWStructuredBuffer(uint32 Stride, uint32 Count)
 {
 	assert(RenderDevice);
 	return RenderDevice->CreateRWStructuredBuffer(Stride, Count);
+}
+
+void RenderCommand::UpdateStructuredBufferRange(FStructuredBuffer* Buffer, uint32 StartElement, uint32 ElementCount, uint32 ElementStride, const void* Data)
+{
+	assert(RenderDevice);
+	if (!Buffer || !Buffer->GetBuffer() || !Data || ElementCount == 0 || ElementStride == 0)
+		return;
+	if (StartElement + ElementCount > Buffer->GetCapacity())
+		return;
+	D3D11_BOX Box{};
+	Box.left = StartElement * ElementStride;
+	Box.right = (StartElement + ElementCount) * ElementStride;
+	Box.top = 0;
+	Box.bottom = 1;
+	Box.front = 0;
+	Box.back = 1;
+	RenderDevice->GetContext()->UpdateSubresource(Buffer->GetBuffer(), 0, &Box, Data, 0, 0);
 }
 
 TUniquePtr<FTexture2D> RenderCommand::CreateTexture2D(const FTextureDesc& Desc, const FImageData& Image)
@@ -112,7 +137,7 @@ void RenderCommand::BindPipelineState(const FPipelineState& PipelineState)
 	SetPrimitiveTopology(PipelineState.Topology);
 	SetRasterizerState(PipelineState.RasterizerState);
 	SetBlendState(PipelineState.BlendState);
-	SetDepthStencilState(PipelineState.DepthStencilState);
+	SetDepthStencilState(PipelineState.DepthStencilState, PipelineState.StencilRef);
 }
 
 void RenderCommand::BindShaderProgram(FShaderProgram* Shader)
@@ -397,9 +422,9 @@ void RenderCommand::SetBlendState(EBlendState State)
 	RenderDevice->GetContext()->OMSetBlendState(RenderDevice->GetBlendState(State), nullptr, 0xffffffff);
 }
 
-void RenderCommand::SetDepthStencilState(EDepthStencilState State)
+void RenderCommand::SetDepthStencilState(EDepthStencilState State, uint32 StencilRef)
 {
-	RenderDevice->GetContext()->OMSetDepthStencilState(RenderDevice->GetDepthStencilState(State), 0);
+	RenderDevice->GetContext()->OMSetDepthStencilState(RenderDevice->GetDepthStencilState(State), StencilRef);
 }
 
 void RenderCommand::BindSamplerState(uint32 Slot, ESamplerState SamplerState, EShaderBindFlagBits FlagBits)
@@ -434,4 +459,20 @@ void RenderCommand::DrawIndexedInstanced(uint32 IndexCountPerInstance, uint32 In
 {
 	RenderDevice->GetContext()->DrawIndexedInstanced(IndexCountPerInstance, InstanceCount,
 		StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
+}
+
+void RenderCommand::UpdateTextureSubregion(FTexture2D* Texture, uint32 X, uint32 Y, uint32 Width, uint32 Height, const void* Data, uint32 RowPitch)
+{
+	if (!RenderDevice || !Texture || !Texture->GetRawPtr() || !Data || Width == 0 || Height == 0)
+	{
+		return;
+	}
+	D3D11_BOX Box{};
+	Box.left = X;
+	Box.top = Y;
+	Box.front = 0;
+	Box.right = X + Width;
+	Box.bottom = Y + Height;
+	Box.back = 1;
+	RenderDevice->GetContext()->UpdateSubresource(Texture->GetRawPtr(), 0, &Box, Data, RowPitch, 0);
 }

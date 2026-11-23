@@ -26,7 +26,7 @@ public:
 	// 머티리얼 슬롯은 스켈레탈 에셋이 결정한다.
 	virtual int32 GetNumMaterials() const override;
 	virtual FString GetMaterialSlotName(int32 SlotIndex) const override;
-	virtual UMaterial* GetDefaultMaterial(int32 SlotIndex) const override;
+	virtual UMaterialInterface* GetDefaultMaterial(int32 SlotIndex) const override;
 
 	virtual bool LineTraceComponentLocal(const FRay& LocalRay, float& Out) override;
 

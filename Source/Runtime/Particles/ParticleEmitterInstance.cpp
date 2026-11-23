@@ -7,6 +7,7 @@
 #include "ParticleStats.h"
 #include "Module/ParticleModuleRequired.h"
 #include "Module/ParticleModuleSpawn.h"
+#include "Module/ParticleModuleSpawnPerUnit.h"
 #include "Module/ParticleModuleSubUV.h"
 #include "Module/ParticleModuleEventGenerator.h"
 
@@ -239,6 +240,8 @@ void FParticleEmitterInstance::KillAllParticles()
 {
 	// 인덱스 배열은 그대로 두면 빈 칸 목록으로 다시 쓰인다
 	ActiveParticles = 0;
+	bHasPreviousOrigin = false;
+	DistanceSpawnAccumulator = 0.0f;
 }
 
 FVector FParticleEmitterInstance::WorldToSimulation(const FVector& WorldPosition) const
@@ -486,7 +489,54 @@ void FParticleEmitterInstance::Spawn(float DeltaTime)
 	if (!SpawnModule || !SpawnModule->IsEnabled())
 		return;
 
-	const float Rate = SpawnModule->GetSpawnRate(EmitterTime, RandomStream);
+	const UParticleModuleSpawnPerUnit* SpawnPerUnitMod = nullptr;
+	for (UParticleModule* Module : CurrentLODLevel->GetModules())
+	{
+		if (UParticleModuleSpawnPerUnit* Candidate = Cast<UParticleModuleSpawnPerUnit>(Module); Candidate && Candidate->IsEnabled())
+		{
+			SpawnPerUnitMod = Candidate;
+			break;
+		}
+	}
+
+	int32 UnitSpawnNumber = 0;
+	const FVector CurrentWorldOrigin = Component ? Component->GetWorldLocation() : FVector::ZeroVector;
+	bool bSuppressRateWhenMoving = false;
+	if (SpawnPerUnitMod && Component)
+	{
+		if (!bHasPreviousOrigin)
+		{
+			PreviousEmitterOrigin = CurrentWorldOrigin;
+			bHasPreviousOrigin = true;
+		}
+		else
+		{
+			const float FrameDist = (CurrentWorldOrigin - PreviousEmitterOrigin).Length();
+			PreviousEmitterOrigin = CurrentWorldOrigin;
+			const float MaxDist = SpawnPerUnitMod->GetMaxFrameDistance();
+			if (MaxDist <= 0.0f || FrameDist <= MaxDist)
+			{
+				if (FrameDist > SpawnPerUnitMod->GetMovementTolerance())
+				{
+					bSuppressRateWhenMoving = SpawnPerUnitMod->ShouldIgnoreSpawnRateWhenMoving();
+					DistanceSpawnAccumulator += FrameDist * SpawnPerUnitMod->GetSpawnPerUnit();
+					UnitSpawnNumber = FMath::FloorToInt(DistanceSpawnAccumulator);
+					DistanceSpawnAccumulator -= static_cast<float>(UnitSpawnNumber);
+				}
+			}
+			else
+			{
+				DistanceSpawnAccumulator = 0.0f;
+			}
+		}
+	}
+	else
+	{
+		PreviousEmitterOrigin = CurrentWorldOrigin;
+		bHasPreviousOrigin = true;
+	}
+
+	const float Rate = bSuppressRateWhenMoving ? 0.0f : SpawnModule->GetSpawnRate(EmitterTime, RandomStream);
 	const float OldLeftover = SpawnFraction;
 	const float NewLeftover = OldLeftover + DeltaTime * Rate;
 	int32 Number = FMath::FloorToInt(NewLeftover);
@@ -500,7 +550,7 @@ void FParticleEmitterInstance::Spawn(float DeltaTime)
 	const UParticleModuleRequired* Required = CurrentLODLevel->GetRequiredModule();
 	const int32 LODLimit = (Required && Required->GetMaxActiveParticles() > 0) ? Required->GetMaxActiveParticles() : 65535;
 
-	const int32 Needed = (std::min)(ActiveParticles + Number + BurstNumber, LODLimit);
+	const int32 Needed = (std::min)(ActiveParticles + Number + UnitSpawnNumber + BurstNumber, LODLimit);
 	if (Needed > MaxActiveParticles)
 	{
 		int32 NewMax = (std::min)(static_cast<int32>(Needed * 1.5f), LODLimit);
@@ -514,12 +564,19 @@ void FParticleEmitterInstance::Spawn(float DeltaTime)
 	// 상한보다 많이 살아 있으면(상한이 낮은 LOD로 바뀐 직후) 줄어들 때까지 생성하지 않는다
 	const int32 SpawnLimit = (std::min)(MaxActiveParticles, LODLimit);
 
-	// 칸이 모자라면 Rate 먼저, 남은 칸에 Burst
+	// 칸이 모자라면 Rate 먼저, 남은 칸에 Unit, Burst
 	const int32 FreeSlots = (std::max)(SpawnLimit - ActiveParticles, 0);
 	Number = Number < FreeSlots ? Number : FreeSlots;
 	if (Number > 0)
 	{
 		SpawnParticles(Number, StartTime, Increment);
+	}
+
+	const int32 FreeSlotsAfterRate = (std::max)(SpawnLimit - ActiveParticles, 0);
+	UnitSpawnNumber = UnitSpawnNumber < FreeSlotsAfterRate ? UnitSpawnNumber : FreeSlotsAfterRate;
+	if (UnitSpawnNumber > 0)
+	{
+		SpawnParticles(UnitSpawnNumber, 0.0f, 0.0f);
 	}
 
 	const int32 FreeSlotsAfter = (std::max)(SpawnLimit - ActiveParticles, 0);

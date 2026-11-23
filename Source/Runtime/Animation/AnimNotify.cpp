@@ -5,6 +5,7 @@
 #include "Asset/AssetManager.h"
 #include "Audio/SoundWave.h"
 #include "AnimSequenceBase.h"
+#include "GameFramework/Character.h"
 
 // 엔진 종료 때 DestroyAllObjectsExceptEngine이 UObject를 하나씩 지우므로
 // Notify가 시퀀스보다 먼저 지워질 수 있다. 시퀀스가 지운 포인터를 다시 지우지 않게 알린다
@@ -32,4 +33,19 @@ void UAnimNotify_PlaySound::Notify(USkeletalMeshComponent* MeshComp, const UAnim
 
 	// UE UAnimNotify_PlaySound처럼 메시 위치에서 재생한다 (bFollow 없음)
 	UGameplayStatics::PlaySoundAtLocation(World, Sound, MeshComp->GetWorldLocation(), Volume);
+}
+
+void UAnimNotify_StartDeathDissolve::Notify(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
+{
+	if (!MeshComp)
+	{
+		return;
+	}
+	if (ACharacter* Character = Cast<ACharacter>(MeshComp->GetOwner()))
+	{
+		Character->SetDeathDissolveParams(DissolveDuration, DissolveEdgeColor);
+		Character->StartDeathDissolve();
+		return;
+	}
+	MeshComp->StartPreviewDissolve(DissolveDuration, DissolveEdgeColor);
 }

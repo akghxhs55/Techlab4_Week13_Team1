@@ -2,6 +2,8 @@
 
 #include "SceneComponent.h"
 #include "Render/Texture2D.h"
+#include "Render/Decal/ProjectedDecal.h"
+#include "Render/Material.h"
 #include "Math/Frustum.h"
 #include "DecalComponent.generated.h"
 
@@ -17,6 +19,27 @@ public:
 	
 	UTexture2D* GetDecalTexture() const { return DecalTexture; }
 	void SetDecalTexture(UTexture2D* InTexture) { DecalTexture = InTexture; }
+
+	bool IsDecalEnabled() const { return bDecalEnabled; }
+	void SetDecalEnabled(bool bInEnabled) { bDecalEnabled = bInEnabled; }
+
+	UMaterialInterface* GetDecalMaterial() const { return DecalMaterial; }
+	void SetDecalMaterial(UMaterialInterface* InMaterial) { DecalMaterial = InMaterial; }
+
+	bool IsUnlit() const { return bUnlit; }
+	void SetUnlit(bool bInUnlit) { bUnlit = bInUnlit; }
+
+	float GetNormalStrength() const { return NormalStrength; }
+	void SetNormalStrength(float InStrength) { NormalStrength = InStrength; }
+
+	float GetNormalOpacity() const { return NormalOpacity; }
+	void SetNormalOpacity(float InOpacity) { NormalOpacity = InOpacity; }
+
+	// 투영 데칼 머티리얼 기반 DBuffer 렌더 데이터 생성
+	bool TryGetRenderData(FProjectedDecalRenderData& OutRenderData) const;
+
+	using Super::Serialize;
+	void Serialize(FStructuredArchive::FRecord Record) override;
 	
 	FVector GetExtent() const { return Extent; }
 	void SetExtent(FVector InExtent) { Extent = InExtent; }
@@ -74,4 +97,9 @@ private:
 	UPROPERTY(EditAnywhere) float FadeOut = 1.0f;
 	float CurrentTime = 0.0f;
 
+	UPROPERTY(EditAnywhere) bool bDecalEnabled = true;
+	UMaterialInterface* DecalMaterial = nullptr;
+	UPROPERTY(EditAnywhere) bool bUnlit = false;
+	UPROPERTY(EditAnywhere) float NormalStrength = 1.0f;
+	UPROPERTY(EditAnywhere) float NormalOpacity = 1.0f;
 };

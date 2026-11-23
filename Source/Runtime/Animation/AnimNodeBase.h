@@ -79,12 +79,18 @@ struct FAnimNode_Base
 	// 출력은 항상 Output.Pose의 모든 본을 채운다. Rotation은 단위 쿼터니언이어야 한다.
 	virtual void Evaluate(FPoseContext& Output) { Output.ResetToRefPose(); }
 	virtual void Initialize(const FAnimationInitializeContext& Context) {}
+
+	virtual float GetCycleSeconds() const { return 0.0f; }
+	virtual bool GetNormalizedTime(float& OutTime) const { return false; }
+	virtual void SetNormalizedTime(float Time) {}
+	virtual bool IsLoopingNode() const { return false; }
 };
 
 // 다른 노드로 이어지는 입력 핀. 연결이 없으면 바인드 포즈를 낸다.
 struct FPoseLink
 {
 	void SetLinkNode(FAnimNode_Base* InLinkedNode) { LinkedNode = InLinkedNode; }
+	FAnimNode_Base* GetLinkNode() const { return LinkedNode; }
 
 	void Update(const FAnimationUpdateContext& Context)
 	{

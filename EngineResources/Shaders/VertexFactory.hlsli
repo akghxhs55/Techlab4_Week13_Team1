@@ -9,6 +9,8 @@ struct FVFIntermediates
     float3 WorldPosition;
     float3 WorldNormal;   // 정규화하지 않은 값
     float4 WorldTangent;  // xyz 정규화하지 않은 값, w = 종법선 부호
+    float3 LocalPosition;
+    float3 LocalNormal;
     float2 UV;
     float4 Color;
 };
@@ -22,6 +24,8 @@ FVFIntermediates VF_LocalToWorld(float3 Position, float3 Normal, float4 Tangent,
     // 로컬 공간 부호에 월드 변환의 거울 반전만 반영한다
     const float Handedness = Tangent.w * (determinant((float3x3)World) < 0.0f ? -1.0f : 1.0f);
     Result.WorldTangent = float4(mul(float4(Tangent.xyz, 0.0f), World).xyz, Handedness);
+    Result.LocalPosition = Position;
+    Result.LocalNormal = Normal;
     Result.UV = UV;
     Result.Color = Color;
     return Result;

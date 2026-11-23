@@ -63,8 +63,8 @@ public:
 		RandomImageTime = InRandomImageTime;
 	}
 
-	UMaterial* GetMaterial() const { return Material; }
-	void SetMaterial(UMaterial* InMaterial) { Material = InMaterial; }
+	UMaterialInterface* GetMaterial() const { return Material; }
+	void SetMaterial(UMaterialInterface* InMaterial) { Material = InMaterial; }
 	EParticleSortMode GetSortMode() const { return SortMode; }
 	void SetSortMode(EParticleSortMode InSortMode) { SortMode = InSortMode; }
 
@@ -102,7 +102,7 @@ private:
 	float RandomImageTime = 0.0f;
 
 	UPROPERTY(EditAnywhere)
-	UMaterial* Material = nullptr;
+	UMaterialInterface* Material = nullptr;
 
 	UPROPERTY(EditAnywhere)
 	EParticleSortMode SortMode = EParticleSortMode::None;

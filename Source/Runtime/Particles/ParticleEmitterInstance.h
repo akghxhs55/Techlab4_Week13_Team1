@@ -51,8 +51,11 @@ struct FParticleEmitterInstance
 	float SecondsSinceCreation = 0.0f;
 	int32 LoopCount = 0;          // 완료한 루프 수
 	bool  bSpawningEnabled = true;  // false면 생성만 멈춤, 살아 있는 파티클은 계속 갱신
+	FVector PreviousEmitterOrigin = FVector::ZeroVector;
+	bool bHasPreviousOrigin = false;
+	float DistanceSpawnAccumulator = 0.0f;
 	TArray<uint8> BurstFired;     // Burst별 이번 루프에 터졌는지
-	FRandomStream RandomStream;
+	mutable FRandomStream RandomStream;
 
 	FBox BoundingBox;   // 월드 공간. 파티클 크기와 컴포넌트 스케일까지 포함
 

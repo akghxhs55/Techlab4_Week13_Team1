@@ -10,9 +10,28 @@
 #include "Math/Frustum.h"
 #include "Math/BVH.h"
 #include "Render/Renderer.h"
+#include "Render/MeshPassProcessor.h"
+#include "Render/ObjectConstants.h"
+#include "Render/SceneRenderOptions.h"
 #include "Render/LightRenderData.h"
 #include "Render/LightSceneInfo.h"
+#include <array>
+#include <span>
 #include <unordered_map>
+
+struct FCachedCommandSlotRef
+{
+	EMeshPass Pass = EMeshPass::BasePass;
+	uint32 CommandIndex = 0;
+};
+
+struct FCachedMeshDrawEntry
+{
+	FMeshDrawCommand Command;
+	uint32 PrimitiveIndex = InvalidPrimitiveId;
+	uint32 OwnerEntryIndex = 0;
+	uint8 LODIndex = 0;
+};
 
 class FScene
 {
@@ -37,11 +56,20 @@ public:
 	const TArray<FLocalLightSceneProxy*>& GetLocalLights() const { return LocalLightProxies; }
 
 	void UpdateAllTransforms();
+	void FlushStaticCaches(const FSceneRenderOptions& Options);
+	const FStructuredBuffer* SyncGPUScene(std::span<const FPrimitiveSceneData> DynamicPrimitives = {});
+	const TArray<FCachedMeshDrawEntry>& GetCachedDrawList(EMeshPass Pass) const
+	{
+		return CachedDrawLists[static_cast<size_t>(Pass)];
+	}
+	uint32 GetNumPrimitives() const { return static_cast<uint32>(PrimitiveSceneProxies.Num()); }
 
 	void BuildBVH();
 
 	void MarkDirty(FPrimitiveSceneProxy* Proxy);
 	void MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy);
+	void MarkStaticCacheDirty(FPrimitiveSceneProxy* Proxy);
+	void MarkGPUSceneDirty(uint32 PrimitiveIndex);
 
 	void InvalidateShadowsInBounds(const FAABB& Bounds) { RecordShadowInvalidation(Bounds); }
 
@@ -54,6 +82,7 @@ public:
 	TArray<FPrimitiveSceneProxy*> PrimitiveSceneProxies;
 	TArray<FPrimitiveSceneProxy*> DirtyProxies;
 	TArray<FPrimitiveSceneProxy*> RenderStateDirtyProxies;
+	TArray<FPrimitiveSceneProxy*> StaticCacheDirtyProxies;
 	TArray<FAABB> PrimitiveBounds;
 	TArray<uint8> PrimitiveFlags;
 
@@ -76,6 +105,23 @@ public:
 	TArray<UDecalComponent*>			  Decals;
 
 private:
+	void ClearProxyStaticCache(uint32 PrimitiveIndex);
+	void RebuildProxyStaticCache(FPrimitiveSceneProxy* Proxy, const FSceneRenderOptions& Options);
+	void UpdateGPUScenePrimitiveEntry(uint32 PrimitiveIndex, const FPrimitiveSceneProxy* Proxy);
+
+	std::array<TArray<FCachedMeshDrawEntry>, static_cast<size_t>(EMeshPass::Num)> CachedDrawLists;
+	TArray<TArray<FCachedCommandSlotRef>> ProxyCachedCommands;
+
+	TArray<FPrimitiveSceneData> GPUScenePrimitives;
+	TArray<uint32> GPUSceneDirtyIndices;
+	TArray<uint8> GPUSceneDirtyMask;
+	TUniquePtr<FStructuredBuffer> GPUSceneBuffer;
+	uint32 GPUSceneBufferCapacity = 0;
+
+	bool bHasCachedOptions = false;
+	uint64 CachedMaterialRevision = 0;
+	ELightingModel CachedLightingModel = ELightingModel::Gouraud;
+
 	void RecordShadowInvalidation(const FAABB& Bounds);
 	void InvalidateAllShadows();
 

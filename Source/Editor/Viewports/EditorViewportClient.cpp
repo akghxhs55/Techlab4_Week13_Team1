@@ -224,6 +224,17 @@ FSceneView FEditorViewportClient::CalcSceneView(const FRect &InViewRect) const {
     OutView.OrthoWidth = OrthoWidth;
     OutView.bIsPerspective = bIsPerspective;
     OutView.bIsWireframe = ViewportMode == EViewportMode::Wireframe;
+    if (GCameraOverlayDebug.bOverride)
+    {
+        OutView.OverlayColor = FLinearColor(
+            GCameraOverlayDebug.FadeColor[0],
+            GCameraOverlayDebug.FadeColor[1],
+            GCameraOverlayDebug.FadeColor[2],
+            GCameraOverlayDebug.FadeAmount);
+        OutView.LetterboxAmount = GCameraOverlayDebug.LetterboxAmount;
+        OutView.LetterboxAspect = GCameraOverlayDebug.LetterboxAspect;
+        OutView.VignetteIntensity = GCameraOverlayDebug.VignetteIntensity;
+    }
 
     return OutView;
 }

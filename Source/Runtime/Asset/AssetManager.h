@@ -3,6 +3,7 @@
 #include "UObject/Object.h"
 #include "UObject/Property.h"
 #include "Render/Renderer.h"
+#include "Asset/LOD/StaticMeshLODGenerator.h"
 
 #include <filesystem>
 #include <functional>
@@ -15,13 +16,16 @@ enum class EAssetType
 	Texture,
 	Font,
 	StaticMesh,
-	SkeletalMesh
+	SkeletalMesh,
+	Material
 };
 
 class UStaticMesh;
+class UMaterialInterface;
 class USoundWave;
 class UAnimSequence;
 class UBlendSpace1D;
+class UBlendSpace2D;
 class UParticleSystem;
 struct FSkeletalMaterialSlot;
 
@@ -87,7 +91,11 @@ public:
 	static URenderAsset* LoadFbxMesh(const FString& Path, FString& OutError);
 	static UAnimSequence* LoadAnimSequence(const FString& Path);
 	static UBlendSpace1D* LoadBlendSpace(const FString& Path);
+	static UBlendSpace2D* LoadBlendSpace2D(const FString& Path);
 	static UParticleSystem* LoadParticleSystem(const FString& Path);
+	static UMaterialInterface* LoadMaterialAsset(const FString& AssetPath);
+	static bool SaveMaterialAsset(const FString& AssetPath, const UMaterialInterface& Material);
+	static void RegisterMaterialAsset(const FString& AssetPath, UMaterialInterface* Material);
 
 	// 원본 좌표축이 엔진과 다른 메시를 로드 후 돌린다 (정점·법선·AABB·삼각형 BVH·GPU 정점 버퍼를 다시 만든다).
 	// Rotate는 회전(길이·손잡이 보존)이어야 한다.
@@ -95,8 +103,9 @@ public:
 
 	// OBJ 스태틱 메시(키가 .obj로 끝나는 것)마다 부른다. 아직 로드되지 않은 메시는 먼저 로드한다. 기본 도형·기즈모 메시는 제외된다.
 	static void ForEachObjStaticMesh(const std::function<void(const FString& Key, UStaticMesh& Mesh)>& Func);
-	static bool BuildMaterialsFromSlots(const TArray<FStaticMaterialSlot>& Slots, TArray<UMaterial*>& OutMaterials);
-	static bool BuildMaterialsFromSlots(const TArray<FSkeletalMaterialSlot>& Slots, TArray<UMaterial*>& OutMaterials);
+	static FLODGenerateResult GenerateStaticMeshLODs(UStaticMesh& Mesh, const FLODGenerateRequest& Request);
+	static bool BuildMaterialsFromSlots(const TArray<FStaticMaterialSlot>& Slots, TArray<UMaterialInterface*>& OutMaterials);
+	static bool BuildMaterialsFromSlots(const TArray<FSkeletalMaterialSlot>& Slots, TArray<UMaterialInterface*>& OutMaterials);
 
 private:
 	URenderAsset* FindOrLoadAsset(const FString& Path);
@@ -107,6 +116,7 @@ private:
 	TMap<FString, USoundWave*> SoundMap;
 	TMap<FString, UAnimSequence*> AnimSequenceMap;
 	TMap<FString, UBlendSpace1D*> BlendSpaceMap;
+	TMap<FString, UBlendSpace2D*> BlendSpace2DMap;
 	TMap<FString, UParticleSystem*> ParticleSystemMap;
 
 	//TMap<FString, UStaticMesh*> MeshMap;	// KEY: FILE NAME OR 쉐입 첫글자 대문자

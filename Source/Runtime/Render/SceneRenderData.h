@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Render/RenderPacket.h"
+#include "Render/MeshBatch.h"
+#include "Render/MeshPassProcessor.h"
 #include "Render/ObjectConstants.h"
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/LightSceneProxy.h"
@@ -19,7 +20,10 @@ struct FRenderStats
 	uint32 TotalPrimitives = 0;
 	uint32 VisiblePrimitives = 0;
 	uint32 DrawCalls = 0;
+	uint32 ParticleDrawCalls = 0;
 	uint64 Triangles = 0;
+	uint32 LODCounts[4]{};
+	uint64 LODTriangles[4]{};
 
 	uint32 DirectionalCount = 0;
 	uint32 PointCount = 0;
@@ -61,22 +65,28 @@ struct FSceneRenderData
 
 	static constexpr float CascadeBlendRatio = 0.1f;
 
-	struct alignas(64) FGatherChunk
-	{
-		TArray<FRenderPacket> Packets;              // 스태틱 묶음에 못 들어가는 것 (반투명 섹션, Renderer 없는 호출)
-		TArray<uint32> SlowPathIndices;
-		std::vector<FStaticDrawGroup> Groups;       // 불투명 스태틱 메시: (머티리얼, 메시)별 묶음. 항목만 매 프레임 비운다
-		uint32 LastGroup = 0;                       // 바로 전 물체가 들어간 묶음 (연속한 물체는 대개 같은 묶음)
-		uint32 StaticDrawCount = 0;
-		uint64 Triangles = 0;
-	};
-
-	FRenderQueue RenderQueue;
+	FMeshElementCollector Collector;
 	FRenderStats RenderStats;
 	TArray<FPrimitiveSceneProxy*> VisibleProxies;
-	TArray<FGatherChunk> GatherChunks;
 
-	TArray<FPerObjectConstants> ObjectConstants;
+	// 정적 캐시 필터링용 뷰별 가시성·오클루전·LOD 맵
+	TArray<uint8> PrimitiveVisibilityMap;
+	TArray<uint8> PrimitiveOccludedMap;
+	TArray<FLODSelectionInput> LODInputs;
+	TArray<uint8> SelectedLODs;
+	TArray<uint8> PrimitiveSelectedLODs;
+
+	// 동적 요소용 임시 GPUScene 슬롯 및 패스 커맨드
+	TArray<FPrimitiveSceneData> DynamicPrimitiveData;
+	std::array<TArray<FMeshDrawCommand>, static_cast<size_t>(EMeshPass::Num)> DynamicPassCommands;
+	TArray<FVisibleMeshDrawCommand> VisibleBasePassCommands;
+	TArray<FVisibleMeshDrawCommand> VisibleDepthPassCommands;
+	TArray<FVisibleMeshDrawCommand> VisibleWorldNormalCommands;
+	TArray<FVisibleMeshDrawCommand> VisibleTranslucencyCommands;
+	TArray<FVisibleMeshDrawCommand> VisibleShadowCommands;
+	TArray<uint8> ShadowVisibilityMap;
+	const FStructuredBuffer* GPUSceneBuffer = nullptr;
+
 	FSceneLightResources ViewLightResources;
 
 	FAmbientLightRenderData AmbientLight{};
@@ -137,19 +147,28 @@ struct FSceneRenderData
 	void ResetScene()
 	{
 		ResetFrame();
-		for (FGatherChunk& Chunk : GatherChunks)
-		{
-			Chunk.Groups.clear();
-			Chunk.LastGroup = 0;
-		}
 	}
 
 	void ResetFrame()
 	{
-		RenderQueue.Reset();
+		Collector.Reset();
 		RenderStats.Reset();
 		VisibleProxies.Reset();
-		ObjectConstants.Reset();
+		PrimitiveVisibilityMap.Reset();
+		PrimitiveOccludedMap.Reset();
+		LODInputs.Reset();
+		SelectedLODs.Reset();
+		PrimitiveSelectedLODs.Reset();
+		DynamicPrimitiveData.Reset();
+		for (TArray<FMeshDrawCommand>& List : DynamicPassCommands)
+			List.Reset();
+		VisibleBasePassCommands.Reset();
+		VisibleDepthPassCommands.Reset();
+		VisibleWorldNormalCommands.Reset();
+		VisibleTranslucencyCommands.Reset();
+		VisibleShadowCommands.Reset();
+		ShadowVisibilityMap.Reset();
+		GPUSceneBuffer = nullptr;
 		AmbientLight = {};
 		VisibleLights.Reset();
 		VisibleLightProxies.Reset();
@@ -164,22 +183,12 @@ struct FSceneRenderData
 		std::fill(std::begin(CascadeShadowDistances), std::end(CascadeShadowDistances), 0.0f);
 		std::memset(LightParameterOffsets, 0, sizeof(LightParameterOffsets));
 		std::memset(LightParameterCounts, 0, sizeof(LightParameterCounts));
-
-		for (FGatherChunk& Chunk : GatherChunks)
-		{
-			Chunk.Packets.Reset();
-			Chunk.SlowPathIndices.Reset();
-			Chunk.StaticDrawCount = 0;
-			Chunk.Triangles = 0;
-			for (FStaticDrawGroup& Group : Chunk.Groups) Group.Items.clear();
-		}
 	}
 
 	// 광원을 종류별 구간으로 정렬하고 GPU에 올린다.
 	// 그림자 채널(ShadowMapChannel)은 InitDynamicShadows 뒤에 FSceneRenderer::FinalizeShadowLights가 채우고 다시 올린다.
 	void Commit(bool& bLightUploadSucceeded)
 	{
-		RenderQueue.Sort();
 
 		if (VisibleLights.Num())
 		{

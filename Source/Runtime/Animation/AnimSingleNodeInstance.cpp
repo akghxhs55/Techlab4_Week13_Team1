@@ -5,7 +5,7 @@
 
 void UAnimSingleNodeInstance::SetAnimationAsset(UAnimationAsset* InAsset, bool bLoop, float InPlayRate)
 {
-	if (InAsset && !Cast<UAnimSequence>(InAsset) && !Cast<UBlendSpace1D>(InAsset))
+	if (InAsset && !Cast<UAnimSequence>(InAsset) && !Cast<UBlendSpace1D>(InAsset) && !Cast<UBlendSpace2D>(InAsset))
 	{
 		return;
 	}
@@ -35,6 +35,14 @@ void UAnimSingleNodeInstance::SetBlendSpaceInput(float Value)
 	if (std::isfinite(Value))
 	{
 		SingleNode.SetBlendSpaceInput(Value);
+	}
+}
+
+void UAnimSingleNodeInstance::SetBlendSpace2DInput(float InX, float InY)
+{
+	if (std::isfinite(InX) && std::isfinite(InY))
+	{
+		SingleNode.SetBlendSpace2DInput(InX, InY);
 	}
 }
 

@@ -46,6 +46,13 @@ public:
 	FMatrix GetBoneComponentMatrix(int32 BoneIndex) const;
 	FMatrix GetBoneWorldMatrix(int32 BoneIndex) const;
 
+	bool DoesSocketExist(const FString& InSocketName) const;
+	FMatrix GetSocketWorldMatrix(const FString& InSocketName) const;
+	FQuat GetSocketWorldRotationQuat(const FString& InSocketName) const;
+	FVector GetSocketWorldScale3D(const FString& InSocketName) const;
+	FTransform GetSocketTransform(const FString& InSocketName) const;
+	void GetSocketNames(TArray<FString>& OutSocketNames) const;
+
 	void ResetPose();
 	void RefreshBoneTransformsNow();
 
@@ -62,6 +69,9 @@ public:
 	UPROPERTY()
 	float BlendSpaceInput = 300.0f;
 
+	UPROPERTY()
+	float BlendSpaceInputY = 0.0f;
+
 	// 루트 모션: 이번 Tick까지 모인 이동량(월드 공간). CharacterMovement가 가져가 Actor를 움직인다
 	bool HasPendingRootMotion() const { return bHasPendingRootMotion; }
 	FTransform ConsumeRootMotion();
@@ -74,6 +84,13 @@ public:
 
 	// 디버그: root 본 구체 + 액터 위치(root 높이)에서 root까지의 선
 	void DrawRootDebug(FLineBatcher* LineBatcher) const;
+
+	void StartPreviewDissolve(float InDuration, const FVector4& InEdgeColor);
+	void UpdatePreviewDissolve(float DeltaTime);
+	void ResetPreviewDissolve();
+	void SetDissolveHidden(bool bHidden);
+	bool IsDissolveHidden() const { return bDissolveHidden; }
+	bool IsPreviewDissolveActive() const { return bPreviewDissolveActive; }
 
 protected:
 	// 단일 애니메이션 에셋 경로/루프/재생 속도를 씬에 저장·복원한다 (Serialize에서 부른다)
@@ -98,4 +115,11 @@ private:
 
 	FTransform PendingRootMotion;           // 월드 공간 누적값
 	bool bHasPendingRootMotion = false;
+
+	bool bPreviewDissolveActive = false;
+	bool bDissolveHidden = false;
+	float PreviewDissolveDuration = 1.45f;
+	float PreviewDissolveElapsed = 0.0f;
+	TArray<UMaterialInterface*> PreviewDissolveSavedMaterials;
+	TArray<UMaterialInstanceDynamic*> PreviewDissolveMaterials;
 };

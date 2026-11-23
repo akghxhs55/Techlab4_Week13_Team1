@@ -6,8 +6,11 @@
 #include "Particles/Module/ParticleModuleSubUV.h"
 #include "Particles/Module/ParticleModuleBeamNoise.h"
 #include "Render/RenderCommand.h"
+#include "Render/MaterialInterface.h"
 #include "Render/Material.h"
 #include "Render/Mesh.h"
+#include "Render/SkeletalMesh.h"
+#include "Asset/AssetManager.h"
 #include "Math/Transform.h"
 
 #include <algorithm>
@@ -180,11 +183,11 @@ int32 FDynamicSpriteEmitterData::BuildInstances(const FViewContext& View)
 	return Count;
 }
 
-void FDynamicSpriteEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context)
+void FDynamicSpriteEmitterData::Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context)
 {
 	if (!Context.View || !Context.SpriteQuadVertexBuffer || !Context.SpriteQuadIndexBuffer)
 		return;
-	UMaterial* EmitterMaterial = Source.Material ? Source.Material : Context.DefaultMaterial;
+	UMaterialInterface* EmitterMaterial = Source.Material ? Source.Material : Context.DefaultMaterial;
 	if (!EmitterMaterial)
 		return;
 	if (!EnsureInstanceBuffer(InstanceBuffer, Capacity, Source, sizeof(FParticleSpriteInstance)))
@@ -212,17 +215,24 @@ void FDynamicSpriteEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmi
 
 	VertexFactory.Init(Context.SpriteQuadVertexBuffer, Context.SpriteQuadIndexBuffer, InstanceBuffer.get());
 
-	FRenderPacket Packet;
-	Packet.Model = Queue.StoreWorldMatrix(FMatrix::Identity);
-	Packet.VertexFactory = &VertexFactory;
-	Packet.StartIndex = 0;
-	Packet.IndexCount = 6;
-	Packet.InstanceCount = static_cast<uint32>(Count);
-	Packet.Material = EmitterMaterial;
-	Packet.MaterialParamData = &Constants;
-	Packet.MaterialParamDataSize = sizeof(FParticleSpriteConstants);
-	Packet.CameraToParticleDistance = GetPacketDistance(Context);
-	Queue.Add(Packet);
+	FMeshBatch& Batch = Collector.AddMeshDefaulted();
+	Batch.VertexFactory = &VertexFactory;
+	Batch.Material = EmitterMaterial;
+	Batch.MaterialParamData = &Constants;
+	Batch.MaterialParamDataSize = sizeof(FParticleSpriteConstants);
+	Batch.CameraDistanceSq = GetPacketDistance(Context);
+	Batch.bIsParticle = true;
+	Batch.bCastShadow = false;
+	Batch.bUsesGPUScene = false;
+
+	FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+	Element.IndexBuffer = Context.SpriteQuadIndexBuffer;
+	Element.WorldMatrix = Collector.StoreWorldMatrix(FMatrix::Identity);
+	Element.FirstIndex = 0;
+	Element.IndexCount = 6;
+	Element.InstanceCount = static_cast<uint32>(Count);
+	Element.bReceiveShadow = false;
+	Element.bReceiveDecal = false;
 }
 
 namespace
@@ -287,15 +297,18 @@ int32 FDynamicMeshEmitterData::BuildInstances(const FViewContext& View)
 namespace
 {
 	// 메시 파티클 정점 변형이 있는 머티리얼만 오버라이드로 쓸 수 있다
-	bool IsMeshParticleMaterial(const UMaterial* Material)
+	bool IsMeshParticleMaterial(const UMaterialInterface* Material)
 	{
-		return Material && (Material->PSOType == EPSOType::StaticMesh_Opaque
-			|| Material->PSOType == EPSOType::StaticMesh_Translucent
-			|| Material->PSOType == EPSOType::StaticMesh_Additive);
+		if (!Material)
+			return false;
+		const EPSOType PSOType = Material->GetPSOType();
+		return PSOType == EPSOType::StaticMesh_Opaque
+			|| PSOType == EPSOType::StaticMesh_Translucent
+			|| PSOType == EPSOType::StaticMesh_Additive;
 	}
 }
 
-void FDynamicMeshEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context)
+void FDynamicMeshEmitterData::Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context)
 {
 	if (!Context.View)
 		return;
@@ -316,25 +329,34 @@ void FDynamicMeshEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmitC
 	VertexFactory.Init(Mesh->GetVertexBuffer(), Mesh->GetIndexBuffer(), InstanceBuffer.get());
 
 	// 스프라이트용 머티리얼처럼 메시 정점을 못 받는 머티리얼이면 섹션 머티리얼로 되돌린다
-	UMaterial* OverrideMaterial = Source.bOverrideMaterial && IsMeshParticleMaterial(Source.Material) ? Source.Material : nullptr;
+	UMaterialInterface* OverrideMaterial = Source.bOverrideMaterial && IsMeshParticleMaterial(Source.Material) ? Source.Material : nullptr;
+	const float PacketDistance = GetPacketDistance(Context);
 
 	// 섹션마다 메시 머티리얼로 그린다. 패스 셰이더는 MeshParticle 정점 타입 변형으로 교체된다
 	for (const FStaticMeshSection& Section : Mesh->GetMeshData().Sections)
 	{
-		UMaterial* SectionMaterial = OverrideMaterial ? OverrideMaterial : Mesh->GetMaterial(Section.MaterialSlotIndex);
+		UMaterialInterface* SectionMaterial = OverrideMaterial ? OverrideMaterial : Mesh->GetMaterial(Section.MaterialSlotIndex);
 		if (!SectionMaterial || Section.IndexCount == 0)
 			continue;
 
-		FRenderPacket Packet;
-		// 정점 타입이 World를 쓰지 않지만 오브젝트 슬롯 상수를 채우는 데 필요하다
-		Packet.Model = Queue.StoreWorldMatrix(FMatrix::Identity);
-		Packet.VertexFactory = &VertexFactory;
-		Packet.StartIndex = Section.StartIndex;
-		Packet.IndexCount = Section.IndexCount;
-		Packet.InstanceCount = static_cast<uint32>(Count);
-		Packet.Material = SectionMaterial;
-		Packet.CameraToParticleDistance = GetPacketDistance(Context);
-		Queue.Add(Packet);
+		FMeshBatch& Batch = Collector.AddMeshDefaulted();
+		Batch.VertexFactory = &VertexFactory;
+		Batch.Mesh = Mesh;
+		Batch.Material = SectionMaterial;
+		Batch.CameraDistanceSq = PacketDistance;
+		Batch.MeshSortID = Mesh->SortID;
+		Batch.bIsParticle = true;
+		Batch.bCastShadow = false;
+		Batch.bUsesGPUScene = false;
+
+		FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+		Element.IndexBuffer = Mesh->GetIndexBuffer();
+		Element.WorldMatrix = Collector.StoreWorldMatrix(FMatrix::Identity);
+		Element.FirstIndex = Section.StartIndex;
+		Element.IndexCount = Section.IndexCount;
+		Element.InstanceCount = static_cast<uint32>(Count);
+		Element.bReceiveShadow = false;
+		Element.bReceiveDecal = false;
 	}
 }
 
@@ -435,28 +457,57 @@ int32 FDynamicBeamEmitterData::BuildGeometry(const FParticleSubmitContext& Conte
 		}
 		else
 		{
-			for (int32 i = 0; i <= Segments; ++i)
+			if (Payload.bHasTangents > 0.5f)
 			{
-				const float T = static_cast<float>(i) / static_cast<float>(Segments);
-				PathScratch.Add(S + Axis * T);
+				for (int32 i = 0; i <= Segments; ++i)
+				{
+					const float T = static_cast<float>(i) / static_cast<float>(Segments);
+					PathScratch.Add(FMath::CubicInterp(S, Payload.SourceTangent, Payload.TargetPoint, Payload.TargetTangent, T));
+				}
+			}
+			else
+			{
+				for (int32 i = 0; i <= Segments; ++i)
+				{
+					const float T = static_cast<float>(i) / static_cast<float>(Segments);
+					PathScratch.Add(S + Axis * T);
+				}
 			}
 		}
 
-		const float HalfWidth = std::abs(Particle.Size.X * Source.Scale.X) * 0.5f;
+		const float BaseHalfWidth = std::abs(Particle.Size.X * Source.Scale.X) * 0.5f;
 		const float LastIndex = static_cast<float>(std::max(PathScratch.Num() - 1, 1));
+		float EffectiveTile = Source.TextureTile;
+		if (Source.TextureTileDistance > 1e-4f)
+		{
+			EffectiveTile = Axis.Length() / Source.TextureTileDistance;
+		}
 		PointScratch.SetNum(0, false);
 		for (int32 i = 0; i < PathScratch.Num(); ++i)
-			PointScratch.Add({ PathScratch[i], HalfWidth, Particle.Color, static_cast<float>(i) / LastIndex * Source.TextureTile });
+		{
+			const float T = static_cast<float>(i) / LastIndex;
+			float PointWidth = BaseHalfWidth;
+			if (Source.TaperMethod == 1)
+			{
+				PointWidth *= (1.0f - T) * Source.TaperScale + T * Source.TaperFactor;
+			}
+			else if (Source.TaperMethod == 2)
+			{
+				const float MidFactor = std::min(1.0f, T * 2.0f);
+				PointWidth *= (1.0f - MidFactor) * Source.TaperScale + MidFactor * Source.TaperFactor;
+			}
+			PointScratch.Add({ PathScratch[i], PointWidth, Particle.Color, T * EffectiveTile });
+		}
 		AppendTrailStrip(PointScratch, Params, VertexScratch, IndexScratch);
 	}
 	return IndexScratch.Num();
 }
 
-void FDynamicBeamEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context)
+void FDynamicBeamEmitterData::Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context)
 {
 	if (!Context.View || Source.ActiveParticleCount == 0)
 		return;
-	UMaterial* EmitterMaterial = Source.Material ? Source.Material : Context.DefaultMaterial;
+	UMaterialInterface* EmitterMaterial = Source.Material ? Source.Material : Context.DefaultMaterial;
 	if (!EmitterMaterial)
 		return;
 
@@ -473,17 +524,22 @@ void FDynamicBeamEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmitC
 
 	VertexFactory.Init(VertexBuffer.get(), IndexBuffer.get());
 
-	FRenderPacket Packet;
-	// 정점이 월드 좌표라 Trail 셰이더는 World를 쓰지 않지만 오브젝트 슬롯 상수를 채우는 데 필요하다
-	Packet.Model = Queue.StoreWorldMatrix(FMatrix::Identity);
-	Packet.VertexFactory = &VertexFactory;
-	Packet.StartIndex = 0;
-	// 0이면 버퍼 전체를 그리므로 이번 프레임 개수를 넣는다
-	Packet.IndexCount = static_cast<uint32>(IndexCount);
-	Packet.InstanceCount = 0;
-	Packet.Material = EmitterMaterial;
-	Packet.CameraToParticleDistance = GetPacketDistance(Context);
-	Queue.Add(Packet);
+	FMeshBatch& Batch = Collector.AddMeshDefaulted();
+	Batch.VertexFactory = &VertexFactory;
+	Batch.Material = EmitterMaterial;
+	Batch.CameraDistanceSq = GetPacketDistance(Context);
+	Batch.bIsParticle = true;
+	Batch.bCastShadow = false;
+	Batch.bUsesGPUScene = false;
+
+	FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+	Element.IndexBuffer = IndexBuffer.get();
+	Element.WorldMatrix = Collector.StoreWorldMatrix(FMatrix::Identity);
+	Element.FirstIndex = 0;
+	Element.IndexCount = static_cast<uint32>(IndexCount);
+	Element.InstanceCount = 0;
+	Element.bReceiveShadow = false;
+	Element.bReceiveDecal = false;
 }
 
 bool FDynamicRibbonEmitterData::EnsureBuffers(int32 NumVertices, int32 NumIndices)
@@ -622,11 +678,11 @@ int32 FDynamicRibbonEmitterData::BuildGeometry(const FParticleSubmitContext& Con
 	return IndexScratch.Num();
 }
 
-void FDynamicRibbonEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context)
+void FDynamicRibbonEmitterData::Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context)
 {
 	if (!Context.View || Source.ActiveParticleCount == 0)
 		return;
-	UMaterial* EmitterMaterial = Source.Material ? Source.Material : Context.DefaultMaterial;
+	UMaterialInterface* EmitterMaterial = Source.Material ? Source.Material : Context.DefaultMaterial;
 	if (!EmitterMaterial)
 		return;
 
@@ -643,13 +699,251 @@ void FDynamicRibbonEmitterData::Submit(FRenderQueue& Queue, const FParticleSubmi
 
 	VertexFactory.Init(VertexBuffer.get(), IndexBuffer.get());
 
-	FRenderPacket Packet;
-	Packet.Model = Queue.StoreWorldMatrix(FMatrix::Identity);
-	Packet.VertexFactory = &VertexFactory;
-	Packet.StartIndex = 0;
-	Packet.IndexCount = static_cast<uint32>(IndexCount);
-	Packet.InstanceCount = 0;
-	Packet.Material = EmitterMaterial;
-	Packet.CameraToParticleDistance = GetPacketDistance(Context);
-	Queue.Add(Packet);
+	FMeshBatch& Batch = Collector.AddMeshDefaulted();
+	Batch.VertexFactory = &VertexFactory;
+	Batch.Material = EmitterMaterial;
+	Batch.CameraDistanceSq = GetPacketDistance(Context);
+	Batch.bIsParticle = true;
+	Batch.bCastShadow = false;
+	Batch.bUsesGPUScene = false;
+
+	FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+	Element.IndexBuffer = IndexBuffer.get();
+	Element.WorldMatrix = Collector.StoreWorldMatrix(FMatrix::Identity);
+	Element.FirstIndex = 0;
+	Element.IndexCount = static_cast<uint32>(IndexCount);
+	Element.InstanceCount = 0;
+	Element.bReceiveShadow = false;
+	Element.bReceiveDecal = false;
+}
+
+void FDynamicGpuEmitterData::Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context)
+{
+	UStaticMesh* RenderMesh = MeshAsset;
+	if (!Context.View || !GpuResources || MaxParticles == 0)
+	{
+		return;
+	}
+	if (!GpuResources->ParticleBuffer || GpuResources->MaxParticles != MaxParticles)
+	{
+		GpuResources->ParticleBuffer = RenderCommand::CreateRWStructuredBuffer(sizeof(FGpuParticleState), MaxParticles);
+		GpuResources->MaxParticles = MaxParticles;
+		if (GpuResources->ParticleBuffer)
+		{
+			RenderCommand::ClearUnorderedAccess(GpuResources->ParticleBuffer.get(), 0);
+		}
+	}
+	if (!GpuResources->ParticleBuffer || !GpuResources->ParticleBuffer->GetSRV())
+	{
+		return;
+	}
+
+	UMaterialInterface* FallbackMat = Source.Material ? Source.Material : Context.DefaultMaterial;
+	FVertexBuffer* RenderVB = RenderMesh ? RenderMesh->GetVertexBuffer() : Context.SpriteQuadVertexBuffer;
+	FIndexBuffer* RenderIB = RenderMesh ? RenderMesh->GetIndexBuffer() : Context.SpriteQuadIndexBuffer;
+	if (!RenderVB || !RenderIB)
+	{
+		return;
+	}
+	if (!RenderMesh && !FallbackMat)
+	{
+		return;
+	}
+
+	FVector Forward = Context.View->CameraForward.Normalized();
+	if (Forward.Length() <= 1e-6f)
+	{
+		Forward = (WorldLocation - Context.View->CameraPosition).Normalized();
+	}
+	FVector Right = FVector::Cross(FVector(0.0f, 0.0f, 1.0f), Forward).Normalized();
+	if (Right.Length() <= 1e-6f)
+	{
+		Right = FVector(0.0f, 1.0f, 0.0f);
+	}
+	const FVector Up = FVector::Cross(Forward, Right).Normalized();
+	const FVector Facing = Forward * -1.0f;
+
+	DrawParams = FGpuParticleDrawParams{};
+	DrawParams.LocalToWorld = LocalToWorld;
+	DrawParams.CameraFacing = FVector4(Facing.X, Facing.Y, Facing.Z, 0.0f);
+	DrawParams.CameraRight = FVector4(Right.X, Right.Y, Right.Z, 0.0f);
+	DrawParams.CameraUp = FVector4(Up.X, Up.Y, Up.Z, 0.0f);
+	DrawParams.WorldScaleAndLocal = FVector4(WorldScale.Y, WorldScale.Z, bUseLocalSpace ? 1.0f : 0.0f, 0.0f);
+	DrawParams.AtlasParams = AtlasParams;
+
+	FGpuParticleBatch GpuBatch{};
+	GpuBatch.GpuResources = GpuResources;
+	GpuBatch.Mesh = RenderMesh;
+	GpuBatch.Material = FallbackMat;
+	GpuBatch.MaxParticles = MaxParticles;
+	GpuBatch.ParticleStride = sizeof(FGpuParticleState);
+	GpuBatch.bResetRequested = bResetRequested;
+	GpuBatch.SpawnCount = SimParams.SpawnCount;
+	GpuBatch.PendingSpawnBytes = std::move(PendingSpawnBytes);
+	GpuBatch.SimParams = SimParams;
+	GpuBatch.DrawParams = DrawParams;
+	Collector.AddGpuParticleBatch(std::move(GpuBatch));
+
+	// 동일 프레임 내 중복 시뮬레이션을 막기 위해 스폰·시간 값을 소진한다
+	bResetRequested = false;
+	SimParams.DeltaTime = 0.0f;
+	SimParams.SpawnCount = 0;
+
+	const float PacketDistance = GetPacketDistance(Context);
+	if (RenderMesh)
+	{
+		MeshVertexFactory.Init(RenderVB, RenderIB, GpuResources->ParticleBuffer.get());
+		const FStaticMeshData& MeshData = RenderMesh->GetMeshData();
+		const bool bHasSections = !MeshData.Sections.IsEmpty();
+		const int32 SectionCount = bHasSections ? MeshData.Sections.Num() : 1;
+		for (int32 SecIdx = 0; SecIdx < SectionCount; ++SecIdx)
+		{
+			const uint32 SecStartIndex = bHasSections ? MeshData.Sections[SecIdx].StartIndex : 0;
+			const uint32 SecIndexCount = bHasSections ? MeshData.Sections[SecIdx].IndexCount : RenderIB->GetIndexCount();
+			if (SecIndexCount == 0)
+			{
+				continue;
+			}
+			const uint32 SlotIndex = bHasSections ? MeshData.Sections[SecIdx].MaterialSlotIndex : 0;
+			UMaterialInterface* EntryMat = Source.Material ? Source.Material : RenderMesh->GetMaterial(SlotIndex);
+			if (!EntryMat)
+			{
+				EntryMat = FallbackMat;
+			}
+			if (!EntryMat)
+			{
+				continue;
+			}
+
+			FMeshBatch& Batch = Collector.AddMeshDefaulted();
+			Batch.VertexFactory = &MeshVertexFactory;
+			Batch.Mesh = RenderMesh;
+			Batch.Material = EntryMat;
+			Batch.MaterialParamData = &DrawParams;
+			Batch.MaterialParamDataSize = sizeof(FGpuParticleDrawParams);
+			Batch.CameraDistanceSq = PacketDistance;
+			Batch.MeshSortID = RenderMesh->SortID;
+			Batch.bIsParticle = true;
+			Batch.bCastShadow = false;
+			Batch.bUsesGPUScene = false;
+
+			FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+			Element.IndexBuffer = RenderIB;
+			Element.WorldMatrix = Collector.StoreWorldMatrix(FMatrix::Identity);
+			Element.FirstIndex = SecStartIndex;
+			Element.IndexCount = SecIndexCount;
+			Element.InstanceCount = MaxParticles;
+			Element.bReceiveShadow = false;
+			Element.bReceiveDecal = false;
+		}
+		return;
+	}
+
+	SpriteVertexFactory.Init(RenderVB, RenderIB, GpuResources->ParticleBuffer.get());
+
+	FMeshBatch& Batch = Collector.AddMeshDefaulted();
+	Batch.VertexFactory = &SpriteVertexFactory;
+	Batch.Material = FallbackMat;
+	Batch.MaterialParamData = &DrawParams;
+	Batch.MaterialParamDataSize = sizeof(FGpuParticleDrawParams);
+	Batch.CameraDistanceSq = PacketDistance;
+	Batch.bIsParticle = true;
+	Batch.bCastShadow = false;
+	Batch.bUsesGPUScene = false;
+
+	FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+	Element.IndexBuffer = RenderIB;
+	Element.WorldMatrix = Collector.StoreWorldMatrix(FMatrix::Identity);
+	Element.FirstIndex = 0;
+	Element.IndexCount = RenderIB->GetIndexCount();
+	Element.InstanceCount = MaxParticles;
+	Element.bReceiveShadow = false;
+	Element.bReceiveDecal = false;
+}
+
+void FDynamicAfterimageEmitterData::Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context)
+{
+	if (!Context.View || Particles.IsEmpty())
+	{
+		return;
+	}
+
+	UMaterialInterface* EntryMat = Source.Material ? Source.Material : Context.DefaultMaterial;
+	if (!EntryMat)
+	{
+		EntryMat = UAssetManager::LoadMaterialAsset("Materials/AfterimageMaterial.material");
+	}
+	if (!EntryMat)
+	{
+		return;
+	}
+
+	SnapshotVertexFactories.SetNum(Particles.Num());
+	for (int32 ParticleIndex = 0; ParticleIndex < Particles.Num(); ++ParticleIndex)
+	{
+		const FAfterimageRenderParticle& Particle = Particles[ParticleIndex];
+		const TSharedPtr<FAfterimageSnapshot>& Snapshot = Particle.Snapshot;
+		if (!Snapshot || !Snapshot->Mesh || Snapshot->SkinningMatrices.IsEmpty() || Particle.Alpha <= 0.0f)
+		{
+			continue;
+		}
+		if (!Snapshot->MatrixBuffer)
+		{
+			Snapshot->MatrixBuffer = RenderCommand::CreateDynamicStructuredBuffer(
+				static_cast<uint32>(Snapshot->SkinningMatrices.Num()), sizeof(FMatrix));
+			if (Snapshot->MatrixBuffer)
+			{
+				RenderCommand::UpdateBufferData(
+					Snapshot->MatrixBuffer.get(),
+					Snapshot->SkinningMatrices.GetData(),
+					static_cast<uint32>(Snapshot->SkinningMatrices.Num() * sizeof(FMatrix)));
+			}
+		}
+		if (!Snapshot->MatrixBuffer || !Snapshot->MatrixBuffer->GetSRV())
+		{
+			continue;
+		}
+
+		const FSkeletalMeshRenderData& RenderData = Snapshot->Mesh->GetRenderData();
+		if (RenderData.LODRenderData.IsEmpty())
+		{
+			continue;
+		}
+		const FSkeletalMeshLODRenderData& LOD = RenderData.LODRenderData[0];
+		FVertexBuffer* VB = LOD.GpuSkinVertexBuffer.get();
+		FIndexBuffer* IB = LOD.IndexBuffer.get();
+		if (!VB || !IB)
+		{
+			continue;
+		}
+
+		FGpuSkinVertexFactory& VF = SnapshotVertexFactories[ParticleIndex];
+		VF.Init(VB, IB, Snapshot->MatrixBuffer.get());
+
+		const FVector Delta = (Snapshot->WorldBounds.Min + Snapshot->WorldBounds.Max) * 0.5f - Context.View->CameraPosition;
+		const float DistanceSq = Delta.Dot(Delta);
+		const int32 SectionCount = LOD.Sections.IsEmpty() ? 1 : LOD.Sections.Num();
+		const FMatrix* WorldPtr = Collector.StoreWorldMatrix(Snapshot->World);
+
+		for (int32 SectionIndex = 0; SectionIndex < SectionCount; ++SectionIndex)
+		{
+			FMeshBatch& Batch = Collector.AddMeshDefaulted();
+			Batch.VertexFactory = &VF;
+			Batch.Material = EntryMat;
+			Batch.OverridePSOType = EPSOType::StaticMesh_Translucent;
+			Batch.MeshSortID = static_cast<uint16>(Snapshot->Mesh->GetUUID());
+			Batch.CameraDistanceSq = DistanceSq;
+			Batch.bIsParticle = true;
+			Batch.bCastShadow = false;
+			Batch.bUsesGPUScene = false;
+
+			FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
+			Element.IndexBuffer = IB;
+			Element.WorldMatrix = WorldPtr;
+			Element.FirstIndex = LOD.Sections.IsEmpty() ? 0 : LOD.Sections[SectionIndex].StartIndex;
+			Element.IndexCount = LOD.Sections.IsEmpty() ? IB->GetIndexCount() : LOD.Sections[SectionIndex].IndexCount;
+			Element.bReceiveShadow = false;
+			Element.bReceiveDecal = false;
+		}
+	}
 }

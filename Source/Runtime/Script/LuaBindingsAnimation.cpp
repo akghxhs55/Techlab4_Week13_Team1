@@ -7,6 +7,7 @@
 #include "Animation/AnimGraphInstance.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
 #include "Animation/AnimNotify.h"
 #include "Animation/AnimNotifyState.h"
 #include "Animation/AnimNode_SequencePlayer.h"
@@ -43,6 +44,7 @@ namespace
 
 	struct FLuaAnimSequenceRef { FLuaAnimGraphRef Graph; UAnimSequence* Ptr = nullptr; };
 	struct FLuaBlendSpaceRef { FLuaAnimGraphRef Graph; UBlendSpace1D* Ptr = nullptr; };
+	struct FLuaBlendSpace2DRef { FLuaAnimGraphRef Graph; UBlendSpace2D* Ptr = nullptr; };
 	struct FLuaAnimNodeRef { FLuaAnimGraphRef Graph; int32 Index = INDEX_NONE; };
 
 	//  Lua가 만든 그래프. ReleaseCallbacks에서 리셋해 Lua 함수를 잡은 규칙/콜백을 놓는다.
@@ -103,6 +105,13 @@ namespace
 	{
 		UAnimGraphInstance& Graph = DerefGraph(Ref.Graph);
 		if (!Graph.OwnsBlendSpace(Ref.Ptr)) throw sol::error("BlendSpace is no longer valid.");
+		return *Ref.Ptr;
+	}
+
+	UBlendSpace2D& DerefBlendSpace2D(const FLuaBlendSpace2DRef& Ref)
+	{
+		UAnimGraphInstance& Graph = DerefGraph(Ref.Graph);
+		if (!Graph.OwnsBlendSpace2D(Ref.Ptr)) throw sol::error("BlendSpace2D is no longer valid.");
 		return *Ref.Ptr;
 	}
 
@@ -463,6 +472,15 @@ namespace LuaBindingsDetail
 					UBlendSpace1D* BlendSpace = DerefEditableGraph(R).LoadBlendSpace(Path);
 					return BlendSpace ? sol::optional<FLuaBlendSpaceRef>(FLuaBlendSpaceRef{ R, BlendSpace }) : sol::nullopt;
 				},
+			"CreateBlendSpace2D", [](const FLuaAnimGraphRef& R)
+				{
+					return FLuaBlendSpace2DRef{ R, DerefEditableGraph(R).CreateBlendSpace2D() };
+				},
+			"LoadBlendSpace2D", [](const FLuaAnimGraphRef& R, const std::string& Path) -> sol::optional<FLuaBlendSpace2DRef>
+				{
+					UBlendSpace2D* BlendSpace = DerefEditableGraph(R).LoadBlendSpace2D(Path);
+					return BlendSpace ? sol::optional<FLuaBlendSpace2DRef>(FLuaBlendSpace2DRef{ R, BlendSpace }) : sol::nullopt;
+				},
 
 			// ---- 노드 ----
 			// Options = { Loop = false, PlayRate = 1 }
@@ -480,11 +498,37 @@ namespace LuaBindingsDetail
 					const float PlayRate = Options ? Options->get_or("PlayRate", 1.0f) : 1.0f;
 					return MakeNodeRef(R, Graph.AddBlendSpacePlayer(&DerefBlendSpace(BlendSpace), XVariable, PlayRate), "BlendSpacePlayer");
 				},
+			"BlendSpace2DPlayer", [](const FLuaAnimGraphRef& R, const FLuaBlendSpace2DRef& BlendSpace, const std::string& XVariable, const std::string& YVariable, sol::optional<sol::table> Options)
+				{
+					UAnimGraphInstance& Graph = DerefEditableGraph(R);
+					const float PlayRate = Options ? Options->get_or("PlayRate", 1.0f) : 1.0f;
+					return MakeNodeRef(R, Graph.AddBlendSpace2DPlayer(&DerefBlendSpace2D(BlendSpace), XVariable, YVariable, PlayRate), "BlendSpace2DPlayer");
+				},
 			// Alpha 입력을 Float 변수에 바인딩한다 (0 = A, 1 = B)
 			"TwoWayBlend", [](const FLuaAnimGraphRef& R, const FLuaAnimNodeRef& A, const FLuaAnimNodeRef& B, const std::string& AlphaVariable)
 				{
 					UAnimGraphInstance& Graph = DerefEditableGraph(R);
 					return MakeNodeRef(R, Graph.AddTwoWayBlend(NodeIndexIn(Graph, A), NodeIndexIn(Graph, B), AlphaVariable), "TwoWayBlend");
+				},
+			"SetTwoWayBlendSync", [](const FLuaAnimGraphRef& R, const FLuaAnimNodeRef& Node, bool bSync)
+				{
+					UAnimGraphInstance& Graph = DerefEditableGraph(R);
+					Graph.SetTwoWayBlendSync(NodeIndexIn(Graph, Node), bSync);
+				},
+			"Slot", [](const FLuaAnimGraphRef& R, const FLuaAnimNodeRef& Source, const std::string& SlotName)
+				{
+					UAnimGraphInstance& Graph = DerefEditableGraph(R);
+					return MakeNodeRef(R, Graph.AddSlotNode(NodeIndexIn(Graph, Source), SlotName), "Slot");
+				},
+			"LayeredBoneBlend", [](const FLuaAnimGraphRef& R, const FLuaAnimNodeRef& Base, const FLuaAnimNodeRef& Blend, const std::string& StartBone, const std::string& AlphaVariable, sol::optional<bool> bMeshSpace)
+				{
+					UAnimGraphInstance& Graph = DerefEditableGraph(R);
+					return MakeNodeRef(R, Graph.AddLayeredBoneBlend(NodeIndexIn(Graph, Base), NodeIndexIn(Graph, Blend), StartBone, AlphaVariable, bMeshSpace.value_or(false)), "LayeredBoneBlend");
+				},
+			"AimOffset1D", [](const FLuaAnimGraphRef& R, const FLuaAnimNodeRef& Base, const std::string& AssetPath, const std::string& PitchVar, const std::string& AlphaVar)
+				{
+					UAnimGraphInstance& Graph = DerefEditableGraph(R);
+					return MakeNodeRef(R, Graph.AddAimOffset1D(NodeIndexIn(Graph, Base), AssetPath, PitchVar, AlphaVar), "AimOffset1D");
 				},
 			"StateMachine", [](const FLuaAnimGraphRef& R)
 				{
@@ -495,6 +539,32 @@ namespace LuaBindingsDetail
 				{
 					UAnimGraphInstance& Graph = DerefEditableGraph(R);
 					Graph.SetRoot(NodeIndexIn(Graph, Node));
+				},
+
+			// ---- 몽타주 ----
+			"PlayMontage", [](const FLuaAnimGraphRef& R, const std::string& MontagePath, sol::optional<float> Rate, sol::optional<std::string> StartSection)
+				{
+					return DerefGraph(R).PlayMontage(MontagePath, Rate.value_or(1.0f), StartSection.value_or(""));
+				},
+			"StopMontage", [](const FLuaAnimGraphRef& R, sol::optional<std::string> SlotName, sol::optional<float> BlendOut)
+				{
+					DerefGraph(R).StopMontage(SlotName.value_or(""), BlendOut.value_or(-1.0f));
+				},
+			"JumpToSection", [](const FLuaAnimGraphRef& R, const std::string& SectionName, sol::optional<std::string> SlotName)
+				{
+					return DerefGraph(R).JumpToSection(SectionName, SlotName.value_or(""));
+				},
+			"IsPlayingMontage", [](const FLuaAnimGraphRef& R, sol::optional<std::string> SlotName)
+				{
+					return DerefGraph(R).IsPlayingMontage(SlotName.value_or(""));
+				},
+			"GetMontagePosition", [](const FLuaAnimGraphRef& R, sol::optional<std::string> SlotName)
+				{
+					return DerefGraph(R).GetMontagePosition(SlotName.value_or(""));
+				},
+			"GetMontageWeight", [](const FLuaAnimGraphRef& R, sol::optional<std::string> SlotName)
+				{
+					return DerefGraph(R).GetMontageWeight(SlotName.value_or(""));
 				},
 
 			// ---- 변수 ----

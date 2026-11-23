@@ -30,6 +30,40 @@ struct FAnimNode_SequencePlayer : public FAnimNode_Base
 		return !bLooping && (!Model || CurrentTime >= Model->GetPlayLength());
 	}
 
+	float GetRemainingTime() const
+	{
+		const UAnimDataModel* Model = Sequence ? Sequence->GetDataModel() : nullptr;
+		const float Length = Model ? Model->GetPlayLength() : 0.0f;
+		return bLooping || Length <= 0.0f ? 0.0f : std::max(0.0f, Length - CurrentTime);
+	}
+
+	float GetCycleSeconds() const override
+	{
+		const UAnimDataModel* Model = Sequence ? Sequence->GetDataModel() : nullptr;
+		const float Length = Model ? Model->GetPlayLength() : 0.0f;
+		return Length > 0.0f && PlayRate > 0.0f && std::isfinite(PlayRate) ? (Length / PlayRate) : 0.0f;
+	}
+
+	bool GetNormalizedTime(float& OutTime) const override
+	{
+		const UAnimDataModel* Model = Sequence ? Sequence->GetDataModel() : nullptr;
+		const float Length = Model ? Model->GetPlayLength() : 0.0f;
+		if (Length <= 0.0f)
+			return false;
+		OutTime = FMath::Clamp(CurrentTime / Length, 0.0f, 1.0f);
+		return true;
+	}
+
+	void SetNormalizedTime(float Time) override
+	{
+		const UAnimDataModel* Model = Sequence ? Sequence->GetDataModel() : nullptr;
+		const float Length = Model ? Model->GetPlayLength() : 0.0f;
+		if (Length > 0.0f && std::isfinite(Time))
+			CurrentTime = FMath::Clamp(Time, 0.0f, 1.0f) * Length;
+	}
+
+	bool IsLoopingNode() const override { return bLooping; }
+
 	void Update(const FAnimationUpdateContext& Context) override
 	{
 		if (!Sequence)

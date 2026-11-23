@@ -282,7 +282,7 @@ void FSceneRenderer::AddInteractingPrimitives(FScene& Scene, FProjectedShadowInf
 		{
 			if (!Proxy->bCastsShadow || !Proxy->IsShown(View.bGameView)) return;
 			if (Proxy->IsSkinned() && !CachedViewContext.bShowSkeletalMesh) return;
-			if ((!Proxy->GetMesh() && !Proxy->HasDynamicMeshElements()) || !Proxy->GetRenderState()) return;
+			if ((!Proxy->HasStaticRelevance() && !Proxy->HasDynamicRelevance()) || !Proxy->GetRenderState()) return;
 
 			// 카메라에서 너무 작게 보이는 Caster는 그림자도 눈에 띄지 않는다 (r.Shadow.RadiusThreshold).
 			const FAABB& Bounds = Proxy->GetBounds();
@@ -340,17 +340,77 @@ void FSceneRenderer::AllocateShadowDepthTargets()
 void FSceneRenderer::RenderShadowDepthMaps(FRenderer* Renderer, FTexture2DArray* Atlas)
 {
 	FConstantBuffer* PassCB = RenderData.ViewLightResources.GetShadowDepthPassCB();
-	if (!bCorePassSucceeded || !Atlas || !PassCB) return;
+	if (!bCorePassSucceeded || !Atlas || !PassCB || !World) return;
+
+	FScene& Scene = World->GetScene();
+	const TArray<FCachedMeshDrawEntry>& CachedShadowCommands = Scene.GetCachedDrawList(EMeshPass::ShadowDepth);
+	const uint32 NumPrimitives = Scene.GetNumPrimitives();
+
+	FMeshElementCollector DynamicCollector;
+	TArray<FMeshDrawCommand> DynamicShadowCommands;
+	const FShadowDepthMeshProcessor ShadowProcessor;
+	const FSceneRenderOptions ShadowOptions{};
 
 	for (const TUniquePtr<FProjectedShadowInfo>& ShadowPtr : RenderData.ProjectedShadows)
 	{
 		const FProjectedShadowInfo& Shadow = *ShadowPtr;
 		if (!Shadow.bAllocated || Shadow.DynamicSubjectPrimitives.IsEmpty()) continue;
 
-		TArray<FMeshDrawBatch> Batches;
-		FMeshPassProcessor Processor;
-		// World 이동에 PreShadowTranslation을 미리 더해 그림자 원점 기준 좌표로 그린다 (원점에서 먼 곳의 float 정밀도).
-		if (!Processor.Build(Shadow.DynamicSubjectPrimitives, EPSOType::ShadowDepth, Batches, Shadow.PreShadowTranslation)) continue;
+		RenderData.ShadowVisibilityMap.Init(uint8(0), NumPrimitives);
+		DynamicCollector.Reset();
+		DynamicShadowCommands.Reset();
+		RenderData.VisibleShadowCommands.Reset();
+
+		bool bHasDynamic = false;
+		for (FPrimitiveSceneProxy* Proxy : Shadow.DynamicSubjectPrimitives)
+		{
+			if (!Proxy || !Proxy->IsVisible() || !Proxy->bCastsShadow)
+				continue;
+			if (Proxy->HasStaticRelevance() && Proxy->GetPackedIndex() >= 0 && static_cast<uint32>(Proxy->GetPackedIndex()) < NumPrimitives)
+			{
+				RenderData.ShadowVisibilityMap[static_cast<uint32>(Proxy->GetPackedIndex())] = 1;
+			}
+			else if (Proxy->HasDynamicRelevance())
+			{
+				Proxy->GetDynamicMeshElements(CachedViewContext, DynamicCollector, 0);
+				bHasDynamic = true;
+			}
+		}
+
+		for (const FCachedMeshDrawEntry& Entry : CachedShadowCommands)
+		{
+			if (Entry.PrimitiveIndex < NumPrimitives && RenderData.ShadowVisibilityMap[Entry.PrimitiveIndex])
+			{
+				FVisibleMeshDrawCommand Vis{};
+				Vis.Command = &Entry.Command;
+				Vis.PrimitiveId = Entry.Command.PrimitiveId;
+				Vis.StateBucketId = Entry.Command.StateBucketId;
+				Vis.SortKey = Entry.Command.SortKey;
+				RenderData.VisibleShadowCommands.Add(Vis);
+			}
+		}
+
+		if (bHasDynamic)
+		{
+			for (const FMeshBatch& Batch : DynamicCollector.GetMeshBatches())
+			{
+				ShadowProcessor.AddMeshBatch(Batch, ShadowOptions, &DynamicCollector, DynamicShadowCommands);
+			}
+			for (const FMeshDrawCommand& DynCmd : DynamicShadowCommands)
+			{
+				FVisibleMeshDrawCommand Vis{};
+				Vis.Command = &DynCmd;
+				Vis.PrimitiveId = DynCmd.PrimitiveId;
+				Vis.StateBucketId = DynCmd.StateBucketId;
+				Vis.SortKey = DynCmd.SortKey;
+				RenderData.VisibleShadowCommands.Add(Vis);
+			}
+		}
+
+		if (RenderData.VisibleShadowCommands.IsEmpty()) continue;
+
+		std::stable_sort(RenderData.VisibleShadowCommands.begin(), RenderData.VisibleShadowCommands.end(),
+			[](const FVisibleMeshDrawCommand& A, const FVisibleMeshDrawCommand& B) { return A.SortKey < B.SortKey; });
 
 		// 테두리(BorderSize)는 Clear 값 1을 유지하도록 그리는 영역만 뷰포트로 잡는다.
 		RenderCommand::SetRenderTargets(0, nullptr, Atlas, Shadow.AtlasIndex);
@@ -362,14 +422,15 @@ void FSceneRenderer::RenderShadowDepthMaps(FRenderer* Renderer, FTexture2DArray*
 		Constants.LightDirection = Shadow.GetLightDirection();
 		Constants.ShadowNear = Shadow.MinSubjectZ;
 		Constants.bPerspective = Shadow.IsPerspective() ? 1u : 0u;
+		Constants.PreShadowTranslation = Shadow.PreShadowTranslation;
 		RenderCommand::UpdateBufferData(PassCB, &Constants, sizeof(Constants));
 		RenderCommand::BindConstantBuffer(3, PassCB, EShaderBindFlagBits::Vertex);
 
-		// 위치가 이미 그림자 원점 기준이므로 이동 없는 회전 x 투영만 쓴다.
+		// 위치는 PreShadowTranslation으로 그림자 원점 기준 이동을 셰이더에서 적용한다.
 		FMatrix ShadowRotation = Shadow.ShadowView;
 		ShadowRotation.M[3][0] = ShadowRotation.M[3][1] = ShadowRotation.M[3][2] = 0.0f;
-		Renderer->UploadViewMatrix(ShadowRotation * Shadow.ShadowProjection);
-		Renderer->DrawMeshes(Batches);
+		Renderer->UploadViewConstants(ShadowRotation * Shadow.ShadowProjection, ShadowRotation, Shadow.ShadowProjection);
+		Renderer->SubmitVisibleCommands(RenderData.VisibleShadowCommands, RenderData.GPUSceneBuffer);
 		++RenderData.RenderStats.ShadowDepthDraws;   // 단계 9 stat에 추가할 필드
 	}
 	RenderCommand::BindConstantBuffer(3, nullptr, EShaderBindFlagBits::Vertex);

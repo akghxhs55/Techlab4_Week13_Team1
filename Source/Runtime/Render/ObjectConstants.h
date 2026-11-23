@@ -41,9 +41,52 @@ struct FForwardMaterialConstants
 	FVector4 SurfaceParams;
 	FVector4 UVTransform;
 	FVector4 SpecularColorShininess;
+	FVector4 WorldUVParams;
+	FVector4 UVScrollAndFlags;
 };
 
 static_assert(sizeof(FForwardObjectConstants) == 272);
-static_assert(sizeof(FForwardMaterialConstants) == 80);
+static_assert(sizeof(FForwardMaterialConstants) == 112);
 static_assert(offsetof(FForwardMaterialConstants, SpecularColorShininess) == 64);
+
+struct FViewConstants
+{
+	FMatrix VP;
+	FMatrix View;
+	FMatrix Projection;
+	FVector4 ViewTimeParams;
+};
+static_assert(sizeof(FViewConstants) == 208);
+
+// Flags x 그림자 수신 여부, y 데칼 수신 여부, z 디버그 웨이트 본 번호 오프셋
+struct FPrimitiveSceneData
+{
+	FMatrix LocalToWorld;
+	FMatrix NormalMatrix;
+	FVector4 Flags;
+};
+static_assert(sizeof(FPrimitiveSceneData) == 144);
+
+inline FPrimitiveSceneData MakePrimitiveSceneData(
+	const FMatrix& World,
+	bool bReceiveShadow = true,
+	bool bReceiveDecal = true,
+	float DebugWeightBoneOffset = 0.0f)
+{
+	FPrimitiveSceneData Result{};
+	Result.LocalToWorld = World;
+	Result.NormalMatrix = World.Inverse().GetTransposed();
+	Result.Flags.X = bReceiveShadow ? 1.0f : 0.0f;
+	Result.Flags.Y = bReceiveDecal ? 1.0f : 0.0f;
+	Result.Flags.Z = DebugWeightBoneOffset;
+	return Result;
+}
+
+struct FDrawBatchConstants
+{
+	uint32 StartInstance = 0;
+	uint32 HeatmapWireMode = 0;
+	uint32 Pad[2]{};
+};
+static_assert(sizeof(FDrawBatchConstants) == 16);
 

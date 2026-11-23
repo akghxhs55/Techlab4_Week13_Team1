@@ -1,13 +1,33 @@
 #pragma once
 #include "Containers/Array.h"
-class UMaterial;
+#include "Math/Box.h"
+#include "Math/Sphere.h"
+
+class UMaterialInterface;
+
 struct FCachedMeshSection
 {
-    UMaterial* Material;
-    uint32 StartIndex;
-    uint32 IndexCount;
+	UMaterialInterface* Material = nullptr;
+	uint32 StartIndex = 0;
+	uint32 IndexCount = 0;
 };
+
+struct FCachedMeshLOD
+{
+	uint32 FirstSection = 0;
+	uint32 NumSections = 0;
+};
+
 struct FMeshRenderState
 {
-    TArray<FCachedMeshSection> Sections;
+	TArray<FCachedMeshSection> Sections;
+	FCachedMeshLOD LODs[4]{};
+	float LODThresholdSq[3]{};
+	uint8 LODCount = 1;
+};
+
+struct FLODSelectionInput
+{
+	FLODSphere Sphere;
+	const FMeshRenderState* State = nullptr;
 };

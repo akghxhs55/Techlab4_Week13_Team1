@@ -40,6 +40,11 @@ void FGameViewportClient::MouseMove(FViewport* Viewport, int32 X, int32 Y)
 
 bool FGameViewportClient::InputKey(FViewport* Viewport, int32 Key, bool bDown)
 {
+	if (bDown && Key == static_cast<int32>(EKeyCode::Escape))
+	{
+		bExitRequested = true;
+		return true;
+	}
 	if (HandleUIKey(Key, bDown))
 		return true;
 
@@ -129,6 +134,7 @@ void FGameViewportClient::SetWorld(UWorld* InWorld)
 	LostFocus();
 	RenderData.ResetScene();
 	CameraComponent = nullptr;
+	bExitRequested = false;
 	World = InWorld;
 }
 
@@ -180,7 +186,19 @@ FSceneView FGameViewportClient::CalcSceneView(const FRect& InViewRect)
 			OutView.bIsWireframe = false;
 
 			// 프러스텀 후 반환
-			OutView.Frustum = ExtractFrustumPlanes(OutView.ViewProjectionMatrix);
+			if (bAllowCameraOverlayDebug && GCameraOverlayDebug.bOverride)
+	{
+		OutView.OverlayColor = FLinearColor(
+			GCameraOverlayDebug.FadeColor[0],
+			GCameraOverlayDebug.FadeColor[1],
+			GCameraOverlayDebug.FadeColor[2],
+			GCameraOverlayDebug.FadeAmount);
+		OutView.LetterboxAmount = GCameraOverlayDebug.LetterboxAmount;
+		OutView.LetterboxAspect = GCameraOverlayDebug.LetterboxAspect;
+		OutView.VignetteIntensity = GCameraOverlayDebug.VignetteIntensity;
+	}
+
+	OutView.Frustum = ExtractFrustumPlanes(OutView.ViewProjectionMatrix);
 			OutView.FrustumCorners = GenerateFrustumCorners(OutView.ViewProjectionMatrix.Inverse());
 			if (PCM->bEnableFading)
 			{
@@ -224,6 +242,18 @@ FSceneView FGameViewportClient::CalcSceneView(const FRect& InViewRect)
 		OutView.FarClip = 1000.0f;
 		OutView.bIsPerspective = true;
 		OutView.bIsWireframe = false;
+	}
+
+	if (bAllowCameraOverlayDebug && GCameraOverlayDebug.bOverride)
+	{
+		OutView.OverlayColor = FLinearColor(
+			GCameraOverlayDebug.FadeColor[0],
+			GCameraOverlayDebug.FadeColor[1],
+			GCameraOverlayDebug.FadeColor[2],
+			GCameraOverlayDebug.FadeAmount);
+		OutView.LetterboxAmount = GCameraOverlayDebug.LetterboxAmount;
+		OutView.LetterboxAspect = GCameraOverlayDebug.LetterboxAspect;
+		OutView.VignetteIntensity = GCameraOverlayDebug.VignetteIntensity;
 	}
 
 	OutView.Frustum = ExtractFrustumPlanes(OutView.ViewProjectionMatrix);

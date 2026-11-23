@@ -43,13 +43,13 @@ void FFloatDistribution::Bake()
 	// 커브는 키가 시간순이어야 구간 찾기가 맞으므로 먼저 정렬한다.
 	CurveKeyUtils::SortKeys(CurveKeys);
 
-	// 키가 0개/1개인 커브는 상수와 같다.
+	// 키가 없거나 하나뿐인 커브는 상수와 같다
 	EDistributionMode BakeMode = Mode;
 	float ConstantValue = Constant;
 	if (Mode == EDistributionMode::Curve && CurveKeys.Num() <= 1)
 	{
 		BakeMode = EDistributionMode::Constant;
-		ConstantValue = CurveKeys.IsEmpty() ? 0.0f : CurveKeys[0].Value;
+		ConstantValue = CurveKeys.IsEmpty() ? Constant : CurveKeys[0].Value;
 	}
 
 	switch (BakeMode)
@@ -121,6 +121,14 @@ void FVectorDistribution::Bake()
 
 	case EDistributionMode::Curve:
 	{
+		if (CurveKeysX.IsEmpty() && CurveKeysY.IsEmpty() && CurveKeysZ.IsEmpty())
+		{
+			// 빈 커브는 상수 값으로 폴백
+			BuildLookupTable(LookupTable, ERawDistributionOperation::None, 3, 1, 0.0f, 0.0f,
+				[this](float, float* Out) { Out[0] = Constant.X; Out[1] = Constant.Y; Out[2] = Constant.Z; });
+			break;
+		}
+
 		float MinTime = FLT_MAX, MaxTime = -FLT_MAX;
 		for (const TArray<FFloatCurveKey>* Keys : { &CurveKeysX, &CurveKeysY, &CurveKeysZ })
 		{
@@ -139,9 +147,9 @@ void FVectorDistribution::Bake()
 
 		BuildLookupTable(LookupTable, ERawDistributionOperation::None, 3, EntryCount, MinTime, MaxTime,
 			[this](float Time, float* Out) {
-				Out[0] = CurveKeyUtils::Evaluate(CurveKeysX, Time);
-				Out[1] = CurveKeyUtils::Evaluate(CurveKeysY, Time);
-				Out[2] = CurveKeyUtils::Evaluate(CurveKeysZ, Time);
+				Out[0] = CurveKeysX.IsEmpty() ? Constant.X : CurveKeyUtils::Evaluate(CurveKeysX, Time);
+				Out[1] = CurveKeysY.IsEmpty() ? Constant.Y : CurveKeyUtils::Evaluate(CurveKeysY, Time);
+				Out[2] = CurveKeysZ.IsEmpty() ? Constant.Z : CurveKeyUtils::Evaluate(CurveKeysZ, Time);
 			});
 		break;
 	}

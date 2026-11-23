@@ -43,20 +43,31 @@ public:
 	int32 FindBoneIndex(const FString& Name) const;
 	const FSkeletalMeshRenderData& GetRenderData() const { return RenderData; }
 	const TArray<FSkeletalMaterialSlot>& GetMaterialSlots() const { return MaterialSlots; }
-	UMaterial* GetMaterial(uint32 SlotIndex) const;
+	UMaterialInterface* GetMaterial(uint32 SlotIndex) const;
 
-	TSharedPtr<const FMeshRenderState> GetRenderState(const TArray<UMaterial*>& Materials);
+	TSharedPtr<const FMeshRenderState> GetRenderState(const TArray<UMaterialInterface*>& Materials);
+
+	const TArray<FSkeletalMeshSocket>& GetSockets() const { return Sockets; }
+	int32 FindSocketIndex(const FString& SocketName) const;
+	const FSkeletalMeshSocket* FindSocket(const FString& SocketName) const;
+	FSkeletalMeshSocket* FindMutableSocket(const FString& SocketName);
+	bool HasSocket(const FString& SocketName) const;
+	bool AddSocket(const FSkeletalMeshSocket& NewSocket);
+	bool RemoveSocket(const FString& SocketName);
+	bool LoadSocketsFromFile(const FString& FilePath);
+	bool SaveSocketsToFile(const FString& FilePath) const;
 
 private:
 	struct FMaterialSlotsHash
 	{
-		size_t operator()(const TArray<UMaterial*>& Slots) const;
+		size_t operator()(const TArray<UMaterialInterface*>& Slots) const;
 	};
 
 	TArray<FBoneInfo> RefSkeleton;
 	TArray<FSkeletalMaterialSlot> MaterialSlots;
-	TArray<UMaterial*> Materials;
+	TArray<UMaterialInterface*> Materials;
 	FSkeletalMeshRenderData RenderData;
+	TArray<FSkeletalMeshSocket> Sockets;
 	// UStaticMesh와 같은 캐시: 같은 머티리얼 조합의 컴포넌트끼리 섹션 목록 공유
-	TMap<TArray<UMaterial*>, TWeakPtr<const FMeshRenderState>, FMaterialSlotsHash> RenderStates;
+	TMap<TArray<UMaterialInterface*>, TWeakPtr<const FMeshRenderState>, FMaterialSlotsHash> RenderStates;
 };

@@ -8,17 +8,236 @@
 #include <string_view>
 
 #include "Render/SkeletalMesh.h"
+#include "Render/MaterialInterface.h"
+#include "Render/Material.h"
 #include "Asset/AssetManager.h"
+#include "Asset/AssetUtils.h"
 #include "Asset/FbxImporter/FbxMeshBake.h"
 #include "Text/Font.h"
 #include "Editor/KurisuEd/EditorDragDrop.h"
 #include "Animation/AnimSequenceFile.h"
+#include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
 #include "Animation/BlendSpaceFile.h"
 #include "Animation/AnimBlueprintFile.h"
+#include "Animation/AnimMontageAsset.h"
+#include "LevelSequence/LevelSequence.h"
+#include "Particles/ParticleEmitter.h"
+#include "Particles/ParticleLODLevel.h"
+#include "Particles/ParticleSystem.h"
 #include "Particles/ParticleSystemFile.h"
+#include "Particles/Module/ParticleModuleColor.h"
+#include "Particles/Module/ParticleModuleLifetime.h"
+#include "Particles/Module/ParticleModuleRequired.h"
+#include "Particles/Module/ParticleModuleSize.h"
+#include "Particles/Module/ParticleModuleSpawn.h"
+#include "Particles/Module/ParticleModuleVelocity.h"
+#include "UObject/UObjectIterator.h"
+#include <fstream>
 
 namespace
 {
+	bool IsValidNewAssetName(const std::string& Name)
+	{
+		if (Name.empty() || Name == "." || Name == "..")
+		{
+			return false;
+		}
+		return Name.find_first_of("\\/:*?\"<>|") == std::string::npos;
+	}
+
+	void RefreshSkeletalMeshCandidates(std::vector<FString>& OutMeshes)
+	{
+		OutMeshes.clear();
+
+		for (TObjectIterator<USkeletalMesh> It; It; ++It)
+		{
+			USkeletalMesh* Mesh = *It;
+			if (!Mesh)
+			{
+				continue;
+			}
+
+			const FString AssetKey = FAssetUtils::GetAssetKey(Mesh->GetPath());
+			if (!AssetKey.empty() && std::find(OutMeshes.begin(), OutMeshes.end(), AssetKey) == OutMeshes.end())
+			{
+				OutMeshes.push_back(AssetKey);
+			}
+		}
+
+		const TArray<FString> Unloaded = UAssetManager::GetUnloadedAssetPaths(EAssetType::SkeletalMesh);
+		for (const FString& PathKey : Unloaded)
+		{
+			const FString AssetKey = FAssetUtils::GetAssetKey(PathKey);
+			if (!AssetKey.empty() && std::find(OutMeshes.begin(), OutMeshes.end(), AssetKey) == OutMeshes.end())
+			{
+				OutMeshes.push_back(AssetKey);
+			}
+		}
+
+		std::sort(OutMeshes.begin(), OutMeshes.end());
+	}
+
+	bool CreateEmptySceneFile(const fs::path& TargetPath, FString& OutError)
+	{
+		std::ofstream File(TargetPath, std::ios::binary | std::ios::trunc);
+		if (!File.is_open())
+		{
+			OutError = "Failed to open scene file for writing.";
+			return false;
+		}
+
+		// 기본 빈 씬 직렬화 포맷으로 저장
+		File << "{\n"
+			<< "    \"Version\": 4,\n"
+			<< "    \"World\": {\n"
+			<< "        \"PersistentLevel\": {\n"
+			<< "            \"Actors\": [],\n"
+			<< "            \"Properties\": {}\n"
+			<< "        },\n"
+			<< "        \"Properties\": {}\n"
+			<< "    }\n"
+			<< "}";
+		File.flush();
+		if (!File.good())
+		{
+			OutError = "Failed to write scene file.";
+			return false;
+		}
+
+		return true;
+	}
+
+	bool CreateDefaultParticleSystemFile(const fs::path& TargetPath, FString& OutError)
+	{
+		std::unique_ptr<UParticleSystem> System(NewObject<UParticleSystem>());
+		UParticleEmitter* Emitter = NewObject<UParticleEmitter>(System.get());
+		UParticleLODLevel* LODLevel = NewObject<UParticleLODLevel>(Emitter);
+		LODLevel->SetLevel(0);
+		LODLevel->SetRequiredModule(NewObject<UParticleModuleRequired>(LODLevel));
+		LODLevel->SetSpawnModule(NewObject<UParticleModuleSpawn>(LODLevel));
+		LODLevel->AddModule(NewObject<UParticleModuleLifetime>(LODLevel));
+		LODLevel->AddModule(NewObject<UParticleModuleSize>(LODLevel));
+		LODLevel->AddModule(NewObject<UParticleModuleVelocity>(LODLevel));
+		LODLevel->AddModule(NewObject<UParticleModuleColor>(LODLevel));
+		Emitter->AddLODLevel(LODLevel);
+		Emitter->Build();
+		System->AddEmitter(Emitter);
+		return ParticleSystemFile::Write(TargetPath, *System, OutError);
+	}
+
+	void DrawCreateAssetModal(
+		const char* PopupTitle,
+		const char* Extension,
+		const fs::path& CurrentPath,
+		char (&NameBuffer)[64],
+		FString& ErrorMessage,
+		bool bRequireSkeletalMesh,
+		const std::vector<FString>& SkeletalMeshes,
+		int32& SelectedSkeletalMeshIndex,
+		const std::function<bool(const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)>& OnConfirmCreate)
+	{
+		if (!ImGui::BeginPopupModal(PopupTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			return;
+		}
+
+		if (SelectedSkeletalMeshIndex < 0 || SelectedSkeletalMeshIndex >= static_cast<int32>(SkeletalMeshes.size()))
+		{
+			SelectedSkeletalMeshIndex = 0;
+		}
+
+		ImGui::TextUnformatted("Name");
+		ImGui::SetNextItemWidth(EditorStyle::Scale(280.0f));
+		if (ImGui::IsWindowAppearing())
+		{
+			ImGui::SetKeyboardFocusHere();
+			ErrorMessage.clear();
+		}
+		const bool bSubmittedByEnter = ImGui::InputText("##NewAssetName", NameBuffer, sizeof(NameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+		FString SelectedMeshPath;
+		if (bRequireSkeletalMesh)
+		{
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Skeletal Mesh");
+			if (SkeletalMeshes.empty())
+			{
+				ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "No SkeletalMesh found in Content.");
+			}
+			else
+			{
+				SelectedMeshPath = SkeletalMeshes[SelectedSkeletalMeshIndex];
+				ImGui::SetNextItemWidth(EditorStyle::Scale(280.0f));
+				if (ImGui::BeginCombo("##SkeletalMeshSelect", SelectedMeshPath.c_str()))
+				{
+					for (int32 Index = 0; Index < static_cast<int32>(SkeletalMeshes.size()); ++Index)
+					{
+						const bool bSelected = (Index == SelectedSkeletalMeshIndex);
+						if (ImGui::Selectable(SkeletalMeshes[Index].c_str(), bSelected))
+						{
+							SelectedSkeletalMeshIndex = Index;
+						}
+						if (bSelected)
+						{
+							ImGui::SetItemDefaultFocus();
+						}
+					}
+					ImGui::EndCombo();
+				}
+				SelectedMeshPath = SkeletalMeshes[SelectedSkeletalMeshIndex];
+			}
+		}
+
+		const FString AssetName(NameBuffer);
+		const bool bValidName = IsValidNewAssetName(AssetName);
+		const fs::path TargetPath = bValidName ? (CurrentPath / FPaths::FromUtf8(AssetName + Extension)) : fs::path();
+		std::error_code ExistsError;
+		const bool bExists = bValidName && fs::exists(TargetPath, ExistsError);
+
+		if (!bValidName && !AssetName.empty())
+		{
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "Invalid file name.");
+		}
+		else if (bExists)
+		{
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "An asset with this name already exists.");
+		}
+		else if (!ErrorMessage.empty())
+		{
+			ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", ErrorMessage.c_str());
+		}
+
+		const bool bCanCreate = bValidName && !bExists && (!bRequireSkeletalMesh || !SkeletalMeshes.empty());
+		ImGui::Spacing();
+		ImGui::BeginDisabled(!bCanCreate);
+		const bool bClickedCreate = ImGui::Button("Create");
+		ImGui::EndDisabled();
+
+		if ((bClickedCreate || (bSubmittedByEnter && bCanCreate)))
+		{
+			FString LocalError;
+			if (OnConfirmCreate(TargetPath, SelectedMeshPath, LocalError))
+			{
+				ErrorMessage.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			else
+			{
+				ErrorMessage = LocalError.empty() ? "Failed to create asset." : LocalError;
+			}
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+		{
+			ErrorMessage.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
 	std::string ToLowerAscii(std::string_view Text)
 	{
 		std::string Result(Text);
@@ -381,6 +600,34 @@ namespace
 		if (Ext == ".scene")
 		{
 			return { "Scene", IM_COL32(225, 165, 52, 255), true };
+		}
+		if (Ext == ".material")
+		{
+			return { "Material", IM_COL32(72, 210, 140, 255), true };
+		}
+		if (Ext == ".blendspace")
+		{
+			return { "BlendSpace", IM_COL32(82, 198, 172, 255), true };
+		}
+		if (Ext == ".animblueprint")
+		{
+			return { "AnimBP", IM_COL32(232, 134, 68, 255), true };
+		}
+		if (Ext == ".animmontage")
+		{
+			return { "Montage", IM_COL32(216, 108, 152, 255), true };
+		}
+		if (Ext == ".aimoffset")
+		{
+			return { "AimOffset", IM_COL32(196, 156, 78, 255), true };
+		}
+		if (Ext == ".levelsequence")
+		{
+			return { "Sequence", IM_COL32(228, 96, 118, 255), true };
+		}
+		if (Ext == ".particle")
+		{
+			return { "Particle", IM_COL32(242, 148, 56, 255), true };
 		}
 		if (Ext == ".widget")
 		{
@@ -799,13 +1046,375 @@ void FContentDrawerPanel::RenderContents()
 				bOpenCreateFolder = true;   // Create Widget과 같은 이유로 다음 줄에서 모달을 연다
 			}
 			ImGui::Separator();
+			if (ImGui::MenuItem("Create Scene"))
+			{
+				strcpy_s(NewAssetName, "NewScene");
+				bOpenCreateScene = true;
+			}
 			if (ImGui::MenuItem("Create Widget"))
 			{
 				strcpy_s(NewAssetName, "NewWidget");
 				bOpenCreateWidget = true;   // 메뉴 팝업 안에서 바로 다른 팝업을 열 수 없어 다음 줄에서 연다
 			}
+			if (ImGui::MenuItem("Create Particle System"))
+			{
+				strcpy_s(NewAssetName, "NewParticleSystem");
+				bOpenCreateParticleSystem = true;
+			}
+			if (ImGui::MenuItem("Create Material"))
+			{
+				strcpy_s(NewAssetName, "NewMaterial");
+				CreateAssetErrorMessage.clear();
+				bOpenCreateMaterial = true;
+			}
+			if (ImGui::MenuItem("Create Material Instance"))
+			{
+				strcpy_s(NewAssetName, "NewMaterialInstance");
+				CreateAssetErrorMessage.clear();
+				MaterialParentCandidates.clear();
+				for (TObjectIterator<UMaterialInterface> It{}; It; ++It)
+				{
+					UMaterialInterface* Mat = *It;
+					if (IsValid(Mat) && !Mat->GetPath().empty())
+					{
+						MaterialParentCandidates.push_back(Mat->GetPath());
+					}
+				}
+				for (const FString& MatPath : UAssetManager::GetUnloadedAssetPaths(EAssetType::Material))
+				{
+					if (std::find(MaterialParentCandidates.begin(), MaterialParentCandidates.end(), MatPath) == MaterialParentCandidates.end())
+					{
+						MaterialParentCandidates.push_back(MatPath);
+					}
+				}
+				std::sort(MaterialParentCandidates.begin(), MaterialParentCandidates.end());
+				SelectedMaterialParentIndex = 0;
+				bOpenCreateMaterialInstance = true;
+			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Create BlendSpace 1D"))
+			{
+				strcpy_s(NewAssetName, "NewBlendSpace");
+				RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+				SelectedSkeletalMeshIndex = 0;
+				bOpenCreateBlendSpace = true;
+			}
+			if (ImGui::MenuItem("Create BlendSpace 2D"))
+			{
+				strcpy_s(NewAssetName, "NewBlendSpace2D");
+				RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+				SelectedSkeletalMeshIndex = 0;
+				bOpenCreateBlendSpace2D = true;
+			}
+			if (ImGui::MenuItem("Create Animation Blueprint"))
+			{
+				strcpy_s(NewAssetName, "NewAnimBlueprint");
+				RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+				SelectedSkeletalMeshIndex = 0;
+				bOpenCreateAnimBlueprint = true;
+			}
+			if (ImGui::MenuItem("Create AnimMontage"))
+			{
+				strcpy_s(NewAssetName, "NewAnimMontage");
+				RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+				SelectedSkeletalMeshIndex = 0;
+				bOpenCreateAnimMontage = true;
+			}
+			if (ImGui::MenuItem("Create AimOffset"))
+			{
+				strcpy_s(NewAssetName, "NewAimOffset");
+				RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+				SelectedSkeletalMeshIndex = 0;
+				bOpenCreateAimOffset = true;
+			}
+			if (ImGui::MenuItem("Create LevelSequence"))
+			{
+				strcpy_s(NewAssetName, "NewSequence");
+				CreateAssetErrorMessage.clear();
+				bOpenCreateLevelSequence = true;
+			}
 			ImGui::EndPopup();
 		}
+		if (bOpenCreateScene) { ImGui::OpenPopup("Create Scene"); bOpenCreateScene = false; }
+		if (bOpenCreateParticleSystem) { ImGui::OpenPopup("Create Particle System"); bOpenCreateParticleSystem = false; }
+		if (bOpenCreateMaterial) { ImGui::OpenPopup("Create Material"); bOpenCreateMaterial = false; }
+		if (bOpenCreateMaterialInstance) { ImGui::OpenPopup("Create Material Instance"); bOpenCreateMaterialInstance = false; }
+		if (bOpenCreateBlendSpace) { ImGui::OpenPopup("Create BlendSpace 1D"); bOpenCreateBlendSpace = false; }
+		if (bOpenCreateBlendSpace2D) { ImGui::OpenPopup("Create BlendSpace 2D"); bOpenCreateBlendSpace2D = false; }
+		if (bOpenCreateAnimBlueprint) { ImGui::OpenPopup("Create Animation Blueprint"); bOpenCreateAnimBlueprint = false; }
+		if (bOpenCreateAnimMontage) { ImGui::OpenPopup("Create AnimMontage"); bOpenCreateAnimMontage = false; }
+		if (bOpenCreateAimOffset) { ImGui::OpenPopup("Create AimOffset"); bOpenCreateAimOffset = false; }
+		if (bOpenCreateLevelSequence) { ImGui::OpenPopup("Create LevelSequence"); bOpenCreateLevelSequence = false; }
+
+		DrawCreateAssetModal(
+			"Create Scene",
+			".scene",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			false,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[](const fs::path& TargetPath, const FString&, FString& OutError)
+			{
+				return CreateEmptySceneFile(TargetPath, OutError);
+			});
+
+		DrawCreateAssetModal(
+			"Create Particle System",
+			".particle",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			false,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString&, FString& OutError)
+			{
+				if (!CreateDefaultParticleSystemFile(TargetPath, OutError))
+				{
+					return false;
+				}
+				if (OnOpenMesh)
+				{
+					OnOpenMesh(FPaths::ToUtf8(TargetPath));
+				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create Material",
+			".material",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			false,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString&, FString& OutError)
+			{
+				if (!OnCreateMaterial)
+				{
+					OutError = "Material editor callback is not bound.";
+					return false;
+				}
+				OnCreateMaterial(FPaths::ToUtf8(TargetPath));
+				return true;
+			});
+
+		if (ImGui::BeginPopupModal("Create Material Instance", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::InputText("Name", NewAssetName, sizeof(NewAssetName));
+
+			const char* PreviewLabel = MaterialParentCandidates.empty()
+				? "(No Parent Material Found)"
+				: MaterialParentCandidates[SelectedMaterialParentIndex].c_str();
+			if (ImGui::BeginCombo("Parent Material", PreviewLabel))
+			{
+				for (int32 Index = 0; Index < static_cast<int32>(MaterialParentCandidates.size()); ++Index)
+				{
+					const bool bSelected = (Index == SelectedMaterialParentIndex);
+					if (ImGui::Selectable(MaterialParentCandidates[Index].c_str(), bSelected))
+					{
+						SelectedMaterialParentIndex = Index;
+					}
+					if (bSelected)
+					{
+						ImGui::SetItemDefaultFocus();
+					}
+				}
+				ImGui::EndCombo();
+			}
+
+			const FString NameString = NewAssetName;
+			const bool bValidName = IsValidNewAssetName(NameString);
+			const fs::path TargetPath = CurrentPath / (NameString + ".material");
+			const bool bExists = fs::exists(TargetPath);
+			if (!bValidName)
+			{
+				ImGui::TextColored(EditorColor::ToVec4(EditorColor::Error), "Enter a valid asset name.");
+			}
+			else if (bExists)
+			{
+				ImGui::TextColored(EditorColor::ToVec4(EditorColor::Error), "A file with this name already exists.");
+			}
+			if (!CreateAssetErrorMessage.empty())
+			{
+				ImGui::TextColored(EditorColor::ToVec4(EditorColor::Error), "%s", CreateAssetErrorMessage.c_str());
+			}
+
+			const bool bCanCreate = bValidName && !bExists && !MaterialParentCandidates.empty();
+			ImGui::BeginDisabled(!bCanCreate);
+			if (ImGui::Button("Create"))
+			{
+				if (OnCreateMaterialInstance)
+				{
+					OnCreateMaterialInstance(FPaths::ToUtf8(TargetPath), MaterialParentCandidates[SelectedMaterialParentIndex]);
+					ImGui::CloseCurrentPopup();
+				}
+				else
+				{
+					CreateAssetErrorMessage = "Material editor callback is not bound.";
+				}
+			}
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+			{
+				CreateAssetErrorMessage.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		DrawCreateAssetModal(
+			"Create BlendSpace 1D",
+			".blendspace",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			true,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)
+			{
+				std::unique_ptr<UBlendSpace1D> BlendSpace(NewObject<UBlendSpace1D>());
+				BlendSpace->SetPreviewMeshPath(PreviewMeshPath);
+				if (!BlendSpaceFile::Write(TargetPath, *BlendSpace, OutError))
+				{
+					return false;
+				}
+				if (OnOpenMesh)
+				{
+					OnOpenMesh(FPaths::ToUtf8(TargetPath));
+				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create BlendSpace 2D",
+			".blendspace",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			true,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)
+			{
+				std::unique_ptr<UBlendSpace2D> BlendSpace(NewObject<UBlendSpace2D>());
+				BlendSpace->SetPreviewMeshPath(PreviewMeshPath);
+				if (!BlendSpaceFile::Write2D(TargetPath, *BlendSpace, OutError))
+				{
+					return false;
+				}
+				if (OnOpenMesh)
+				{
+					OnOpenMesh(FPaths::ToUtf8(TargetPath));
+				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create Animation Blueprint",
+			".animblueprint",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			true,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)
+			{
+				const FAnimBlueprintData Data = AnimBlueprintFile::CreateDefault(PreviewMeshPath);
+				if (!AnimBlueprintFile::Write(TargetPath, Data, OutError))
+				{
+					return false;
+				}
+				if (OnOpenMesh)
+				{
+					OnOpenMesh(FPaths::ToUtf8(TargetPath));
+				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create AnimMontage",
+			".animmontage",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			true,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)
+			{
+				FAnimMontageAsset Montage;
+				Montage.PreviewMeshPath = PreviewMeshPath;
+				Montage.SlotName = "UpperBody";
+				const FString AssetKey = FAssetUtils::GetAssetKey(FPaths::ToUtf8(TargetPath));
+				if (!Montage.Save(AssetKey, OutError))
+				{
+					return false;
+				}
+				if (OnOpenMesh)
+				{
+					OnOpenMesh(FPaths::ToUtf8(TargetPath));
+				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create AimOffset",
+			".aimoffset",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			true,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)
+			{
+				FAimOffsetAsset AimAsset;
+				AimAsset.PreviewMeshPath = PreviewMeshPath;
+				const FString AssetKey = FAssetUtils::GetAssetKey(FPaths::ToUtf8(TargetPath));
+				if (!AimAsset.Save(AssetKey, OutError))
+				{
+					return false;
+				}
+				if (OnOpenMesh)
+				{
+					OnOpenMesh(FPaths::ToUtf8(TargetPath));
+				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create LevelSequence",
+			".levelsequence",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			false,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString&, FString& OutError)
+			{
+				std::unique_ptr<ULevelSequence> Seq(NewObject<ULevelSequence>());
+				Seq->Initialize();
+				const FString AssetKey = FAssetUtils::GetAssetKey(FPaths::ToUtf8(TargetPath));
+				if (!Seq->SaveToFile(AssetKey))
+				{
+					OutError = "Failed to save LevelSequence.";
+					return false;
+				}
+				if (OnOpenLevelSequence)
+				{
+					OnOpenLevelSequence(AssetKey);
+				}
+				return true;
+			});
+
 		if (bOpenCreateWidget) { ImGui::OpenPopup("Create Widget"); bOpenCreateWidget = false; }
 
 		if (ImGui::BeginPopupModal("Create Widget", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -1212,13 +1821,25 @@ void FContentDrawerPanel::RenderContents()
 							OnOpenScene(PathString);
 						}
 
+						else if ((Path.extension() == ".levelsequence" || Path.extension() == ".sequence") && OnOpenLevelSequence)
+						{
+							OnOpenLevelSequence(FAssetUtils::GetAssetKey(PathString));
+						}
+
+						else if (Path.extension() == ".material" && OnOpenMaterial)
+						{
+							OnOpenMaterial(PathString);
+						}
+
 						else if ((Path.extension() == ".obj" || FFbxMeshBake::IsBakedPath(PathString)
 							|| AnimSequenceFile::IsAnimSequencePath(PathString)) && OnOpenMesh)
 						{
 							OnOpenMesh(PathString);
 						}
 
-						else if ((BlendSpaceFile::IsBlendSpacePath(PathString) || AnimBlueprintFile::IsAnimBlueprintPath(PathString) ||	ParticleSystemFile::IsParticleSystemPath(PathString)) && OnOpenMesh)
+						else if ((BlendSpaceFile::IsBlendSpacePath(PathString) || AnimBlueprintFile::IsAnimBlueprintPath(PathString) ||
+							ParticleSystemFile::IsParticleSystemPath(PathString) ||
+							Path.extension() == ".animmontage" || Path.extension() == ".aimoffset") && OnOpenMesh)
 						{
 							OnOpenMesh(PathString);
 						}

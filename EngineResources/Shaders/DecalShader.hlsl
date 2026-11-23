@@ -1,11 +1,13 @@
 #pragma pack_matrix(row_major)
 #include "VertexFactory.hlsli"
+#include "GPUSceneCommon.hlsli"
 
-cbuffer PerObject : register(b0)
+cbuffer ViewConstants : register(b0)
 {
-    matrix World;
+    matrix VP;
     matrix View;
     matrix Projection;
+    float4 ViewTimeParams;
 };
 
 cbuffer DecalConstants : register(b1)
@@ -25,14 +27,15 @@ struct VS_OUT
     float3 WorldPosition : TEXCOORD;
 };
 
-// 노멀은 쓰지 않으므로 NormalMatrix 자리에 World를 넘긴다
-VS_OUT mainVS(FVertexFactoryInput Input)
+// 노멀은 쓰지 않으므로 NormalMatrix 자리에 LocalToWorld를 넘긴다
+VS_OUT mainVS(FVertexFactoryInput Input, uint InstanceId : SV_InstanceID)
 {
     VS_OUT OUTPUT;
-    const FVFIntermediates VF = VF_GetIntermediates(Input, World, World);
+    const FPrimitiveSceneData Prim = LoadScenePrimitive(InstanceId);
+    const FVFIntermediates VF = VF_GetIntermediates(Input, Prim.LocalToWorld, Prim.LocalToWorld);
     float4 WorldPosition = float4(VF.WorldPosition, 1.0f);
     float4 ViewPosition = mul(WorldPosition, View);
-    
+
     OUTPUT.Position = mul(ViewPosition, Projection);
     OUTPUT.WorldPosition = WorldPosition.xyz;
     return OUTPUT;
@@ -41,23 +44,23 @@ VS_OUT mainVS(FVertexFactoryInput Input)
 float4 mainPS(VS_OUT Input) : SV_Target
 {
     float4 DecalClip = mul(float4(Input.WorldPosition, 1), DecalVP);
-    
+
     float3 NDC = DecalClip.xyz / DecalClip.w;
     if (abs(NDC.x) > 1 || abs(NDC.y) > 1 || NDC.z < 0 || NDC.z > 1)
     {
         discard;
     }
-    
+
     float u = 0.5 * NDC.x + 0.5;
-    float v = - 0.5 * NDC.y + 0.5;
-    
+    float v = -0.5 * NDC.y + 0.5;
+
     float4 color = DecalTexture.Sample(DecalSampler, float2(u, v));
     color.a *= Fade;
-    
+
     if (bAdditive > 0.5)
     {
         color.rgb *= color.a;
     }
-    
-    return color; 
+
+    return color;
 }

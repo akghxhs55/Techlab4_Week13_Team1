@@ -1226,7 +1226,15 @@ bool FFbxImporter::BuildSkeletalMesh(FSkeletalMeshData& OutData, TArray<FString>
 		Result.Sections.Add({ Section.StartIndex, Section.IndexCount, Section.MaterialSlotIndex });
 	Result.MaterialSlots.Reserve(Geometry.MaterialSlots.Num());
 	for (FStaticMaterialSlot& Slot : Geometry.MaterialSlots)
-		Result.MaterialSlots.Add({ std::move(Slot.Name), Slot.BaseColor, std::move(Slot.DiffuseTexturePath), std::move(Slot.NormalTexturePath) });
+	{
+		FSkeletalMaterialSlot SkelSlot;
+		static_cast<FImportedMaterialProperties&>(SkelSlot) = Slot;
+		SkelSlot.Name = std::move(Slot.Name);
+		SkelSlot.BaseColor = Slot.BaseColor;
+		SkelSlot.DiffuseTexturePath = std::move(Slot.DiffuseTexturePath);
+		SkelSlot.NormalTexturePath = std::move(Slot.NormalTexturePath);
+		Result.MaterialSlots.Add(std::move(SkelSlot));
+	}
 	Result.BindAABB = Geometry.AABB;
 	Result.Bones = Bones;
 	Result.SourcePath = SourcePath;

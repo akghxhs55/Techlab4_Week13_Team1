@@ -17,6 +17,8 @@ public:
 	void Update(FParticleEmitterInstance& Owner, int32 Offset, float DeltaTime) override;
 	void BakeDistributions() override;
 
+	const FVectorDistribution& GetLifeMultiplier() const { return LifeMultiplier; }
+
 private:
 	void Apply(FParticleEmitterInstance& Owner, FBaseParticle& Particle) const;
 

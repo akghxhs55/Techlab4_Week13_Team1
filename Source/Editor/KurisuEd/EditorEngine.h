@@ -27,12 +27,15 @@
 #include "Editor/Viewports/ViewportsPanel.h"
 #include "Editor/LevelViewportLayout.h"
 #include "Editor/ContentDrawer/ContentDrawerPanel.h"
+#include "Editor/MaterialEditor/MaterialEditorPanel.h"
+#include "Editor/Sequence/SequencerPanel.h"
 #include "Editor/UIEditor/UIEditor.h"
 #include "Editor/KurisuEd/EditorUndo.h"
 
 #include "Editor/Rendering/Outline.h"
 #include "Editor/Rendering/OutLineRenderer.h"
 #include "Editor/Outliner/OutlinerPanel.h"
+#include "Editor/WorldSettings/WorldSettingsPanel.h"
 
 #include "PlayInEditorDataTypes.h"
 #include "Core/Misc/Optional.h"
@@ -59,6 +62,7 @@ public:
 	bool Init() override;
 	void Tick(float DeltaTime) override;
 	void PreExit() override;
+	bool SetGameMouseCapture(const UWorld* InWorld, bool bEnabled) override;
 
 	// Active View의 입력과 Picking 결과만 Gizmo 및 선택 상태에 반영한다.
 	void UpdateGizmoAndPicking();
@@ -199,7 +203,10 @@ private:
 	int32 SingleViewportIndex = 0;
 	TArray<FEditorViewportClient*> AllViewportClients;
 	FOutlinerPanel* OutlinerPanel = nullptr;
+	FWorldSettingsPanel* WorldSettingsPanel = nullptr;
 	FContentDrawerPanel* ContentDrawerPanel = nullptr;
+	FSequencerPanel* SequencerPanel = nullptr;
+	TUniquePtr<FMaterialEditorPanel> MaterialEditorPanel;
 
 	UWorld* EditorWorld = nullptr;
 	UWorld* PlayWorld = nullptr;

@@ -184,9 +184,29 @@ bool UCharacterMovementComponent::DoJump()
 	return true;
 }
 
+void UCharacterMovementComponent::StopJumping()
+{
+	if (MovementMode == ECharacterMovementMode::Falling && !bLaunchActive && Velocity.Z > 0.0f)
+		Velocity.Z *= 0.5f;
+}
+
+void UCharacterMovementComponent::Launch(const FVector& LaunchVelocity)
+{
+	Velocity = LaunchVelocity;
+	bLaunchActive = true;
+	SetMovementMode(ECharacterMovementMode::Falling);
+}
+
+void UCharacterMovementComponent::StopMovementImmediately()
+{
+	Super::StopMovementImmediately();
+	bLaunchActive = false;
+}
+
 void UCharacterMovementComponent::ProcessLanded(const FHitResult& Hit)
 {
 	Velocity.Z = 0.0f;
+	bLaunchActive = false;
 	SetMovementMode(ECharacterMovementMode::Walking);
 
 	if (ACharacter* Character = Cast<ACharacter>(PawnOwner))

@@ -342,8 +342,33 @@ int32 FAnimBlueprintEditor::AddPoseNode(EAnimBlueprintNodeType Type, const FAnim
         Node.Name = "BlendSpace Player";
         break;
 
+    case EAnimBlueprintNodeType::BlendSpace2DPlayer:
+        Node.Name = "BlendSpace 2D Player";
+        break;
+
     case EAnimBlueprintNodeType::StateMachine:
         Node.Name = "State Machine";
+        break;
+
+    case EAnimBlueprintNodeType::Slot:
+        Node.Name = "Slot";
+        Node.InputPosePinId = BlueprintData.AllocateId();
+        Node.SlotName = "UpperBody";
+        break;
+
+    case EAnimBlueprintNodeType::LayeredBoneBlend:
+        Node.Name = "Layered Bone Blend";
+        Node.InputPosePinId = BlueprintData.AllocateId();
+        Node.SecondInputPosePinId = BlueprintData.AllocateId();
+        Node.StartBoneName = "spine_01";
+        Node.FloatInput.Constant = 1.0f;
+        break;
+
+    case EAnimBlueprintNodeType::AimOffset1D:
+        Node.Name = "AimOffset 1D";
+        Node.InputPosePinId = BlueprintData.AllocateId();
+        Node.FloatInput.Constant = 1.0f;
+        Node.SecondFloatInput.Constant = 0.0f;
         break;
 
     case EAnimBlueprintNodeType::TwoWayBlend:
@@ -438,7 +463,10 @@ bool FAnimBlueprintEditor::ResolvePoseConnection(int32 FirstPinId, int32 SecondP
 
     if (TargetNode->Type != EAnimBlueprintNodeType::OutputPose 
         && TargetNode->Type != EAnimBlueprintNodeType::StateResult 
-        && TargetNode->Type != EAnimBlueprintNodeType::TwoWayBlend)
+        && TargetNode->Type != EAnimBlueprintNodeType::TwoWayBlend
+        && TargetNode->Type != EAnimBlueprintNodeType::Slot
+        && TargetNode->Type != EAnimBlueprintNodeType::LayeredBoneBlend
+        && TargetNode->Type != EAnimBlueprintNodeType::AimOffset1D)
     {
         return false;
     }
@@ -507,7 +535,11 @@ bool FAnimBlueprintEditor::CanRemoveNode(int32 NodeId)
         {
             return Node.Type == EAnimBlueprintNodeType::SequencePlayer 
                 || Node.Type == EAnimBlueprintNodeType::BlendSpacePlayer 
+                || Node.Type == EAnimBlueprintNodeType::BlendSpace2DPlayer 
                 || Node.Type == EAnimBlueprintNodeType::TwoWayBlend 
+                || Node.Type == EAnimBlueprintNodeType::Slot 
+                || Node.Type == EAnimBlueprintNodeType::LayeredBoneBlend 
+                || Node.Type == EAnimBlueprintNodeType::AimOffset1D 
                 || Node.Type == EAnimBlueprintNodeType::StateMachine 
                 || Node.Type == EAnimBlueprintNodeType::State || Node.Type == EAnimBlueprintNodeType::AnyState;
         }

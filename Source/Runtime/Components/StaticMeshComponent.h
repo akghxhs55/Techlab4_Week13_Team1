@@ -27,9 +27,9 @@ public:
 
 	virtual int32 GetNumMaterials() const override;
 	virtual FString GetMaterialSlotName(int32 SlotIndex) const override;
-	virtual UMaterial* GetDefaultMaterial(int32 SlotIndex) const override;
+	virtual UMaterialInterface* GetDefaultMaterial(int32 SlotIndex) const override;
 
-	void SubmitToRenderQueue(FRenderQueue& RenderQueue, const FViewContext& ViewContext) override;
+	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 
 	bool IsEditorIcon() const { return bEditorIcon; }
 	void SetEditorIcon(bool IsEditorIcon) { bEditorIcon = IsEditorIcon; }
@@ -37,8 +37,6 @@ public:
 private:
 	UPROPERTY(EditAnywhere)
 	UStaticMesh* StaticMesh = nullptr;
-	// Mesh의 Section별 Material과 Texture를 보존해 각각의 렌더 패킷으로 제출한다.
-	//virtual void SubmitToRenderQueue(TQueue<FRenderPacket>& RenderQueue) override;
 
 	// 조명 Icon Debug arrow용
 	bool bEditorIcon = false;

@@ -5,11 +5,12 @@
 #include "Panels/BlendSpacePlayPanel.h"
 
 FBlendSpaceEditorTab::FBlendSpaceEditorTab(FBlendSpaceEditor& InEditor)
-    : FDockedAssetEditorTab(InEditor, "BlendSpaceDockSpace", "BlendSpacePanelClass")
-    , BlendSpaceEditor(InEditor)
+	: FDockedAssetEditorTab(InEditor, "BlendSpaceDockSpace", "BlendSpacePanelClass")
+	, BlendSpaceEditor(InEditor)
 {
-    RegisterPanel(MakeUnique<FSkeletalPreviewViewportPanel>(InEditor));
-    RegisterPanel(MakeUnique<FBlendSpacePlayPanel>(InEditor));
+	RegisterPanel(MakeUnique<FSkeletalPreviewViewportPanel>(InEditor));
+	RegisterPanel(MakeUnique<FBlendSpaceGridPanel>(InEditor));
+	RegisterPanel(MakeUnique<FBlendSpacePlayPanel>(InEditor));
 }
 
 void FBlendSpaceEditorTab::BeforeRender()
@@ -20,14 +21,15 @@ void FBlendSpaceEditorTab::BeforeRender()
 
 void FBlendSpaceEditorTab::BuildDefaultLayout(ImGuiID InDockSpaceId, const ImVec2& Size)
 {
-    ImGui::DockBuilderAddNode(InDockSpaceId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(InDockSpaceId, Size);
+	ImGui::DockBuilderAddNode(InDockSpaceId, ImGuiDockNodeFlags_DockSpace);
+	ImGui::DockBuilderSetNodeSize(InDockSpaceId, Size);
 
-    ImGuiID ViewportId = InDockSpaceId;
-    const ImGuiID ControlsId = ImGui::DockBuilderSplitNode(ViewportId, ImGuiDir_Right, 0.30f, nullptr, &ViewportId);
+	ImGuiID ViewportId = InDockSpaceId;
+	const ImGuiID ControlsId = ImGui::DockBuilderSplitNode(ViewportId, ImGuiDir_Right, 0.28f, nullptr, &ViewportId);
+	const ImGuiID GridId = ImGui::DockBuilderSplitNode(ViewportId, ImGuiDir_Down, 0.36f, nullptr, &ViewportId);
 
-    ImGui::DockBuilderDockWindow(Panels[0]->GetWindowName(), ViewportId);
-    ImGui::DockBuilderDockWindow(Panels[1]->GetWindowName(), ControlsId);
-    ImGui::DockBuilderFinish(InDockSpaceId);
-
+	ImGui::DockBuilderDockWindow(Panels[0]->GetWindowName(), ViewportId);
+	ImGui::DockBuilderDockWindow(Panels[1]->GetWindowName(), GridId);
+	ImGui::DockBuilderDockWindow(Panels[2]->GetWindowName(), ControlsId);
+	ImGui::DockBuilderFinish(InDockSpaceId);
 }

@@ -1,6 +1,12 @@
 #pragma once
 #include "MovementComponent.h"
+#include "Core/Delegate/Delegate.h"
 #include "ProjectileMovementComponent.generated.h"
+
+class AActor;
+struct FHitResult;
+
+DECLARE_DELEGATE(FOnProjectileImpactSignature, AActor*, const FHitResult&);
 
 UCLASS()
 class UProjectileMovementComponent : public UMovementComponent
@@ -78,6 +84,8 @@ public:
 
 	float GetSimulationTimeStep(float RemainingTime, int32 Iterations) const;
 	bool HasStoppedSimulation() const { return !bSimulationEnabled || UpdatedComponent == nullptr; }
+
+	FOnProjectileImpactSignature OnProjectileImpact;
 
 private:
 	FVector PendingForce;

@@ -27,10 +27,14 @@ public:
 	// .widget 파일을 더블클릭하면 불린다 (UI 에디터가 연다).
 	void SetOpenWidgetCallback(std::function<void(const FString&)> InCallback) { OnOpenWidget = std::move(InCallback); }
 	void SetCreateWidgetCallback(std::function<void(const FString&)> InCallback) { OnCreateWidget = std::move(InCallback); }
+	void SetOpenMaterialCallback(std::function<void(const FString&)> InCallback) { OnOpenMaterial = std::move(InCallback); }
+	void SetCreateMaterialCallback(std::function<void(const FString&)> InCallback) { OnCreateMaterial = std::move(InCallback); }
+	void SetCreateMaterialInstanceCallback(std::function<void(const FString&, const FString&)> InCallback) { OnCreateMaterialInstance = std::move(InCallback); }
 	// OBJ 또는 베이크된 FBX 메시를 더블클릭하면 Viewer를 엽니다.
 	void SetOpenMeshCallback(std::function<void(const FString&)> InCallback) { OnOpenMesh = std::move(InCallback); }
 	// .scene 파일을 더블클릭하면 레벨 에디터가 그 씬을 연다.
 	void SetOpenSceneCallback(std::function<void(const FString&)> InCallback) { OnOpenScene = std::move(InCallback); }
+	void SetOpenLevelSequenceCallback(std::function<void(const FString&)> InCallback) { OnOpenLevelSequence = std::move(InCallback); }
 	void SetImportFbxCallback(std::function<void(EFbxImportMode)> InCallback) { OnImportFbx = std::move(InCallback); }
 	void SetBlendSpaceCreatedCallback(std::function<void(const FString&)> InCallback)
 	{
@@ -60,8 +64,12 @@ private:
 
 	std::function<void(const FString&)> OnOpenWidget;
 	std::function<void(const FString&)> OnCreateWidget;
+	std::function<void(const FString&)> OnOpenMaterial;
+	std::function<void(const FString&)> OnCreateMaterial;
+	std::function<void(const FString&, const FString&)> OnCreateMaterialInstance;
 	std::function<void(const FString&)> OnOpenMesh;
 	std::function<void(const FString&)> OnOpenScene;
+	std::function<void(const FString&)> OnOpenLevelSequence;
 	std::function<void(EFbxImportMode)> OnImportFbx;
 	char NewAssetName[64] = "NewWidget";
 	char RenameBuffer[128] = {};
@@ -71,6 +79,21 @@ private:
 	bool bFocusPathSearch = false;
 	bool bOpenCreateWidget = false;
 	bool bOpenCreateFolder = false;
+	bool bOpenCreateScene = false;
+	bool bOpenCreateParticleSystem = false;
+	bool bOpenCreateMaterial = false;
+	bool bOpenCreateMaterialInstance = false;
+	bool bOpenCreateBlendSpace = false;
+	bool bOpenCreateBlendSpace2D = false;
+	bool bOpenCreateAnimBlueprint = false;
+	bool bOpenCreateAnimMontage = false;
+	bool bOpenCreateAimOffset = false;
+	bool bOpenCreateLevelSequence = false;
+	std::vector<FString> SkeletalMeshCandidates;
+	int32 SelectedSkeletalMeshIndex = 0;
+	std::vector<FString> MaterialParentCandidates;
+	int32 SelectedMaterialParentIndex = 0;
+	FString CreateAssetErrorMessage;
 	bool bOpenDeleteModal = false;
 	float FolderTreeWidth = 0.0f;
 	fs::path SelectedAssetPath;

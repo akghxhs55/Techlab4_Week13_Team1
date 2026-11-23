@@ -10,8 +10,13 @@
 #include "Render/SkeletalMesh.h"
 #include "Editor/AnimSequenceEditor/AnimSequenceEditor.h"
 #include "Editor/BlendSpaceEditor/BlendSpaceEditor.h"
+#include "Editor/AnimMontageEditor/AnimMontageEditor.h"
+#include "Editor/AimOffsetEditor/AimOffsetEditor.h"
 #include "Editor/UIEditor/UIEditor.h"
 #include "Animation/AnimSequenceFile.h"
+#include "Animation/AnimMontageAsset.h"
+#include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
 #include "Animation/BlendSpaceFile.h"
 #include "Animation/AnimBlueprintFile.h"
 #include "Core/Misc/Paths.h"
@@ -226,17 +231,71 @@ void FEditorManager::CreateEditor(const FString& AssetPath)
 
 	if (BlendSpaceFile::IsBlendSpacePath(AssetPath))
 	{
-		UBlendSpace1D* BlendSpace = UAssetManager::LoadBlendSpace(AssetPath);
-		if (!BlendSpace)
+		const FString FilePath = FAssetUtils::ResolveAssetFilePath(AssetPath);
+		const std::filesystem::path ResolvedPath = FilePath.empty() ? AssetPath : FilePath;
+		TUniquePtr<FAssetEditor> Editor;
+		if (BlendSpaceFile::IsBlendSpace2DFile(ResolvedPath))
 		{
-			return;
+			UBlendSpace2D* BlendSpace2D = UAssetManager::LoadBlendSpace2D(AssetPath);
+			if (!BlendSpace2D)
+			{
+				return;
+			}
+			Editor = MakeUnique<FBlendSpaceEditor>(EditorEngine, *this, AssetPath, nullptr, BlendSpace2D);
 		}
-
-		TUniquePtr<FAssetEditor> Editor = MakeUnique<FBlendSpaceEditor>(EditorEngine, *this, AssetPath, BlendSpace);
+		else
+		{
+			UBlendSpace1D* BlendSpace = UAssetManager::LoadBlendSpace(AssetPath);
+			if (!BlendSpace)
+			{
+				return;
+			}
+			Editor = MakeUnique<FBlendSpaceEditor>(EditorEngine, *this, AssetPath, BlendSpace, nullptr);
+		}
 		if (!Editor->Initialize())
 		{
 			Editor->Shutdown();
 			KRS_LOG(Warning, "BlendSpace editor initialization failed: {}", AssetPath);
+			return;
+		}
+		Editors.Add(std::move(Editor));
+		return;
+	}
+
+	if (AssetPath.ends_with(".animmontage"))
+	{
+		FAnimMontageAsset MontageAsset;
+		FString Error;
+		if (!FAnimMontageAsset::Load(AssetPath, MontageAsset, Error))
+		{
+			KRS_LOG(Warning, "Failed to open AnimMontage: {} ({})", AssetPath, Error);
+			return;
+		}
+		TUniquePtr<FAssetEditor> Editor = MakeUnique<FAnimMontageEditor>(EditorEngine, *this, AssetPath, std::move(MontageAsset));
+		if (!Editor->Initialize())
+		{
+			Editor->Shutdown();
+			KRS_LOG(Warning, "AnimMontage editor initialization failed: {}", AssetPath);
+			return;
+		}
+		Editors.Add(std::move(Editor));
+		return;
+	}
+
+	if (AssetPath.ends_with(".aimoffset"))
+	{
+		FAimOffsetAsset AimAsset;
+		FString Error;
+		if (!FAimOffsetAsset::Load(AssetPath, AimAsset, Error))
+		{
+			KRS_LOG(Warning, "Failed to open AimOffset: {} ({})", AssetPath, Error);
+			return;
+		}
+		TUniquePtr<FAssetEditor> Editor = MakeUnique<FAimOffsetEditor>(EditorEngine, *this, AssetPath, std::move(AimAsset));
+		if (!Editor->Initialize())
+		{
+			Editor->Shutdown();
+			KRS_LOG(Warning, "AimOffset editor initialization failed: {}", AssetPath);
 			return;
 		}
 		Editors.Add(std::move(Editor));

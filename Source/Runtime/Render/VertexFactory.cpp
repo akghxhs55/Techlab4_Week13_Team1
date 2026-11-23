@@ -45,11 +45,13 @@ namespace
 
 	const FVertexFactoryTypeInfo GTypeInfos[] =
 	{
-		{ "Local",          "VF_LOCAL",           GLocalElements },
-		{ "GpuSkin",        "VF_GPU_SKIN",        GGpuSkinElements },
-		{ "MeshParticle",   "VF_MESH_PARTICLE",   GMeshParticleElements },
-		{ "SpriteParticle", "VF_SPRITE_PARTICLE", {} },
-		{ "Trail",          "VF_TRAIL",           {} },
+		{ "Local",             "VF_LOCAL",                GLocalElements },
+		{ "GpuSkin",           "VF_GPU_SKIN",             GGpuSkinElements },
+		{ "MeshParticle",      "VF_MESH_PARTICLE",        GMeshParticleElements },
+		{ "SpriteParticle",    "VF_SPRITE_PARTICLE",      {} },
+		{ "Trail",             "VF_TRAIL",                {} },
+		{ "GpuSpriteParticle", "VF_GPU_SPRITE_PARTICLE",  {} },
+		{ "GpuMeshParticle",   "VF_GPU_MESH_PARTICLE",    GLocalElements },
 	};
 	static_assert(std::size(GTypeInfos) == static_cast<size_t>(EVertexFactoryType::Count));
 }
@@ -75,4 +77,22 @@ void FInstancedVertexFactory::Bind() const
 {
 	FVertexFactory::Bind();
 	RenderCommand::BindInstanceBuffer(InstanceBuffer);
+}
+
+void FGpuSpriteParticleVertexFactory::Bind() const
+{
+	FVertexFactory::Bind();
+	if (ParticleBuffer)
+	{
+		RenderCommand::BindShaderResource(1, ParticleBuffer, EShaderBindFlagBits::Vertex);
+	}
+}
+
+void FGpuMeshParticleVertexFactory::Bind() const
+{
+	FVertexFactory::Bind();
+	if (ParticleBuffer)
+	{
+		RenderCommand::BindShaderResource(1, ParticleBuffer, EShaderBindFlagBits::Vertex);
+	}
 }

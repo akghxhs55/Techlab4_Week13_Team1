@@ -401,6 +401,51 @@ void UEditorEngine::InitPanels()
 	ContentDrawerPanel->SetBlendSpaceCreatedCallback([this](const FString& Path) { EditorManager->OpenEditor(Path); });
     ContentDrawerPanel->SetAnimBlueprintCreatedCallback([this](const FString& Path) { EditorManager->OpenEditor(Path); });
 
+	MaterialEditorPanel = MakeUnique<FMaterialEditorPanel>();
+	MaterialEditorPanel->Init();
+	ContentDrawerPanel->SetOpenMaterialCallback([this](const FString& Path)
+	{
+		if (MaterialEditorPanel)
+		{
+			MaterialEditorPanel->OpenAsset(Path);
+		}
+	});
+	ContentDrawerPanel->SetCreateMaterialCallback([this](const FString& Path)
+	{
+		if (MaterialEditorPanel)
+		{
+			MaterialEditorPanel->NewMaterial(Path);
+		}
+	});
+	ContentDrawerPanel->SetCreateMaterialInstanceCallback([this](const FString& Path, const FString& ParentPath)
+	{
+		if (MaterialEditorPanel)
+		{
+			MaterialEditorPanel->NewMaterialInstance(Path, ParentPath);
+		}
+	});
+	ContentDrawerPanel->SetOpenLevelSequenceCallback([this](const FString& Path)
+	{
+		if (SequencerPanel)
+		{
+			SequencerPanel->OpenAsset(Path);
+		}
+	});
+
+	SequencerPanel = LevelEditorTab->AddPanel<FSequencerPanel>();
+	SequencerPanel->SetOpen(false);
+	SequencerPanel->SetWorld(EditorWorld, true);
+	SequencerPanel->SetPilotCameraHandler([this](UCameraComponent* Camera)
+	{
+		if (!Camera || !ViewportsPanel) return;
+		if (FEditorViewportClient* Client = ViewportsPanel->GetViewportClient(0))
+		{
+			Client->SetViewLocation(Camera->GetWorldLocation());
+			Client->SetViewRotation(Camera->GetWorldRotation());
+			Client->SetViewFOV(Camera->GetFieldOfView());
+		}
+	});
+
 	// 화면 나눔 비율 설정 가져오기
 	ViewportSplitRatio = {
 		EditorSettings->GetSettings().MultipleViewportsHorizontal,
@@ -504,6 +549,9 @@ void UEditorEngine::InitPanels()
 	);
 
 	DetailsPanel->SetWorld(GetActiveWorld());
+
+	WorldSettingsPanel = LevelEditorTab->AddPanel<FWorldSettingsPanel>();
+	WorldSettingsPanel->SetWorld(GetActiveWorld());
 
 	UWorld::SetOnActorDestroyedCallback(
 		[this](UWorld* /*DestroyedInWorld*/, AActor* DestroyedActor)
@@ -1023,6 +1071,10 @@ void UEditorEngine::Tick(const float DeltaTime)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_EditorTick);
 		EditorManager->Tick(DeltaTime);
+		if (MaterialEditorPanel)
+		{
+			MaterialEditorPanel->Tick(DeltaTime);
+		}
 	}
 	EditorWorld->GetScene().UpdateAllTransforms();
 	if (PlayWorld && bIsPaused)
@@ -1124,6 +1176,10 @@ void UEditorEngine::Tick(const float DeltaTime)
 
 	// 열려 있는 에셋 에디터의 미리보기를 그린다.
 	EditorManager->RenderPreview();
+	if (MaterialEditorPanel)
+	{
+		MaterialEditorPanel->RenderPreview(this);
+	}
 	if (ContentDrawerPanel)
 	{
 		ContentDrawerPanel->RenderPendingThumbnails(*this, Renderer);
@@ -1141,6 +1197,10 @@ void UEditorEngine::Tick(const float DeltaTime)
 		ImGuiRenderer->Begin();
 
 		EditorManager->DrawEditorUI();
+		if (MaterialEditorPanel && MaterialEditorPanel->IsOpen())
+		{
+			MaterialEditorPanel->OnRender();
+		}
 		// NewFrame과 패널 배치 이후의 입력/좌표를 사용해야 클릭과 기즈모 피킹이 일치한다.
 		UpdateGizmoAndPicking();
 
@@ -1614,6 +1674,16 @@ void UEditorEngine::PreExit()
 	{
 		ContentDrawerPanel->Shutdown();
 	}
+	if (SequencerPanel)
+	{
+		SequencerPanel->Shutdown();
+		SequencerPanel = nullptr;
+	}
+	if (MaterialEditorPanel)
+	{
+		MaterialEditorPanel->Release();
+		MaterialEditorPanel.reset();
+	}
 	if (EditorManager)
 	{
 		EditorManager->Shutdown();
@@ -1630,6 +1700,7 @@ void UEditorEngine::PreExit()
 	ViewportsPanel = nullptr;
 	ContentDrawerPanel = nullptr;
 	OutlinerPanel = nullptr;
+	WorldSettingsPanel = nullptr;
 	AllViewportClients.Empty();
 
 	ImGuiRenderer->Shutdown();
@@ -1859,7 +1930,9 @@ void UEditorEngine::OnActiveWorldChanged()
 
 	if (OutlinerPanel) OutlinerPanel->SetWorld(ActiveWorld);
 	if (DetailsPanel) DetailsPanel->SetWorld(ActiveWorld);
+	if (WorldSettingsPanel) WorldSettingsPanel->SetWorld(ActiveWorld);
 	if (ViewportsPanel) ViewportsPanel->SetWorld(ActiveWorld);
+	if (SequencerPanel) SequencerPanel->SetWorld(ActiveWorld, ActiveWorld == EditorWorld);
 }
 
 // 씬 변경으로 무효화된 에디터의 선택 참조를 모두 해제한다.

@@ -5,10 +5,11 @@
 #include "Math/Vector.h"
 #include "Math/Matrix.h"
 #include "Render/Buffer.h"
-#include "Render/RenderPacket.h"
+#include "Render/MeshBatch.h"
 
-class UMaterial;
+class UMaterialInterface;
 class UStaticMesh;
+class USkeletalMesh;
 struct FBaseParticle;
 enum class EParticleSortMode : uint8;
 
@@ -21,7 +22,7 @@ struct FParticleSubmitContext
 	float BoundsDistanceSq = 0.0f;   // 프록시 바운드 중심까지 거리
 	int32 EmitterIndex = 0;
 	int32 EmitterCount = 0;
-	UMaterial* DefaultMaterial = nullptr;
+	UMaterialInterface* DefaultMaterial = nullptr;
 	FVertexBuffer* SpriteQuadVertexBuffer = nullptr;
 	FIndexBuffer* SpriteQuadIndexBuffer = nullptr;
 };
@@ -32,6 +33,23 @@ enum class EDynamicEmitterType : uint8
 	Mesh,
 	Beam,
 	Ribbon,
+	Gpu,
+	Afterimage,
+};
+
+struct FAfterimageSnapshot
+{
+	USkeletalMesh* Mesh = nullptr;
+	FMatrix World = FMatrix::Identity;
+	FBox WorldBounds{};
+	TArray<FMatrix> SkinningMatrices;
+	mutable TUniquePtr<FStructuredBuffer> MatrixBuffer;
+};
+
+struct FAfterimageRenderParticle
+{
+	TSharedPtr<FAfterimageSnapshot> Snapshot;
+	float Alpha = 1.0f;
 };
 
 // 틱이 끝날 때 에미터가 채우는 렌더용 사본. 렌더 쪽은 이것만 보고 FParticleEmitterInstance는 모른다
@@ -48,7 +66,7 @@ struct FDynamicEmitterReplayDataBase
 	FMatrix LocalToWorld = FMatrix::Identity;   // bUseLocalSpace일 때만 쓴다
 	FVector Scale = FVector(1.0f);               // 컴포넌트 월드 스케일
 
-	UMaterial* Material = nullptr;
+	UMaterialInterface* Material = nullptr;
 	EParticleSortMode SortMode{};
 
 	FVector SimulationToWorld(const FVector& Position) const
@@ -68,6 +86,10 @@ struct FDynamicBeamEmitterReplayData : FDynamicEmitterReplayDataBase
 	int32 Sheets = 1;
 	int32 Segments = 10;
 	float TextureTile = 1.0f;
+	float TextureTileDistance = 0.0f;
+	uint8 TaperMethod = 0;
+	float TaperFactor = 1.0f;
+	float TaperScale = 1.0f;
 
 	int32 NoiseOffset = 0;          // BeamNoise Payload 위치. 0이면 노이즈 없음
 	int32 NoiseFrequency = 0;
@@ -119,7 +141,7 @@ public:
 
 	virtual EDynamicEmitterType GetType() const = 0;
 	virtual const FDynamicEmitterReplayDataBase& GetSource() const = 0;
-	virtual void Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context) = 0;
+	virtual void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) = 0;
 
 protected:
 	// 큐는 거리가 큰 패킷부터 그린다. 같은 PSC의 에미터는 배열 순서대로 그리도록 앞 인덱스를 더 멀게
@@ -191,7 +213,7 @@ class FDynamicSpriteEmitterData final : public FDynamicEmitterDataBase
 public:
 	EDynamicEmitterType GetType() const override { return EDynamicEmitterType::Sprite; }
 	const FDynamicEmitterReplayDataBase& GetSource() const override { return Source; }
-	void Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context) override;
+	void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) override;
 
 	FDynamicSpriteEmitterReplayData Source;
 
@@ -213,7 +235,7 @@ class FDynamicMeshEmitterData final : public FDynamicEmitterDataBase
 public:
 	EDynamicEmitterType GetType() const override { return EDynamicEmitterType::Mesh; }
 	const FDynamicEmitterReplayDataBase& GetSource() const override { return Source; }
-	void Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context) override;
+	void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) override;
 
 	FDynamicMeshEmitterReplayData Source;
 
@@ -232,7 +254,7 @@ class FDynamicBeamEmitterData final : public FDynamicEmitterDataBase
 public:
 	EDynamicEmitterType GetType() const override { return EDynamicEmitterType::Beam; }
 	const FDynamicEmitterReplayDataBase& GetSource() const override { return Source; }
-	void Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context) override;
+	void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) override;
 
 	FDynamicBeamEmitterReplayData Source;
 
@@ -262,7 +284,7 @@ class FDynamicRibbonEmitterData final : public FDynamicEmitterDataBase
 public:
 	EDynamicEmitterType GetType() const override { return EDynamicEmitterType::Ribbon; }
 	const FDynamicEmitterReplayDataBase& GetSource() const override { return Source; }
-	void Submit(FRenderQueue& Queue, const FParticleSubmitContext& Context) override;
+	void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) override;
 
 	FDynamicRibbonEmitterReplayData Source;
 
@@ -289,4 +311,44 @@ private:
 	TArray<FTrailPoint> SmoothScratch;
 	TArray<FParticleTrailVertex> VertexScratch;
 	TArray<uint32> IndexScratch;
+};
+
+class FDynamicGpuEmitterData final : public FDynamicEmitterDataBase
+{
+public:
+	EDynamicEmitterType GetType() const override { return EDynamicEmitterType::Gpu; }
+	const FDynamicEmitterReplayDataBase& GetSource() const override { return Source; }
+	void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) override;
+
+	FDynamicEmitterReplayDataBase Source;
+	TSharedPtr<FGpuParticleEmitterResources> GpuResources;
+	UStaticMesh* MeshAsset = nullptr;
+	uint32 MaxParticles = 0;
+	bool bUseLocalSpace = false;
+	FMatrix LocalToWorld = FMatrix::Identity;
+	FVector WorldLocation = FVector::ZeroVector;
+	FVector WorldScale = FVector(1.0f);
+	FVector4 AtlasParams = FVector4(1.0f, 1.0f, 1.0f, 0.0f);
+	mutable bool bResetRequested = false;
+	mutable FGpuParticleSimParams SimParams{};
+	mutable TArray<uint8> PendingSpawnBytes;
+
+private:
+	mutable FGpuParticleDrawParams DrawParams{};
+	mutable FGpuSpriteParticleVertexFactory SpriteVertexFactory;
+	mutable FGpuMeshParticleVertexFactory MeshVertexFactory;
+};
+
+class FDynamicAfterimageEmitterData final : public FDynamicEmitterDataBase
+{
+public:
+	EDynamicEmitterType GetType() const override { return EDynamicEmitterType::Afterimage; }
+	const FDynamicEmitterReplayDataBase& GetSource() const override { return Source; }
+	void Submit(FMeshElementCollector& Collector, const FParticleSubmitContext& Context) override;
+
+	FDynamicEmitterReplayDataBase Source;
+	TArray<FAfterimageRenderParticle> Particles;
+
+private:
+	mutable TArray<FGpuSkinVertexFactory> SnapshotVertexFactories;
 };

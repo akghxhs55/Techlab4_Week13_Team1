@@ -42,9 +42,16 @@ public:
 
 	void Spawn(FParticleEmitterInstance& Owner, int32 Offset, float SpawnTime, FBaseParticle& Particle) override;
 	void Update(FParticleEmitterInstance& Owner, int32 Offset, float DeltaTime) override;
+	void TickSegmentCollision(FParticleEmitterInstance& Owner, int32 Offset, const FVector& WorldStart, const FVector& WorldEnd,
+		FBaseParticle& Particle, bool& bOutHit, FVector& OutHitPoint, FVector& OutHitNormal);
 	void BakeDistributions() override;
 
 	uint32 RequiredBytes() const override { return sizeof(FParticleCollisionPayload); }
+
+	const FFloatDistribution& GetRestitution() const { return Restitution; }
+	const FFloatDistribution& GetFriction() const { return Friction; }
+	int32 GetMaxCollisions() const { return MaxCollisions; }
+	float GetRadiusScale() const { return RadiusScale; }
 
 private:
 	// 0 = 달라붙음, 1 = 같은 속도로 튐

@@ -8,6 +8,8 @@
 #include <limits>
 
 #include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
+#include "json.hpp"
 #include "Asset/AssetUtils.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
@@ -86,6 +88,95 @@ bool BlendSpaceFile::Write(const std::filesystem::path& Path, UBlendSpace1D& Ble
     }
     BlendSpace.SetAssetPath(FAssetUtils::GetAssetKey(Path.generic_string()));
     return true;
+}
+
+bool BlendSpaceFile::Read2D(const std::filesystem::path& Path, UBlendSpace2D& BlendSpace, FString& OutError)
+{
+    OutError.clear();
+    std::ifstream File(Path, std::ios::binary | std::ios::ate);
+    const std::streamoff Size = static_cast<std::streamoff>(File.tellg());
+
+    if (!File || Size <= 0 || Size > (std::numeric_limits<int32>::max)())
+    {
+        OutError = "BlendSpace: cannot open file or invalid size";
+        return false;
+    }
+
+    TArray<uint8> Bytes;
+    Bytes.SetNum(static_cast<int32>(Size));
+    File.seekg(0);
+    if (!File.read(reinterpret_cast<char*>(Bytes.GetData()), Size))
+    {
+        OutError = "BlendSpace: cannot read file";
+        return false;
+    }
+
+    FMemoryReader Reader(Bytes, true);
+    FJsonArchiveInputFormatter Formatter(Reader);
+    if (Reader.IsError())
+    {
+        OutError = "BlendSpace: invalid JSON";
+        return false;
+    }
+    FStructuredArchive Archive(Formatter);
+    BlendSpace.Serialize(Archive.Open().EnterRecord());
+
+    BlendSpace.SetAssetPath(FAssetUtils::GetAssetKey(Path.generic_string()));
+    return true;
+}
+
+bool BlendSpaceFile::Write2D(const std::filesystem::path& Path, UBlendSpace2D& BlendSpace, FString& OutError)
+{
+    OutError.clear();
+    TArray<uint8> Bytes;
+    FMemoryWriter Writer(Bytes);
+    {
+        FJsonArchiveOutputFormatter Formatter(Writer);
+        FStructuredArchive Archive(Formatter);
+        BlendSpace.Serialize(Archive.Open().EnterRecord());
+    }
+
+    if (Writer.IsError())
+    {
+        OutError = "BlendSpace: cannot serialize data";
+        return false;
+    }
+
+    std::ofstream File(Path, std::ios::binary | std::ios::trunc);
+    if (!File)
+    {
+        OutError = "BlendSpace: cannot open output file";
+        return false;
+    }
+
+    File.write(reinterpret_cast<const char*>(Bytes.GetData()), Bytes.Num());
+    File.close();
+    if (!File)
+    {
+        OutError = "BlendSpace: cannot write file";
+        return false;
+    }
+    BlendSpace.SetAssetPath(FAssetUtils::GetAssetKey(Path.generic_string()));
+    return true;
+}
+
+bool BlendSpaceFile::IsBlendSpace2DFile(const std::filesystem::path& Path)
+{
+    std::ifstream File(Path);
+    if (!File.is_open())
+    {
+        return false;
+    }
+    json Data = json::parse(File, nullptr, false);
+    if (!Data.is_object())
+    {
+        return false;
+    }
+    if (Data.contains("Dimension") && Data["Dimension"].is_number_integer())
+    {
+        return Data["Dimension"].get<int32>() == 2;
+    }
+    return false;
 }
 
 bool BlendSpaceFile::IsBlendSpacePath(const FString& Path)

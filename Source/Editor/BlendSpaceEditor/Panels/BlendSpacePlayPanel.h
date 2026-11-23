@@ -16,14 +16,27 @@ protected:
     void DrawContent() override;
 
 private:
-    void DrawSamples();
-    void RefreshAnimationList();
+	void DrawSamples();
+	void RefreshAnimationList();
 
-    bool bLoop = true;
+	bool bLoop = true;
 
-    std::vector<FString> AnimationPaths;
-    int SelectedAnimation = -1;
-    bool bAnimationListInitialized = false;
-    float SampleX = 0.0f;
-    FString SampleMessage;
+	std::vector<FString> AnimationPaths;
+	int SelectedAnimation = -1;
+	bool bAnimationListInitialized = false;
+	float SampleX = 0.0f;
+	float SampleY = 0.0f;
+	FString SampleMessage;
+};
+
+class FBlendSpaceGridPanel : public TAssetEditorPanel<FBlendSpaceEditor>
+{
+public:
+	explicit FBlendSpaceGridPanel(FBlendSpaceEditor& InEditor)
+		: TAssetEditorPanel<FBlendSpaceEditor>(InEditor, "Blend Space Grid", "AnimSequencePanel")
+	{
+	}
+
+protected:
+	void DrawContent() override;
 };

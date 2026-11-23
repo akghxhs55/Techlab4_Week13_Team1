@@ -34,3 +34,17 @@ public:
 
     virtual void Notify(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 };
+
+UCLASS()
+class UAnimNotify_StartDeathDissolve : public UAnimNotify
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY(EditAnywhere)
+	float DissolveDuration = 1.45f;
+
+	UPROPERTY(EditAnywhere)
+	FVector4 DissolveEdgeColor = FVector4(0.75f, 0.78f, 0.85f, 1.0f);
+
+	virtual void Notify(USkeletalMeshComponent* MeshComp, const UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+};

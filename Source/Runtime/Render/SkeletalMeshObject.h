@@ -20,6 +20,7 @@ public:
 
 	const FBox& GetBounds() const { return Bounds; }
 	virtual const TArray<FVertex>* GetCPUSkinnedVertices() const { return nullptr; }
+	const TArray<FMatrix>& GetRefToLocalMatrices() const { return RefToLocal; }
 	// GPU 스킨 경로만 돌려준다. CPU 경로는 정점이 이미 스키닝되어 있어 nullptr
 	virtual const FStructuredBuffer* GetBoneMatrixBuffer() const { return nullptr; }
 	// 이번 포즈가 Bounds 밖으로 나가면 여유를 두고 넓히고 true를 돌려준다

@@ -3,6 +3,9 @@
 cbuffer constants : register(b0)
 {
     matrix VP;
+    matrix View;
+    matrix Projection;
+    float4 ViewTimeParams;
 };
 
 cbuffer SpriteConstants : register(b1)
@@ -14,6 +17,11 @@ cbuffer SpriteConstants : register(b1)
 
 Texture2D SpriteTexture : register(t0);
 SamplerState SpriteSampler : register(s0);
+SamplerState ColorSampler : register(s0);
+
+#ifdef MATERIAL_GRAPH
+#include MATERIAL_GRAPH_INCLUDE
+#endif
 
 struct VS_INPUT
 {
@@ -32,6 +40,7 @@ struct PS_INPUT
     float2 uvB : TEXCOORD1;
     float blend : TEXCOORD2;
     float4 color : COLOR0;
+    float3 worldPosition : TEXCOORD3;
 };
 
 float2 CellUV(float index, float2 cornerUV)
@@ -61,15 +70,41 @@ PS_INPUT mainVS(VS_INPUT input)
     output.uvB = CellUV(indexB, input.uv);
     output.blend = frac(input.subImageIndex);
     output.color = input.color;
+    output.worldPosition = world;
     return output;
 }
 
 float4 mainPS(PS_INPUT input) : SV_TARGET
 {
+#ifdef MATERIAL_GRAPH
+    FMaterialGraphOutput GraphOutput = EvaluateMaterialGraph(input.uvA, input.worldPosition, float3(0, 0, 1), float3(0, 0, 1), input.color, ViewTimeParams.x);
+#ifdef MATERIAL_GRAPH_HAS_OPACITY_MASK
+    clip(GraphOutput.OpacityMask - 0.001f);
+#endif
+    float4 texel;
+#ifdef MATERIAL_GRAPH_HAS_BASE_COLOR
+    texel = GraphOutput.BaseColor;
+#else
+    texel = SpriteTexture.Sample(SpriteSampler, input.uvA);
+    if (input.blend > 0.0f)
+    {
+        texel = lerp(texel, SpriteTexture.Sample(SpriteSampler, input.uvB), input.blend);
+    }
+#endif
+#ifdef MATERIAL_GRAPH_HAS_EMISSIVE_COLOR
+    float3 EmissiveOut = GraphOutput.EmissiveColor;
+#ifdef MATERIAL_GRAPH_HAS_EMISSIVE_FACTOR
+    EmissiveOut *= GraphOutput.EmissiveFactor;
+#endif
+    texel.rgb += EmissiveOut;
+#endif
+    return texel * input.color;
+#else
     float4 texel = SpriteTexture.Sample(SpriteSampler, input.uvA);
     if (input.blend > 0.0f)
     {
         texel = lerp(texel, SpriteTexture.Sample(SpriteSampler, input.uvB), input.blend);
     }
     return texel * input.color;
+#endif
 }

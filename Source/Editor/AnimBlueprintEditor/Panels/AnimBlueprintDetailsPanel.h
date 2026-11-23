@@ -19,7 +19,9 @@ protected:
 
 private:
     void DrawAssetSelector(FString& AssetPath, bool bBlendSpace);
+    void DrawAimOffsetSelector(FString& AimOffsetPath);
     void RefreshAssetList(bool bBlendSpace);
+    void RefreshAimOffsetList();
     void DrawFloatInput(const char* Label, FAnimBlueprintFloatInput& Input, bool bAlpha);
     void DrawClassDefaults();
     void DrawVariables();

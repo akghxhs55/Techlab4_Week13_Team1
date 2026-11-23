@@ -12,6 +12,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Camera/CameraComponent.h"
 #include "Components/AudioComponent.h"
+#include "GameFramework/TestCharacter.h"
+#include "GameFramework/Actor/ZombieActor.h"
 
 namespace
 {
@@ -96,6 +98,22 @@ namespace LuaBindingsDetail
 			"UUID", sol::property([](const FLuaActorRef& Ref) { return Ref.UUID; }),
 			"IsValid", [](const FLuaActorRef& Ref) { return Ref.Get() != nullptr; },
 			"Name", sol::property([](const FLuaActorRef& Ref) { return Deref(Ref).GetName(); }),
+			"SetCameraTuning", [](const FLuaActorRef& Ref, float NormalArmLength,
+				float NormalFOV, float AimArmLength, float AimFOV)
+			{
+				ATestCharacter* Character = Cast<ATestCharacter>(Ref.Get());
+				return Character && Character->SetCameraTuning(NormalArmLength, NormalFOV, AimArmLength, AimFOV);
+			},
+			"SetAimBlendAlphaOverride", [](const FLuaActorRef& Ref, float Alpha)
+			{
+				ATestCharacter* Character = Cast<ATestCharacter>(Ref.Get());
+				return Character && Character->SetAimBlendAlphaOverride(Alpha);
+			},
+			"ClearAimBlendAlphaOverride", [](const FLuaActorRef& Ref)
+			{
+				if (ATestCharacter* Character = Cast<ATestCharacter>(Ref.Get()))
+					Character->ClearAimBlendAlphaOverride();
+			},
 			"HasComponent", [](const FLuaActorRef& Ref, const FString& ClassName)
 			{
 				for (UActorComponent* Component : Deref(Ref).GetComponents())
@@ -321,6 +339,24 @@ namespace LuaBindingsDetail
 				throw sol::error(
 					"SetCameraRelativeTransform: Actor has no camera component."
 				);
+			});
+	}
+
+	void RegisterZombie(sol::state& Lua)
+	{
+		// FLuaActorRef를 직접 다시 등록하면 Actor 메서드가 사라지므로 FLuaZombieRef로 등록한다
+		Lua.new_usertype<FLuaZombieRef>("Zombie", sol::no_constructor,
+			sol::base_classes, sol::bases<FLuaActorRef>(),
+			"SetCombatTuning", [](const FLuaZombieRef& Ref, float DetectionRadius,
+				float AttackRadius, float AttackCooldown, float WalkSpeed)
+			{
+				AZombieActor* Zombie = Cast<AZombieActor>(Ref.Get());
+				return Zombie && Zombie->SetCombatTuning(DetectionRadius, AttackRadius, AttackCooldown, WalkSpeed);
+			},
+			"SetHealth", [](const FLuaZombieRef& Ref, int32 Health)
+			{
+				AZombieActor* Zombie = Cast<AZombieActor>(Ref.Get());
+				return Zombie && Zombie->SetHealth(Health);
 			});
 	}
 

@@ -80,10 +80,13 @@ void FInputSystem::OnMouseDown(EMouseButton MouseButton)
 
 void FInputSystem::OnMouseMove(int32 x, int32 y)
 {
-    // BeginFrame에서 초기화한 뒤 이번 메시지 큐에 들어온 이동량만 누적한다.
-    // 여러 WM_MOUSEMOVE가 한 프레임에 처리돼도 첫 위치와 마지막 위치 사이의 실제 델타가 남는다.
-    DeltaX += x - MouseX;
-    DeltaY += y - MouseY;
+	if (!bRelativeMouseMode)
+	{
+		// BeginFrame에서 초기화한 뒤 이번 메시지 큐에 들어온 이동량만 누적한다.
+		// 여러 WM_MOUSEMOVE가 한 프레임에 처리돼도 첫 위치와 마지막 위치 사이의 실제 델타가 남는다.
+		DeltaX += x - MouseX;
+		DeltaY += y - MouseY;
+	}
 
     PrevMouseX = MouseX;
     PrevMouseY = MouseY;
@@ -129,5 +132,21 @@ void FInputSystem::UpdateInputStates()
     DeltaY = 0;
     PrevMouseX = MouseX;
     PrevMouseY = MouseY;
+}
+
+void FInputSystem::OnRawMouseMove(int32 X, int32 Y)
+{
+	if (bRelativeMouseMode)
+	{
+		DeltaX += X;
+		DeltaY += Y;
+	}
+}
+
+void FInputSystem::SetRelativeMouseMode(bool bEnabled)
+{
+	bRelativeMouseMode = bEnabled;
+	DeltaX = 0;
+	DeltaY = 0;
 }
 

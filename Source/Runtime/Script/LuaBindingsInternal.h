@@ -26,4 +26,5 @@ namespace LuaBindingsDetail
 	void RegisterCoroutine(sol::state& Lua);
 	void RegisterCameraAction(sol::state& Lua);
 	void RegisterAnimation(sol::state& Lua);
+	void RegisterZombie(sol::state& Lua);
 }

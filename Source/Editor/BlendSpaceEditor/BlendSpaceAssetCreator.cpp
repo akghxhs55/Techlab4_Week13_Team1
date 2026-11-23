@@ -6,6 +6,7 @@
 #include "Asset/AssetUtils.h"
 
 #include "Animation/BlendSpace1D.h"
+#include "Animation/BlendSpace2D.h"
 #include "Animation/BlendSpaceFile.h"
 
 #include "Asset/AssetManager.h"
@@ -40,6 +41,14 @@ void FBlendSpaceAssetCreator::DrawMenuItems(const FString& AssetPath, const std:
     {
         PreviewMeshPath = AssetPath;
         CreateDirectory = Directory;
+        bCreate2D = false;
+        bOpenDialog = true;
+    }
+    if (bSkeletalMesh && ImGui::MenuItem("Create BlendSpace 2D"))
+    {
+        PreviewMeshPath = AssetPath;
+        CreateDirectory = Directory;
+        bCreate2D = true;
         bOpenDialog = true;
     }
 }
@@ -81,9 +90,24 @@ void FBlendSpaceAssetCreator::ProcessCreateRequest()
 
 bool FBlendSpaceAssetCreator::CreateAsset(const std::filesystem::path& Target)
 {
-    auto BlendSpace = std::unique_ptr<UBlendSpace1D>(NewObject<UBlendSpace1D>());
-    BlendSpace->SetPreviewMeshPath(PreviewMeshPath);
     FString ErrorMessage;
+    if (bCreate2D)
+    {
+        std::unique_ptr<UBlendSpace2D> BlendSpace2D(NewObject<UBlendSpace2D>());
+        BlendSpace2D->SetPreviewMeshPath(PreviewMeshPath);
+        if (!BlendSpaceFile::Write2D(Target, *BlendSpace2D, ErrorMessage))
+        {
+            KRS_LOG(Warning, "Failed to create BlendSpace2D: {}", ErrorMessage);
+            MessageBoxW(GetActiveWindow(), L"Failed to save BlendSpace 2D. See Output Log.", L"Create BlendSpace", MB_OK | MB_ICONERROR);
+            return false;
+        }
+        if (OnCreated)
+            OnCreated(FAssetUtils::GetAssetKey(Target.generic_string()));
+        return true;
+    }
+
+    std::unique_ptr<UBlendSpace1D> BlendSpace(NewObject<UBlendSpace1D>());
+    BlendSpace->SetPreviewMeshPath(PreviewMeshPath);
     if (!BlendSpaceFile::Write(Target, *BlendSpace, ErrorMessage))
     {
         KRS_LOG(Warning, "Failed to create BlendSpace: {}", ErrorMessage);

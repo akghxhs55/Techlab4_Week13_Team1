@@ -16,7 +16,9 @@
 #include "Particles/Module/ParticleModuleEventReceiverBase.h"
 #include "UObject/UObjectHash.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Character.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 UParticleSystemComponent::UParticleSystemComponent()
 {
@@ -306,6 +308,11 @@ void UParticleSystemComponent::BroadcastGameEvents()
 		{
 			Owner->CallScripts("OnParticleCollide", Event.HitActor);
 			if (!IsAlive()) return;
+			if (ACharacter* CharOwner = Cast<ACharacter>(Owner))
+			{
+				CharOwner->OnParticleCollide(this, Event);
+				if (!IsAlive()) return;
+			}
 		}
 	}
 	for (const FParticleEventSpawnData& Event : Spawns)
@@ -454,6 +461,156 @@ void UParticleSystemComponent::ResetEventLog()
 	EventLogTimer = 0.0f;
 	LoggedEventCounts.clear();
 	bHasLoggedCollision = false;
+}
+
+void UParticleSystemComponent::SetFloatParameter(const FString& ParameterName, float Value)
+{
+	if (ParameterName.empty())
+		return;
+	for (FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Scalar)
+		{
+			Param.Scalar = Value;
+			return;
+		}
+	}
+	FParticleSysParam NewParam{};
+	NewParam.Name = ParameterName;
+	NewParam.ParamType = EParticleSysParamType::Scalar;
+	NewParam.Scalar = Value;
+	InstanceParameters.Add(NewParam);
+}
+
+void UParticleSystemComponent::SetVectorParameter(const FString& ParameterName, const FVector& Value)
+{
+	if (ParameterName.empty())
+		return;
+	for (FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Vector)
+		{
+			Param.Vector = Value;
+			return;
+		}
+	}
+	FParticleSysParam NewParam{};
+	NewParam.Name = ParameterName;
+	NewParam.ParamType = EParticleSysParamType::Vector;
+	NewParam.Vector = Value;
+	InstanceParameters.Add(NewParam);
+}
+
+void UParticleSystemComponent::SetColorParameter(const FString& ParameterName, const FColor& Value)
+{
+	if (ParameterName.empty())
+		return;
+	for (FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Color)
+		{
+			Param.Color = Value;
+			return;
+		}
+	}
+	FParticleSysParam NewParam{};
+	NewParam.Name = ParameterName;
+	NewParam.ParamType = EParticleSysParamType::Color;
+	NewParam.Color = Value;
+	InstanceParameters.Add(NewParam);
+}
+
+void UParticleSystemComponent::SetActorParameter(const FString& ParameterName, AActor* Value)
+{
+	if (ParameterName.empty())
+		return;
+	for (FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Actor)
+		{
+			Param.Actor = Value;
+			return;
+		}
+	}
+	FParticleSysParam NewParam{};
+	NewParam.Name = ParameterName;
+	NewParam.ParamType = EParticleSysParamType::Actor;
+	NewParam.Actor = Value;
+	InstanceParameters.Add(NewParam);
+}
+
+bool UParticleSystemComponent::GetFloatParameterValue(const FString& ParameterName, float& OutValue) const
+{
+	for (const FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Scalar)
+		{
+			OutValue = Param.Scalar;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UParticleSystemComponent::GetVectorParameterValue(const FString& ParameterName, FVector& OutValue) const
+{
+	for (const FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Vector)
+		{
+			OutValue = Param.Vector;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UParticleSystemComponent::GetColorParameterValue(const FString& ParameterName, FColor& OutValue) const
+{
+	for (const FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Color)
+		{
+			OutValue = Param.Color;
+			return true;
+		}
+	}
+	return false;
+}
+
+AActor* UParticleSystemComponent::GetActorParameterValue(const FString& ParameterName) const
+{
+	for (const FParticleSysParam& Param : InstanceParameters)
+	{
+		if (Param.Name == ParameterName && Param.ParamType == EParticleSysParamType::Actor)
+		{
+			return Param.Actor;
+		}
+	}
+	return nullptr;
+}
+
+USkeletalMeshComponent* UParticleSystemComponent::GetAfterimageSource() const
+{
+	if (IsValid(AfterimageSource))
+	{
+		return AfterimageSource;
+	}
+	if (USkeletalMeshComponent* ParentSkel = Cast<USkeletalMeshComponent>(GetAttachParent()))
+	{
+		return ParentSkel;
+	}
+	if (AActor* Owner = GetOwner())
+	{
+		for (UActorComponent* Comp : Owner->GetComponents())
+		{
+			if (USkeletalMeshComponent* Skel = Cast<USkeletalMeshComponent>(Comp))
+			{
+				return Skel;
+			}
+		}
+	}
+	return nullptr;
 }
 
 void UParticleSystemComponent::SetLODLevel(int32 InLODLevel)

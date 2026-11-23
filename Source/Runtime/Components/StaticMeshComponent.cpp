@@ -52,54 +52,12 @@ FString UStaticMeshComponent::GetMaterialSlotName(int32 SlotIndex) const
 	return StaticMesh->GetMeshData().MaterialSlots[SlotIndex].Name;
 }
 
-UMaterial* UStaticMeshComponent::GetDefaultMaterial(int32 SlotIndex) const
+UMaterialInterface* UStaticMeshComponent::GetDefaultMaterial(int32 SlotIndex) const
 {
 	return StaticMesh ? StaticMesh->GetMaterial(static_cast<uint32>(SlotIndex)) : nullptr;
 }
 
-void UStaticMeshComponent::SubmitToRenderQueue(FRenderQueue& RenderQueue, const FViewContext& ViewContext)
+FPrimitiveSceneProxy* UStaticMeshComponent::CreateSceneProxy()
 {
-	if (!StaticMesh) return;
-
-    const FPrimitiveSceneProxy* Proxy = GetSceneProxy();
-    if (!StaticMesh || !Proxy) return;
-    const FMeshRenderState* State = Proxy->GetRenderState();
-    if (!State) return;
-    for (uint32 I = 0; I < State->Sections.Num(); ++I)
-    {
-        const FCachedMeshSection& Section = State->Sections[I];
-        FRenderPacket& Packet = RenderQueue.AddDefaulted_GetRef();
-        Packet.Proxy = Proxy;
-        Packet.Mesh = StaticMesh;
-        Packet.Material = Section.Material;
-        Packet.StartIndex = Section.StartIndex;
-        Packet.IndexCount = Section.IndexCount;
-    }
+	return new FStaticMeshSceneProxy(this);
 }
-/*
-// Section별 Material·Texture와 인덱스 범위를 보존해 패킷을 제출한다.
-void UStaticMeshComponent::SubmitToRenderQueue(TQueue<FRenderPacket>& RenderQueue)
-{
-	if (!StaticMesh)
-		return;
-
-	const FStaticMeshData& MeshData = StaticMesh->GetMeshData();
-
-	for (const FStaticMeshSection& Section : MeshData.Sections)
-	{
-		// 슬롯마다 덮어쓰기가 있으면 그것, 없으면 메시(OBJ/MTL)의 기본 머티리얼
-		UMaterial* SectionMaterial = GetMaterial(static_cast<int32>(Section.MaterialSlotIndex));
-		if (!SectionMaterial)
-			continue;
-
-		FRenderPacket rp;
-		rp.mesh = StaticMesh;
-		rp.model = GetWorldMatrix();
-		rp.StartIndex = Section.StartIndex;
-		rp.IndexCount = Section.IndexCount;
-		rp.material = SectionMaterial;
-
-		RenderQueue.Enqueue(rp);
-	}
-}
-*/

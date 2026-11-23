@@ -20,6 +20,8 @@ public:
     static void UpdateInputStates();
     static void ClearAllStates();
     static void SyncMousePosition(int32 x, int32 y);
+	static void OnRawMouseMove(int32 X, int32 Y);
+	static void SetRelativeMouseMode(bool bEnabled);
     static void OnKeyUp(int VirtualKey);
     static void OnMouseUp(EMouseButton MouseButton);
     static void OnKeyDown(int VirtualKey);
@@ -54,4 +56,5 @@ private:
     static inline int32 DeltaX = 0, DeltaY = 0;
 
     static inline int32 WheelDelta = 0;
+	static inline bool bRelativeMouseMode = false;
 };
