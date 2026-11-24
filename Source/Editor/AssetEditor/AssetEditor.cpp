@@ -180,6 +180,11 @@ void FAssetEditorViewportClient::Draw(FRenderer* Renderer)
 // 미리보기 씬 위에 에디터가 주는 선과 기즈모를 올린다. 씬은 기반 클래스의 Draw가 그린다.
 void FAssetEditorViewportClient::Draw(const FSceneView* View, FScenePassCallbacks& Callbacks)
 {
+	Callbacks.Overlays.EditorLines = [this, View]
+	{
+		AssetEditor.OnRenderDebugOverlay(View);
+	};
+
 	if (AssetEditor.IsGridVisible() && View && ViewTargets.SceneColor)
 	{
 		const FSceneView& SceneView = *View;

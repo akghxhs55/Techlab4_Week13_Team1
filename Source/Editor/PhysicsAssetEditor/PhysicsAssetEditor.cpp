@@ -10,6 +10,17 @@
 
 namespace
 {
+	int32 GetShapeCount(const FAggregateGeom& Geometry, FPhysicsAssetEditor::EPreviewShapeType Type)
+	{
+		switch (Type)
+		{
+		case FPhysicsAssetEditor::EPreviewShapeType::Sphere: return Geometry.SphereElems.Num();
+		case FPhysicsAssetEditor::EPreviewShapeType::Box: return Geometry.BoxElems.Num();
+		case FPhysicsAssetEditor::EPreviewShapeType::Capsule: return Geometry.CapsuleElems.Num();
+		default: return 0;
+		}
+	}
+
 	// 로컬 레이의 방향을 정규화하지 않아 교차 매개변수 t를 월드 레이와 공유합니다.
 	bool RayHitsSphere(const FRay& Ray, const FVector& Center, float Radius, float& OutT)
 	{
@@ -103,7 +114,7 @@ namespace
 	}
 
 	void DrawAggregateGeometry(FLineBatcher& Lines, const FAggregateGeom& Geometry,
-		const FMatrix& BoneToWorld, const FVector4& Color, const FShapeElem* SelectedShape)
+		const FMatrix& BoneToWorld, const FVector4& Color, const FShapeElem* SelectedShape, const FVector4& SelectionColor)
 	{
 		const FVector X(1.0f, 0.0f, 0.0f);
 		const FVector Y(0.0f, 1.0f, 0.0f);
@@ -111,7 +122,7 @@ namespace
 
 		for (const FSphereElem& Sphere : Geometry.SphereElems)
 		{
-			const FVector4 ShapeColor = &Sphere == SelectedShape ? FVector4(1.0f, 0.8f, 0.1f, 1.0f) : Color;
+			const FVector4 ShapeColor = &Sphere == SelectedShape ? SelectionColor : Color;
 			if (!std::isfinite(Sphere.Radius) || Sphere.Radius <= 0.0f) continue;
 			const FMatrix ShapeToWorld = FTransform(Sphere.Rotation, Sphere.Center).GetLocalMatrix() * BoneToWorld;
 			DrawWireArc(Lines, ShapeToWorld, FVector::ZeroVector, X, Y, Sphere.Radius, 0.0f, 2.0f * PI, ShapeColor);
@@ -127,12 +138,12 @@ namespace
 			const FVector HalfExtent(Box.X * 0.5f, Box.Y * 0.5f, Box.Z * 0.5f);
 			const FMatrix ShapeToWorld = FTransform(Box.Rotation, Box.Center).GetLocalMatrix() * BoneToWorld;
 			Lines.AddOrientedBox(FBox{ HalfExtent * -1.0f, HalfExtent }, ShapeToWorld,
-				&Box == SelectedShape ? FVector4(1.0f, 0.8f, 0.1f, 1.0f) : Color);
+				&Box == SelectedShape ? SelectionColor : Color);
 		}
 
 		for (const FCapsuleElem& Capsule : Geometry.CapsuleElems)
 		{
-			const FVector4 ShapeColor = &Capsule == SelectedShape ? FVector4(1.0f, 0.8f, 0.1f, 1.0f) : Color;
+			const FVector4 ShapeColor = &Capsule == SelectedShape ? SelectionColor : Color;
 			if (!std::isfinite(Capsule.Radius) || !std::isfinite(Capsule.Length) ||
 				Capsule.Radius <= 0.0f || Capsule.Length < 0.0f) continue;
 			const FMatrix ShapeToWorld = FTransform(Capsule.Rotation, Capsule.Center).GetLocalMatrix() * BoneToWorld;
@@ -166,18 +177,44 @@ FPhysicsAssetEditor::FPhysicsAssetEditor(
 	Mesh = &InPreviewMesh;
 }
 
+FPhysicsAssetEditor::~FPhysicsAssetEditor() = default;
+
 void FPhysicsAssetEditor::OnRenderLine(FLineBatcher& LineBatcher)
 {
 	FSkeletalPreviewEditor::OnRenderLine(LineBatcher);
+}
 
-	if (!Mesh || !MeshComponent) return;
-	for (const FPhysicsAssetPreviewBody& Body : PreviewBodies)
+void FPhysicsAssetEditor::OnRenderDebugOverlay(const FSceneView* View)
+{
+	if (!View || !Mesh || !MeshComponent || !PhysicsBodyLines) return;
+	PhysicsBodyLines->BeginFrame();
+	// 물리 형상 전용 배치에서 깊이를 검사하고, 장면 깊이에는 쓰지 않습니다.
+	PhysicsBodyLines->SetDepthTest(bBodyDepthTest, false);
+	const FShapeElem* SelectedShape = GetSelectedShape();
+	for (int32 Index = 0; Index < PreviewBodies.Num(); ++Index)
 	{
+		if (!IsBodyVisible(Index)) continue;
+		const FPhysicsAssetPreviewBody& Body = PreviewBodies[Index];
 		if (Body.BoneIndex < 0 || Body.BoneIndex >= Mesh->GetNumBones()) continue;
-		// 선택과 관계없이 생성된 모든 바디를 원래 본에 붙여 표시합니다.
-		DrawAggregateGeometry(LineBatcher, Body.Geometry, MeshComponent->GetBoneWorldMatrix(Body.BoneIndex),
-			FVector4(0.2f, 1.0f, 0.4f, 1.0f), GetSelectedShape());
+		const FVector4& Color = Index == SelectedBodyIndex ? SelectedBodyColor : BodyColor;
+		DrawAggregateGeometry(*PhysicsBodyLines, Body.Geometry, MeshComponent->GetBoneWorldMatrix(Body.BoneIndex),
+			Color, SelectedShape, SelectedShapeColor);
 	}
+	PhysicsBodyLines->OnRender(View->ViewProjectionMatrix);
+}
+
+bool FPhysicsAssetEditor::IsBodyVisible(int32 BodyIndex) const
+{
+	return BodyIndex >= 0 && BodyIndex < PreviewBodies.Num() && BodyDrawMode != EBodyDrawMode::None &&
+		(BodyDrawMode != EBodyDrawMode::SelectedOnly || BodyIndex == SelectedBodyIndex);
+}
+
+void FPhysicsAssetEditor::SetBodyDrawMode(EBodyDrawMode Mode)
+{
+	if (Mode == BodyDrawMode) return;
+	CancelViewportInteraction();
+	BodyDrawMode = Mode;
+	SyncShapeGizmo();
 }
 
 TUniquePtr<IEditorTab> FPhysicsAssetEditor::CreateTab()
@@ -194,6 +231,8 @@ bool FPhysicsAssetEditor::InitializeResources()
 
 	PreviewBodies.Empty();
 	SelectedBodyIndex = -1;
+	PhysicsBodyLines = MakeUnique<FLineBatcher>();
+	if (!PhysicsBodyLines->Init(nullptr, PreviewScene.GetWorld())) return false;
 	ShapeGizmoTarget = Cast<USceneComponent>(PreviewScene.AddComponent(USceneComponent::StaticClass()));
 	if (!ShapeGizmoTarget) return false;
 	ShapeGizmoTarget->DetachFromParent();
@@ -209,6 +248,7 @@ void FPhysicsAssetEditor::ShutdownResources()
 	SelectedShapeIndex = -1;
 	SelectedBodyIndex = -1;
 	PreviewBodies.Empty();
+	PhysicsBodyLines.reset();
 	FSkeletalPreviewEditor::ShutdownResources();
 }
 
@@ -242,31 +282,109 @@ int32 FPhysicsAssetEditor::AddBody(int32 BoneIndex, EPreviewShapeType ShapeType)
 	const int32 BodyIndex = PreviewBodies.Num();
 	FPhysicsAssetPreviewBody& Body = PreviewBodies.Emplace_GetRef();
 	Body.BoneIndex = BoneIndex;
+	++TopologyRevision;
+	AddShape(BodyIndex, ShapeType);
+	return BodyIndex;
+}
+
+bool FPhysicsAssetEditor::RemoveBody(int32 BodyIndex)
+{
+	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num()) return false;
+	CancelViewportInteraction();
+	ShapeGizmo.SetTarget(nullptr);
+	if (SelectedBodyIndex == BodyIndex)
+	{
+		SelectedBodyIndex = -1;
+		SelectedShapeType = EPreviewShapeType::None;
+		SelectedShapeIndex = -1;
+	}
+	else if (SelectedBodyIndex > BodyIndex)
+	{
+		--SelectedBodyIndex;
+	}
+	PreviewBodies.RemoveAt(static_cast<uint32>(BodyIndex));
+	++TopologyRevision;
+	SyncShapeGizmo();
+	return true;
+}
+
+int32 FPhysicsAssetEditor::AddShape(int32 BodyIndex, EPreviewShapeType ShapeType)
+{
+	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() ||
+		(ShapeType != EPreviewShapeType::Sphere && ShapeType != EPreviewShapeType::Box && ShapeType != EPreviewShapeType::Capsule))
+		return -1;
+	CancelViewportInteraction();
+	ShapeGizmo.SetTarget(nullptr);
+	FAggregateGeom& Geometry = PreviewBodies[BodyIndex].Geometry;
+	const int32 ShapeIndex = GetShapeCount(Geometry, ShapeType);
 	const float Radius = FMath::Max(BoneSphereSize * 2.0f, 0.01f);
 	FShapeElem* Shape = nullptr;
 	if (ShapeType == EPreviewShapeType::Sphere)
 	{
-		FSphereElem& Sphere = Body.Geometry.SphereElems.Emplace_GetRef();
+		FSphereElem& Sphere = Geometry.SphereElems.Emplace_GetRef();
 		Sphere.Radius = Radius;
 		Shape = &Sphere;
 	}
 	else if (ShapeType == EPreviewShapeType::Box)
 	{
-		FBoxElem& Box = Body.Geometry.BoxElems.Emplace_GetRef();
+		FBoxElem& Box = Geometry.BoxElems.Emplace_GetRef();
 		Box.X = Box.Y = Box.Z = Radius * 2.0f;
 		Shape = &Box;
 	}
 	else
 	{
-		FCapsuleElem& Capsule = Body.Geometry.CapsuleElems.Emplace_GetRef();
+		FCapsuleElem& Capsule = Geometry.CapsuleElems.Emplace_GetRef();
 		Capsule.Radius = Radius;
 		Capsule.Length = Radius * 4.0f;
 		Shape = &Capsule;
 	}
 	Shape->Center = FVector::ZeroVector;
 	Shape->Rotation = FRotator(0.0f, 0.0f, 0.0f);
+	++TopologyRevision;
+	SelectShape(BodyIndex, ShapeType, ShapeIndex);
+	return ShapeIndex;
+}
+
+bool FPhysicsAssetEditor::RemoveShape(int32 BodyIndex, EPreviewShapeType ShapeType, int32 ShapeIndex)
+{
+	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() || ShapeIndex < 0 ||
+		ShapeIndex >= GetShapeCount(PreviewBodies[BodyIndex].Geometry, ShapeType)) return false;
+	CancelViewportInteraction();
+	ShapeGizmo.SetTarget(nullptr);
+	FAggregateGeom& Geometry = PreviewBodies[BodyIndex].Geometry;
+	switch (ShapeType)
+	{
+	case EPreviewShapeType::Sphere: Geometry.SphereElems.RemoveAt(static_cast<uint32>(ShapeIndex)); break;
+	case EPreviewShapeType::Box: Geometry.BoxElems.RemoveAt(static_cast<uint32>(ShapeIndex)); break;
+	case EPreviewShapeType::Capsule: Geometry.CapsuleElems.RemoveAt(static_cast<uint32>(ShapeIndex)); break;
+	default: return false;
+	}
+	if (SelectedBodyIndex == BodyIndex && SelectedShapeType == ShapeType)
+	{
+		if (SelectedShapeIndex == ShapeIndex)
+		{
+			SelectedShapeType = EPreviewShapeType::None;
+			SelectedShapeIndex = -1;
+		}
+		else if (SelectedShapeIndex > ShapeIndex)
+		{
+			--SelectedShapeIndex;
+		}
+	}
+	++TopologyRevision;
+	SyncShapeGizmo();
+	return true;
+}
+
+bool FPhysicsAssetEditor::SelectShape(int32 BodyIndex, EPreviewShapeType ShapeType, int32 ShapeIndex)
+{
+	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() || ShapeIndex < 0 ||
+		ShapeIndex >= GetShapeCount(PreviewBodies[BodyIndex].Geometry, ShapeType)) return false;
 	SelectBody(BodyIndex);
-	return BodyIndex;
+	SelectedShapeType = ShapeType;
+	SelectedShapeIndex = ShapeIndex;
+	SyncShapeGizmo();
+	return true;
 }
 
 void FPhysicsAssetEditor::SelectBody(int32 BodyIndex)
@@ -366,6 +484,48 @@ void FPhysicsAssetEditor::SetSelectedShapeSize(const FVector& Size)
 	}
 }
 
+bool FPhysicsAssetEditor::GetSelectedShapeProperties(FShapeElem& OutShape, FVector& OutSize, EPreviewShapeType& OutType) const
+{
+	const FShapeElem* Shape = GetSelectedShape();
+	if (!Shape) return false;
+	OutShape = *Shape;
+	OutSize = GetSelectedShapeSize();
+	OutType = SelectedShapeType;
+	return true;
+}
+
+bool FPhysicsAssetEditor::SetSelectedShapeProperties(const FShapeElem& Shape, const FVector& Size)
+{
+	if (!GetSelectedShape() ||
+		!std::isfinite(Shape.Center.X) || !std::isfinite(Shape.Center.Y) || !std::isfinite(Shape.Center.Z) ||
+		!std::isfinite(Shape.Rotation.Pitch) || !std::isfinite(Shape.Rotation.Yaw) || !std::isfinite(Shape.Rotation.Roll) ||
+		!std::isfinite(Size.X) || !std::isfinite(Size.Y) || !std::isfinite(Size.Z))
+		return false;
+
+	FVector ValidSize = Size;
+	constexpr float MinDimension = 0.001f;
+	switch (SelectedShapeType)
+	{
+	case EPreviewShapeType::Sphere:
+		ValidSize = FVector(FMath::Max(Size.X, MinDimension), 0.0f, 0.0f);
+		break;
+	case EPreviewShapeType::Box:
+		ValidSize = FVector(FMath::Max(Size.X, MinDimension), FMath::Max(Size.Y, MinDimension), FMath::Max(Size.Z, MinDimension));
+		break;
+	case EPreviewShapeType::Capsule:
+		ValidSize = FVector(FMath::Max(Size.X, MinDimension), FMath::Max(Size.Y, 0.0f), 0.0f);
+		break;
+	default: return false;
+	}
+
+	// 디테일과 기즈모가 같은 형상을 수정하므로 이전 드래그 상태를 먼저 정리합니다.
+	CancelViewportInteraction();
+	*GetSelectedShape() = Shape;
+	SetSelectedShapeSize(ValidSize);
+	SyncShapeGizmo();
+	return true;
+}
+
 void FPhysicsAssetEditor::SetGizmoMode(EGizmoMode Mode)
 {
 	if (ShapeGizmo.GetMode() == Mode) return;
@@ -416,6 +576,7 @@ bool FPhysicsAssetEditor::UpdateShapePicking()
 	int32 HitShapeIndex = -1;
 	for (int32 BodyIndex = 0; BodyIndex < PreviewBodies.Num(); ++BodyIndex)
 	{
+		if (!IsBodyVisible(BodyIndex)) continue;
 		const FPhysicsAssetPreviewBody& Body = PreviewBodies[BodyIndex];
 		if (Body.BoneIndex < 0 || Body.BoneIndex >= Mesh->GetNumBones()) continue;
 		const FMatrix BoneToWorld = MeshComponent->GetBoneWorldMatrix(Body.BoneIndex);
@@ -457,12 +618,9 @@ bool FPhysicsAssetEditor::UpdateShapePicking()
 			{ return RayHitsCapsule(Ray, Capsule.Radius, Capsule.Length, T); });
 		}
 	}
-	SelectBody(HitBodyIndex);
-	if (HitBodyIndex < 0) return false;
-	SelectedShapeType = HitShapeType;
-	SelectedShapeIndex = HitShapeIndex;
-	SyncShapeGizmo();
-	return true;
+	if (HitBodyIndex >= 0) return SelectShape(HitBodyIndex, HitShapeType, HitShapeIndex);
+	SelectBody(-1);
+	return false;
 }
 
 FQuat FPhysicsAssetEditor::GetPreviewBoneWorldRotation() const
@@ -480,7 +638,7 @@ void FPhysicsAssetEditor::SyncShapeGizmo()
 {
 	const FShapeElem* Shape = GetSelectedShape();
 	const FPhysicsAssetPreviewBody* Body = GetSelectedBody();
-	if (!Shape || !Body || !ShapeGizmoTarget || !Mesh || !MeshComponent ||
+	if (!Shape || !Body || !IsBodyVisible(SelectedBodyIndex) || !ShapeGizmoTarget || !Mesh || !MeshComponent ||
 		Body->BoneIndex < 0 || Body->BoneIndex >= Mesh->GetNumBones())
 	{
 		ShapeGizmo.SetTarget(nullptr);

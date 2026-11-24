@@ -42,6 +42,8 @@ public:
 	void Shutdown();
 
 	virtual void OnRenderLine(class FLineBatcher& LineBatcher);
+	// 장면 깊이가 유지되는 디버그 패스입니다. 기즈모용 깊이 초기화 전에 호출합니다.
+	virtual void OnRenderDebugOverlay(const FSceneView*) {}
 
 	////////////////////////////////////////////////////////////
 	// Getter

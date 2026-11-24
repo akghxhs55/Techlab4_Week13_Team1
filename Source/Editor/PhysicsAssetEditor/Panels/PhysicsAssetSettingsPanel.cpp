@@ -13,6 +13,35 @@ FPhysicsAssetSettingsPanel::FPhysicsAssetSettingsPanel(FPhysicsAssetEditor& InEd
 
 void FPhysicsAssetSettingsPanel::DrawContent()
 {
+	if (ImGui::CollapsingHeader("Physics Bodies", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		const char* ModeNames[] = { "All Bodies", "Selected Body Only", "Hidden" };
+		int Mode = static_cast<int>(Editor.GetBodyDrawMode());
+		ImGui::TextUnformatted("Body Drawing");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		if (ImGui::Combo("##PhysicsBodyDrawing", &Mode, ModeNames, IM_ARRAYSIZE(ModeNames)))
+			Editor.SetBodyDrawMode(static_cast<FPhysicsAssetEditor::EBodyDrawMode>(Mode));
+		if (Editor.GetBodyDrawMode() == FPhysicsAssetEditor::EBodyDrawMode::SelectedOnly && Editor.GetSelectedBodyIndex() < 0)
+			ImGui::TextWrapped("Select a body in the skeleton tree to display it.");
+
+		FVector4 BodyColor = Editor.GetBodyColor();
+		ImGui::TextUnformatted("Body Color");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		if (ImGui::ColorEdit3("##PhysicsBodyColor", &BodyColor.X)) Editor.SetBodyColor(BodyColor);
+		FVector4 SelectedBodyColor = Editor.GetSelectedBodyColor();
+		ImGui::TextUnformatted("Selected Body Color");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		if (ImGui::ColorEdit3("##SelectedPhysicsBodyColor", &SelectedBodyColor.X)) Editor.SetSelectedBodyColor(SelectedBodyColor);
+		FVector4 SelectedShapeColor = Editor.GetSelectedShapeColor();
+		ImGui::TextUnformatted("Selected Shape Color");
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		if (ImGui::ColorEdit3("##SelectedPhysicsShapeColor", &SelectedShapeColor.X)) Editor.SetSelectedShapeColor(SelectedShapeColor);
+
+		bool bDepthTest = Editor.IsBodyDepthTestEnabled();
+		if (ImGui::Checkbox("Depth Test", &bDepthTest)) Editor.SetBodyDepthTest(bDepthTest);
+		ImGui::TextWrapped(bDepthTest ? "Bodies are occluded by scene geometry." : "Bodies are visible through scene geometry.");
+	}
+
 	if (ImGui::CollapsingHeader("Preview Scene", ImGuiTreeNodeFlags_DefaultOpen))
 	{
 		bool bShowMesh = Editor.IsMeshVisible();
