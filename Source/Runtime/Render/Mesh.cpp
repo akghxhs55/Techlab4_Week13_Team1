@@ -14,7 +14,6 @@ UStaticMesh::~UStaticMesh()
         Proxy->OnMeshDestroyed();
 	VertexBuffer = nullptr;
 	IndexBuffer = nullptr;
-    delete BodySetup;
 }
 
 UBodySetup* UStaticMesh::GetBodySetup()

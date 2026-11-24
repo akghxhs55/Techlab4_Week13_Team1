@@ -1844,6 +1844,7 @@ void FContentDrawerPanel::RenderContents()
 						}
 
 						else if ((Path.extension() == ".obj" || FFbxMeshBake::IsBakedPath(PathString)
+							|| ToLowerAscii(PathString).ends_with(".fbx.bin.physics.json")
 							|| AnimSequenceFile::IsAnimSequencePath(PathString)) && OnOpenMesh)
 						{
 							OnOpenMesh(PathString);
