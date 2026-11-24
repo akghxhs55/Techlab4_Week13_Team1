@@ -26,4 +26,5 @@ private:
 	inline static physx::PxDefaultCpuDispatcher* CpuDispatcher = nullptr;
 	inline static physx::PxMaterial* DefaultMaterial = nullptr;
 	inline static bool bExtensionInitialized = false;
+	inline static bool bVehicleExtensionInitialized = false;
 };
