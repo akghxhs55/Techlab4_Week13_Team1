@@ -55,6 +55,7 @@ struct FVehicleParams
 	float ChassisMass = 1500.0f;                            // 차체 질량 (kg)
 	FVector ChassisDimensions = FVector(4.0f, 2.0f, 1.2f); // 전장 4m, 전폭 2m, 전고 1.2m
 	FVector CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);// 무게중심 오프셋 (저중심 안정화)
+	float PeakTorque = 4000.0f;                             // 총 구동 토크 (N*m)
 
 	// 4개 바퀴 설정 (0: FL, 1: FR, 2: RL, 3: RR)
 	FWheelConfig FrontLeftWheel;
