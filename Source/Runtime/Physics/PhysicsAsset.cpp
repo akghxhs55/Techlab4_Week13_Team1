@@ -12,12 +12,12 @@ UPhysicsAsset::~UPhysicsAsset()
 
 void UPhysicsAsset::ClearBodies()
 {
-    // BodySetup도 UObject라서 해제하면 안되나?
-	/*for (UBodySetup* Body : BodySetups)
-	{
-        delete Body;
-	}*/
+	TArray<UBodySetup*> ToDelete = BodySetups;
 	BodySetups.Empty();
+	for (UBodySetup* Body : ToDelete)
+	{
+		delete Body;
+	}
 }
 
 void UPhysicsAsset::Serialize(FStructuredArchive::FRecord Record)
@@ -51,7 +51,19 @@ void UPhysicsAsset::Serialize(FStructuredArchive::FRecord Record)
 
 bool UPhysicsAsset::Validate(const USkeletalMesh& Mesh, const FString& DebugName) const
 {
-	const TArray<FBoneInfo>& Bones = Mesh.GetRefSkeleton();
+	return Validate(Mesh.GetRefSkeleton(), DebugName);
+}
+
+bool UPhysicsAsset::Validate(const TArray<FBoneInfo>& Bones, const FString& DebugName) const
+{
+	const auto FindBoneIndex = [&Bones](const FString& Name)
+	{
+		for (int32 I = 0; I < Bones.Num(); ++I)
+		{
+			if (Bones[I].Name == Name) return I;
+		}
+		return -1;
+	};
 
 	TArray<int32> BodyOfBone;
 	BodyOfBone.Init(-1, Bones.Num());
@@ -60,7 +72,7 @@ bool UPhysicsAsset::Validate(const USkeletalMesh& Mesh, const FString& DebugName
     for (int32 i = 0; i < BodySetups.Num(); ++i)
     {
         const UBodySetup* Body = BodySetups[i];
-        const int32 Bone = Mesh.FindBoneIndex(Body->BoneName);
+        const int32 Bone = FindBoneIndex(Body->BoneName);
         if (Bone < 0)
         {
             KRS_LOG(Warning, "[PhysicsAsset] {}: body bone '{}' not found", DebugName, Body->BoneName);
@@ -91,8 +103,8 @@ bool UPhysicsAsset::Validate(const USkeletalMesh& Mesh, const FString& DebugName
     BodyHasConstraint.Init(0, BodySetups.Num());
     for (const FPhysicsAssetConstraint& C : Constraints)
     {
-        const int32 Child = Mesh.FindBoneIndex(C.ChildBone);
-        const int32 Parent = Mesh.FindBoneIndex(C.ParentBone);
+        const int32 Child = FindBoneIndex(C.ChildBone);
+        const int32 Parent = FindBoneIndex(C.ParentBone);
         if (Child < 0 || Parent < 0 || BodyOfBone[Child] < 0 || BodyOfBone[Parent] < 0)
         {
             KRS_LOG(Warning, "[PhysicsAsset] {}: constraint '{}'-'{}' refers to missing bone/body", DebugName, C.ChildBone, C.ParentBone);
@@ -131,7 +143,7 @@ bool UPhysicsAsset::Validate(const USkeletalMesh& Mesh, const FString& DebugName
     int32 NumRootBodies = 0;
     for (int32 B = 0; B < BodySetups.Num(); ++B)
     {
-        const int32 Bone = Mesh.FindBoneIndex(BodySetups[B]->BoneName);
+        const int32 Bone = FindBoneIndex(BodySetups[B]->BoneName);
         if (Bone < 0 || BodyOfBone[Bone] != B || BodyHasConstraint[B])
         {
 	        continue;

@@ -5,6 +5,7 @@
 
 class USkeletalMesh;
 class UBodySetup;
+struct FBoneInfo;
 
 USTRUCT()
 struct FPhysicsAssetConstraint
@@ -54,6 +55,7 @@ public:
 	void Serialize(FStructuredArchive::FRecord Record) override;
 
 	bool Validate(const USkeletalMesh& Mesh, const FString& DebugName) const;
+	bool Validate(const TArray<FBoneInfo>& Bones, const FString& DebugName) const;
 
 	void ClearBodies();
 

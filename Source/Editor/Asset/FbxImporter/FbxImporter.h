@@ -15,6 +15,13 @@ struct FFbxAnimationImportOptions
 	int32 ResampleRate = 0; // bResample이 true일 때 0은 자동 계산, 양수는 지정값
 };
 
+struct FFbxImportOptions
+{
+	EFbxImportMode Mode = EFbxImportMode::Skeletal;
+	// 기존 .physics.json은 덮어쓰지 않는다.
+	bool bCreatePhysicsAsset = true;
+};
+
 struct FFbxImportResult
 {
 	TArray<FString> Paths;
@@ -70,7 +77,7 @@ public:
 	// ReadSkeletonData 성공 후 호출한다. SDK 수명과 독립적인 Geometry/Weight/Bone 출력을 만든다.
 	bool BuildSkeletalMesh(FSkeletalMeshData& OutData, TArray<FString>& OutWarnings, FString& OutError) const;
 	// Content/FBX에 저장한 뒤 미로드 Asset을 등록한다. 이미 로드된 객체는 유지한다.
-	static bool ImportToAssets(const FString& Path, EFbxImportMode Mode, FFbxImportResult& OutResult, FString& OutError);
+	static bool ImportToAssets(const FString& Path, const FFbxImportOptions& Options, FFbxImportResult& OutResult, FString& OutError);
 
 private:
 	int32 GetMaxSampleRate() const;

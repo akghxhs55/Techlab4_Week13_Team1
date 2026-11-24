@@ -31,6 +31,7 @@
 #include "Physics/BodySetup.h"
 #include "Physics/PhysicsCore.h"
 #include "Physics/PhysXConversion.h"
+#include "Physics/PhysicsBoneUtils.h"
 
 namespace
 {
@@ -96,26 +97,6 @@ namespace
 			const FVector P(T.Location.X * CompScale.X, T.Location.Y * CompScale.Y, T.Location.Z * CompScale.Z);
 			Out[i] = physx::PxTransform(K2PVector(P), K2PQuat(T.Rotation.Normalized()));
 		}
-	}
-
-	physx::PxVec3 FindBoneAxis(const TArray<FBoneInfo>& Bones, int32 Bone)
-	{
-		for (int32 B = Bone; B >= 0; B = Bones[B].ParentIndex)
-		{
-			for (int32 C = B + 1; C < Bones.Num(); ++C)
-			{
-				if (Bones[C].ParentIndex != B) continue;
-
-				const FVector& L = Bones[C].LocalBindPose.Location;
-				const float AX = std::abs(L.X), AY = std::abs(L.Y), AZ = std::abs(L.Z);
-				if (AX + AY + AZ < 1e-5f) continue;
-
-				if (AX >= AY && AX >= AZ) return { L.X > 0 ? 1.0f : -1.0f, 0, 0 };
-				if (AY >= AZ)             return { 0, L.Y > 0 ? 1.0f : -1.0f, 0 };
-				return { 0, 0, L.Z > 0 ? 1.0f : -1.0f };
-			}
-		}
-		return { 1, 0, 0 };
 	}
 }
 
@@ -749,7 +730,7 @@ void USkeletalMeshComponent::InitConstraints(const UPhysicsAsset& Asset)
 			continue;
 		}
 
-		const physx::PxQuat TwistAlign = physx::PxShortestRotation(physx::PxVec3(1, 0, 0), FindBoneAxis(Bones, ChildBone));
+		const physx::PxQuat TwistAlign = physx::PxShortestRotation(physx::PxVec3(1, 0, 0), K2PVector(FPhysicsBoneUtils::FindBoneAxis(Bones, ChildBone)));
 		const physx::PxQuat Offset = K2PQuat(Constraint.FrameOffset.Quaternion().Normalized());
 		const physx::PxTransform JointBind(BindPoses[ChildBone].p, (BindPoses[ChildBone].q * TwistAlign * Offset).getNormalized());
 
