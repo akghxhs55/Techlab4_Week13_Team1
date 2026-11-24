@@ -8,42 +8,91 @@ using namespace physx;
 
 FVehicleParams::FVehicleParams()
 {
-	SetupDefaultCar();
+	SetupFerrariF1();
 }
 
 void FVehicleParams::SetupDefaultCar()
 {
-	ChassisMass = 1500.0f;
-	ChassisDimensions = FVector(4.0f, 2.0f, 1.2f);
-	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);
+	SetupFerrariF1();
+}
 
-	// 전륜 좌측 (Wheel 0)
-	FrontLeftWheel.Offset = FVector(1.3f, -0.85f, -0.2f);
-	FrontLeftWheel.Radius = 0.35f;
-	FrontLeftWheel.HalfWidth = 0.10f;
-	FrontLeftWheel.Mass = 20.0f;
+void FVehicleParams::SetupFerrariF1()
+{
+	ChassisMass = 850.0f; // F1 차량 규정 최소 중량(~798kg) 기반 레이싱 세팅
+	ChassisDimensions = FVector(5.53f, 1.96f, 1.10f); // 페라리 F1 실측: 전장 5.53m, 전폭 1.96m, 전고 1.10m
+	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.25f); // 초저중심 레이싱 카 무게중심
+	PeakTorque = 4500.0f; // V6 터보 하이브리드 파워유닛 (1000마력+)
+
+	// 전륜 좌측 (Wheel 0) - 실측: X = +1.521m, Y = -0.764m, Z = -0.22m, 반경 0.358m, 폭 0.305m
+	FrontLeftWheel.Offset = FVector(1.521f, -0.764f, -0.22f);
+	FrontLeftWheel.Radius = 0.358f;
+	FrontLeftWheel.HalfWidth = 0.152f;
+	FrontLeftWheel.Mass = 15.0f;
 	FrontLeftWheel.DampingRate = 0.25f;
-	FrontLeftWheel.SuspensionTravelDist = 0.25f;
-	FrontLeftWheel.SpringStiffness = 35000.0f;
-	FrontLeftWheel.SpringDamping = 4500.0f;
+	FrontLeftWheel.SuspensionTravelDist = 0.15f; // F1 고강성 짧은 서스펜션 스트로크
+	FrontLeftWheel.SpringStiffness = 45000.0f;  // F1 고강성 레이싱 스프링
+	FrontLeftWheel.SpringDamping = 6000.0f;
 	FrontLeftWheel.SprungMass = ChassisMass * 0.25f;
-	FrontLeftWheel.MaxSteerAngle = 35.0f;
-	FrontLeftWheel.MaxBrakeTorque = 1500.0f;
+	FrontLeftWheel.MaxSteerAngle = 32.0f;
+	FrontLeftWheel.MaxBrakeTorque = 3000.0f;    // 카본 브레이크의 강력한 제동력
 	FrontLeftWheel.MaxHandbrakeTorque = 0.0f;
 
-	// 전륜 우측 (Wheel 1)
+	// 전륜 우측 (Wheel 1) - 실측: X = +1.521m, Y = +0.764m, Z = -0.22m
 	FrontRightWheel = FrontLeftWheel;
-	FrontRightWheel.Offset = FVector(1.3f, 0.85f, -0.2f);
+	FrontRightWheel.Offset = FVector(1.521f, 0.764f, -0.22f);
 
-	// 후륜 좌측 (Wheel 2)
+	// 후륜 좌측 (Wheel 2) - 실측: X = -2.011m, Y = -0.762m, Z = -0.22m, 반경 0.358m, 광폭 0.405m
 	RearLeftWheel = FrontLeftWheel;
-	RearLeftWheel.Offset = FVector(-1.3f, -0.85f, -0.2f);
+	RearLeftWheel.Offset = FVector(-2.011f, -0.762f, -0.22f);
+	RearLeftWheel.HalfWidth = 0.202f; // F1 후륜 광폭 타이어
+	RearLeftWheel.Mass = 18.0f;
+	RearLeftWheel.SpringStiffness = 48000.0f;
+	RearLeftWheel.SpringDamping = 6500.0f;
 	RearLeftWheel.MaxSteerAngle = 0.0f;
-	RearLeftWheel.MaxHandbrakeTorque = 2500.0f;
+	RearLeftWheel.MaxBrakeTorque = 2500.0f;
+	RearLeftWheel.MaxHandbrakeTorque = 3500.0f;
 
-	// 후륜 우측 (Wheel 3)
+	// 후륜 우측 (Wheel 3) - 실측: X = -2.011m, Y = +0.762m, Z = -0.22m
 	RearRightWheel = RearLeftWheel;
-	RearRightWheel.Offset = FVector(-1.3f, 0.85f, -0.2f);
+	RearRightWheel.Offset = FVector(-2.011f, 0.762f, -0.22f);
+}
+
+void FVehicleParams::SetupKoenigseggGemera()
+{
+	ChassisMass = 1850.0f;
+	ChassisDimensions = FVector(4.975f, 1.988f, 1.295f); // 코닉세그 제메라 실측: 전장 4.975m, 전폭 1.988m, 전고 1.295m
+	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);
+	PeakTorque = 4500.0f; // 1700hp / 3500+ Nm
+
+	// 전륜 좌측 (Wheel 0) - 실측: X = +1.483m, Y = -0.842m, Z = -0.20m, 21인치(반경 0.355m)
+	FrontLeftWheel.Offset = FVector(1.483f, -0.842f, -0.2f);
+	FrontLeftWheel.Radius = 0.355f;
+	FrontLeftWheel.HalfWidth = 0.162f;
+	FrontLeftWheel.Mass = 22.0f;
+	FrontLeftWheel.DampingRate = 0.25f;
+	FrontLeftWheel.SuspensionTravelDist = 0.25f;
+	FrontLeftWheel.SpringStiffness = 38000.0f;
+	FrontLeftWheel.SpringDamping = 4800.0f;
+	FrontLeftWheel.SprungMass = ChassisMass * 0.25f;
+	FrontLeftWheel.MaxSteerAngle = 35.0f;
+	FrontLeftWheel.MaxBrakeTorque = 2000.0f;
+	FrontLeftWheel.MaxHandbrakeTorque = 0.0f;
+
+	// 전륜 우측 (Wheel 1) - 실측: X = +1.483m, Y = +0.842m, Z = -0.20m
+	FrontRightWheel = FrontLeftWheel;
+	FrontRightWheel.Offset = FVector(1.483f, 0.842f, -0.2f);
+
+	// 후륜 좌측 (Wheel 2) - 실측: X = -1.515m, Y = -0.834m, Z = -0.20m, 22인치(반경 0.375m)
+	RearLeftWheel = FrontLeftWheel;
+	RearLeftWheel.Offset = FVector(-1.515f, -0.834f, -0.2f);
+	RearLeftWheel.Radius = 0.375f;
+	RearLeftWheel.HalfWidth = 0.174f;
+	RearLeftWheel.MaxSteerAngle = 0.0f;
+	RearLeftWheel.MaxHandbrakeTorque = 3000.0f;
+
+	// 후륜 우측 (Wheel 3) - 실측: X = -1.515m, Y = +0.834m, Z = -0.20m
+	RearRightWheel = RearLeftWheel;
+	RearRightWheel.Offset = FVector(-1.515f, 0.834f, -0.2f);
 }
 
 FWheelConfig& FVehicleParams::GetWheel(EVehicleWheelOrder Order)

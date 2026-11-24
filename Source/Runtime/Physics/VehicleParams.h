@@ -65,8 +65,14 @@ struct FVehicleParams
 
 	FVehicleParams();
 
-	// 기본 4륜 승용차 세팅 초기화
+	// 기본 4륜 세팅 (Ferrari SF26 F1 기본 적용)
 	void SetupDefaultCar();
+
+	// 페라리 F1 SF26 (Ferrari F1) 실측 레이싱 세팅 초기화
+	void SetupFerrariF1();
+
+	// 코닉세그 제메라 (Koenigsegg Gemera) 4인승 메가GT 실측 세팅 초기화
+	void SetupKoenigseggGemera();
 
 	// 바퀴 접근자
 	FWheelConfig& GetWheel(EVehicleWheelOrder Order);

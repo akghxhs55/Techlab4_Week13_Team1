@@ -40,6 +40,9 @@ public:
 	void SetBrakeInput(float Val);
 	void SetHandbrakeInput(bool bVal);
 
+	UPROPERTY(EditAnywhere)
+	FRotator WheelMeshRotationOffset = FRotator(0.0f, 0.0f, 0.0f);
+
 protected:
 	UPROPERTY(VisibleAnywhere)
 	UBoxComponent* ChassisCollision = nullptr;

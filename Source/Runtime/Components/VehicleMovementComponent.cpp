@@ -3,6 +3,7 @@
 
 #include "Components/PrimitiveComponent.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Actor/WheeledVehiclePawn.h"
 #include "Engine/World.h"
 #include "Physics/PhysScene.h"
 #include "Math/EngineMath.h"
@@ -62,6 +63,23 @@ bool UVehicleMovementComponent::TryInitVehicle()
 		physx::PxRigidDynamic* RigidDynamic = Prim->BodyInstance.GetPxRigidDynamic();
 		if (RigidDynamic)
 		{
+			// 소유 폰의 차체 메시에 따른 파라미터 자동 프리셋
+			if (AWheeledVehiclePawn* Pawn = Cast<AWheeledVehiclePawn>(GetOwner()))
+			{
+				if (Pawn->GetMeshComponent() && Pawn->GetMeshComponent()->GetStaticMesh())
+				{
+					const FString MeshPath = Pawn->GetMeshComponent()->GetStaticMesh()->GetPath();
+					if (MeshPath.find("Gemera") != FString::npos)
+					{
+						VehicleParams.SetupKoenigseggGemera();
+					}
+					else if (MeshPath.find("Ferrari") != FString::npos)
+					{
+						VehicleParams.SetupDefaultCar();
+					}
+				}
+			}
+
 			// 에디터 수정 프로퍼티 반영
 			VehicleParams.PeakTorque = PeakTorque;
 			VehicleParams.ChassisMass = ChassisMass;
