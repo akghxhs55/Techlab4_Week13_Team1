@@ -72,9 +72,9 @@ public:
 
 	void MarkRenderStateDirty() override;
 
-	virtual void OnTransformDirty() override;
+	virtual void OnTransformDirty(ETeleportType TeleportType) override;
 
-	virtual bool MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit = nullptr) override;
+	virtual bool MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit = nullptr, ETeleportType TeleportType = ETeleportType::None) override;
 
 	virtual void PostEditChangeProperty(const FProperty& Property) override;
 
@@ -85,8 +85,7 @@ public:
 
 	bool ShouldCreatePhysicsState() const override;
 
-	// 시뮬레이션을 켜면 부모에서 떼어 낸다(월드 위치 유지). 부모가 움직일 때 바디가 끌려가지 않게 하는 UE 규칙이다
-	void SetSimulatePhysics(bool bSimulate);
+	virtual void SetSimulatePhysics(bool bSimulate);
 	bool IsSimulatingPhysics() const { return BodyInstance.bSimulatePhysics; }
 	void AddImpulse(const FVector& Impulse, bool bVelocityChange = false) { BodyInstance.AddImpulse(Impulse, bVelocityChange); }
 

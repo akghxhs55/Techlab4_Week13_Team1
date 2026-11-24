@@ -104,3 +104,9 @@ private:
 	bool bIsTicking = false;
 	bool bHasPendingRemovals = false;
 };
+
+enum class ETeleportType : uint8
+{
+	None,
+	TeleportPhysics,
+};

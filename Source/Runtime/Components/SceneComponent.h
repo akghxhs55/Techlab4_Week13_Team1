@@ -29,35 +29,35 @@ public:
 
 	// Get & Set
 	const FVector& GetRelativeLocation() const { return Transform.Location; }
-	void SetRelativeLocation(const FVector& InLocation) 
+	void SetRelativeLocation(const FVector& InLocation, ETeleportType TeleportType = ETeleportType::None)
 	{
 		Transform.Location = InLocation;
-		MarkTransformDirty();
+		MarkTransformDirty(TeleportType);
 	}
 
 
 	const FRotator& GetRelativeRotation() const { return RelativeRotationCache.QuatToRotator(Transform.Rotation); }
-	void SetRelativeRotation(const FRotator& InRotation) 
+	void SetRelativeRotation(const FRotator& InRotation, ETeleportType TeleportType = ETeleportType::None) 
 	{
 		Transform.Rotation = RelativeRotationCache.RotatorToQuat(InRotation);
-		MarkTransformDirty();
+		MarkTransformDirty(TeleportType);
 	}
-	void SetRelativeLocationAndRotation(const FVector& NewLocation, const FRotator& NewRotation);
+	void SetRelativeLocationAndRotation(const FVector& NewLocation, const FRotator& NewRotation, ETeleportType TeleportType = ETeleportType::None);
 	const FVector& GetRelativeScale3D() const { return Transform.Scale; }
-	void SetRelativeScale3D(const FVector& InScale) 
+	void SetRelativeScale3D(const FVector& InScale, ETeleportType TeleportType = ETeleportType::None)
 	{
 		Transform.Scale = InScale;
-		MarkTransformDirty();
+		MarkTransformDirty(TeleportType);
 	}
 
 	// 쿼터니언 적용된 회전행렬
 	FQuat GetRelativeRotationQuat() const { return Transform.GetOrientation(); }
 
 	const FTransform& GetTransform() const { return Transform; }
-	void SetTransform(const FTransform& InTransform) 
+	void SetTransform(const FTransform& InTransform, ETeleportType TeleportType = ETeleportType::None)
 	{
 		Transform = InTransform;
-		MarkTransformDirty();
+		MarkTransformDirty(TeleportType);
 	}
 
 	// Attatch-To
@@ -77,18 +77,18 @@ public:
 	FVector GetWorldScale3D() const;
 	FMatrix GetWorldMatrix() const;
 	
-	void SetWorldLocation(FVector NewLocation, bool bSweep);
-	void SetWorldRotation(FRotator NewRotation, bool bSweep);
-	void SetWorldLocationAndRotation(FVector NewLocation, FRotator NewRotation, bool bSweep);
-	void SetWorldScale3D(FVector NewScale);	
-	void SetWorldTransform(const FMatrix& InWorldMatrix, bool bSweep);
+	void SetWorldLocation(FVector NewLocation, bool bSweep, ETeleportType TeleportType = ETeleportType::None);
+	void SetWorldRotation(FRotator NewRotation, bool bSweep, ETeleportType TeleportType = ETeleportType::None);
+	void SetWorldLocationAndRotation(FVector NewLocation, FRotator NewRotation, bool bSweep, ETeleportType TeleportType = ETeleportType::None);
+	void SetWorldScale3D(FVector NewScale, ETeleportType TeleportType = ETeleportType::None);	
+	void SetWorldTransform(const FMatrix& InWorldMatrix, bool bSweep, ETeleportType TeleportType = ETeleportType::None);
 
-	virtual bool MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit = nullptr);
+	virtual bool MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit = nullptr, ETeleportType TeleportType = ETeleportType::None);
 	virtual float GetCollisionRadius() const;
 	void SetCollisionRadiusOverride(float Radius) { CollisionRadiusOverride = Radius; }
 
-	void MarkTransformDirty();
-	virtual void OnTransformDirty() {};
+	void MarkTransformDirty(ETeleportType TeleportType = ETeleportType::None);
+	virtual void OnTransformDirty(ETeleportType TeleportType) {};
 
 	using Super::Serialize;
 	virtual void Serialize(FStructuredArchive::FRecord Record) override;

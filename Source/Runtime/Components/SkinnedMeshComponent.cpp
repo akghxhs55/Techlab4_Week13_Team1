@@ -78,6 +78,20 @@ UMaterialInterface* USkinnedMeshComponent::GetDefaultMaterial(int32 SlotIndex) c
 	return SkeletalMesh ? SkeletalMesh->GetMaterial(static_cast<uint32>(SlotIndex)) : nullptr;
 }
 
+FTransform USkinnedMeshComponent::GetBoneTransform(int32 BoneIndex) const
+{
+	return GetBoneTransform(BoneIndex, FTransform(GetWorldMatrix()));
+}
+
+FTransform USkinnedMeshComponent::GetBoneTransform(int32 BoneIndex, const FTransform& LocalToWorld) const
+{
+	if (BoneIndex < 0 || BoneIndex >= ComponentSpaceTransforms.Num())
+	{
+		return {};
+	}
+	return FTransform(ComponentSpaceTransforms[BoneIndex] * LocalToWorld.GetLocalMatrix());
+}
+
 bool USkinnedMeshComponent::LineTraceComponentLocal(const FRay& LocalRay, float& OutT)
 {
 	const TArray<FVertex>* Vertices = MeshObject ? MeshObject->GetCPUSkinnedVertices() : nullptr;
@@ -146,7 +160,7 @@ void USkinnedMeshComponent::SendRenderDynamicData()
 {
 	MeshObject->Update(ComponentSpaceTransforms);
 	if (MeshObject->UpdateBounds())
-		OnTransformDirty();
+		OnTransformDirty(ETeleportType::None);
 	else if (FPrimitiveSceneProxy* Proxy = GetSceneProxy())
 	{
 		if (Proxy->GetScene() && Proxy->bCastsShadow)
@@ -165,7 +179,7 @@ void USkinnedMeshComponent::RecreateMeshObject()
 	OnSkeletalMeshChanged();
 	
 	MarkRenderStateDirty();
-	OnTransformDirty();
+	OnTransformDirty(ETeleportType::None);
 	bBoneTransformsDirty = true;
 }
 

@@ -1,5 +1,9 @@
 #include "EnginePCH.h"
 #include "SkeletalMeshComponent.h"
+
+#include <PxPhysics.h>
+#include <PxScene.h>
+#include <foundation/PxMathUtils.h>
 #include "Serialization/MathSerialization.h"
 #include "Animation/BonePose.h"
 #include "Animation/AnimNodeBase.h"
@@ -22,6 +26,98 @@
 #include "Render/Material.h"
 #include "Render/MaterialInstance.h"
 #include "Components/ParticleSystemComponent.h"
+#include "Engine/World.h"
+#include "Physics/PhysicsAsset.h"
+#include "Physics/BodySetup.h"
+#include "Physics/PhysicsCore.h"
+#include "Physics/PhysXConversion.h"
+
+namespace
+{
+	void AddLocalArc(FLineBatcher* LineBatcher, const FMatrix& ShapeToWorld, const FVector& Center, const FVector& AxisA, const FVector& AxisB,
+		float Radius, float StartRad, float EndRad, const FVector4& Color, int32 Segments = 16)
+	{
+		auto PointAt = [&](float T)
+		{
+			return ShapeToWorld.TransformPosition(Center + AxisA * (std::cos(T) * Radius) + AxisB * (std::sin(T) * Radius));
+		};
+		FVector Prev = PointAt(StartRad);
+		for (int32 i = 1; i <= Segments; ++i)
+		{
+			const FVector P = PointAt(StartRad + (EndRad - StartRad) * i / Segments);
+			LineBatcher->AddLine(Prev, P, Color);
+			Prev = P;
+		}
+	}
+
+	const FVector LocalX(1.0f, 0.0f, 0.0f);
+	const FVector LocalY(0.0f, 1.0f, 0.0f);
+	const FVector LocalZ(0.0f, 0.0f, 1.0f);
+
+	void DrawLocalSphere(FLineBatcher* LineBatcher, const FMatrix& M, float R, const FVector4& Color)
+	{
+		const FVector O = FVector::ZeroVector;
+		AddLocalArc(LineBatcher, M, O, LocalX, LocalY, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, O, LocalX, LocalZ, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, O, LocalY, LocalZ, R, 0.0f, 2.0f * PI, Color);
+	}
+
+	void DrawLocalCapsule(FLineBatcher* LineBatcher, const FMatrix& M, float R, float Length, const FVector4& Color)
+	{
+		const float H = FMath::Max(0.0f, 0.5f * Length);
+		const FVector Top = LocalZ * H;
+		const FVector Bottom = LocalZ * -H;
+
+		AddLocalArc(LineBatcher, M, Top, LocalX, LocalY, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, Bottom, LocalX, LocalY, R, 0.0f, 2.0f * PI, Color);
+		AddLocalArc(LineBatcher, M, Top, LocalX, LocalZ, R, 0.0f, PI, Color);
+		AddLocalArc(LineBatcher, M, Top, LocalY, LocalZ, R, 0.0f, PI, Color);
+		AddLocalArc(LineBatcher, M, Bottom, LocalX, LocalZ, R, 0.0f, -PI, Color);
+		AddLocalArc(LineBatcher, M, Bottom, LocalY, LocalZ, R, 0.0f, -PI, Color);
+		for (const FVector& Side : { LocalX, LocalX * -1.0f, LocalY, LocalY * -1.0f })
+		{
+			LineBatcher->AddLine(M.TransformPosition(Top + Side * R), M.TransformPosition(Bottom + Side * R), Color);
+		}
+	}
+
+	void BuildBindPoses(const TArray<FBoneInfo>& Bones, const FVector& CompScale, TArray<physx::PxTransform>& Out)
+	{
+		TArray<FMatrix> CS;
+		CS.SetNum(Bones.Num());
+		Out.SetNum(Bones.Num());
+
+		for (int32 i = 0; i < Bones.Num(); ++i)
+		{
+			const FMatrix Local = Bones[i].LocalBindPose.GetLocalMatrix();
+			const int32 Parent = Bones[i].ParentIndex;
+			CS[i] = Parent < 0 ? Local : Local * CS[Parent];
+
+			const FTransform T(CS[i]);
+			const FVector P(T.Location.X * CompScale.X, T.Location.Y * CompScale.Y, T.Location.Z * CompScale.Z);
+			Out[i] = physx::PxTransform(K2PVector(P), K2PQuat(T.Rotation.Normalized()));
+		}
+	}
+
+	physx::PxVec3 FindBoneAxis(const TArray<FBoneInfo>& Bones, int32 Bone)
+	{
+		for (int32 B = Bone; B >= 0; B = Bones[B].ParentIndex)
+		{
+			for (int32 C = B + 1; C < Bones.Num(); ++C)
+			{
+				if (Bones[C].ParentIndex != B) continue;
+
+				const FVector& L = Bones[C].LocalBindPose.Location;
+				const float AX = std::abs(L.X), AY = std::abs(L.Y), AZ = std::abs(L.Z);
+				if (AX + AY + AZ < 1e-5f) continue;
+
+				if (AX >= AY && AX >= AZ) return { L.X > 0 ? 1.0f : -1.0f, 0, 0 };
+				if (AY >= AZ)             return { 0, L.Y > 0 ? 1.0f : -1.0f, 0 };
+				return { 0, 0, L.Z > 0 ? 1.0f : -1.0f };
+			}
+		}
+		return { 1, 0, 0 };
+	}
+}
 
 void USkeletalMeshComponent::SetAnimInstance(UAnimInstance* InInstance)
 {
@@ -108,6 +204,203 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
 	}
 	UpdatePreviewDissolve(DeltaTime);
 	Super::TickComponent(DeltaTime);
+
+	UpdateKinematicBonesToAnim(bPendingKinematicTeleport ? ETeleportType::TeleportPhysics : ETeleportType::None);
+	bPendingKinematicTeleport = false;
+}
+
+void USkeletalMeshComponent::RegisterComponentTickFunctions(bool bRegister)
+{
+	Super::RegisterComponentTickFunctions(bRegister);
+
+	if (!bRegister)
+	{
+		EndPhysicsTickFunction.UnRegisterTickFunction();
+		return;
+	}
+	
+	if (IsRegistered() && GetWorld() && !EndPhysicsTickFunction.IsTickFunctionRegistered())
+	{
+		EndPhysicsTickFunction.RegisterTickFunction(GetWorld()->GetTickTaskManager());
+	}
+
+	EndPhysicsTickFunction.SetTickFunctionEnable(Bodies.Num() > 0 && Bodies[0]->IsDynamic());
+}
+
+void USkeletalMeshComponent::EndPhysicsTickComponent(float DeltaTime)
+{
+	BlendInPhysics();
+}
+
+void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
+{
+	for (auto& Body : Bodies)
+	{
+		Body->SetInstanceSimulatePhysics(bSimulate);
+	}
+
+	EndPhysicsTickFunction.SetTickFunctionEnable(bSimulate);
+
+	if (!bSimulate)
+	{
+		bPendingKinematicTeleport = true;
+	}
+}
+
+void USkeletalMeshComponent::OnTransformDirty(ETeleportType TeleportType)
+{
+	Super::OnTransformDirty(TeleportType);
+	if (TeleportType != ETeleportType::None)
+	{
+		UpdateKinematicBonesToAnim(TeleportType);
+	}
+}
+
+void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
+{
+	USkeletalMesh* Mesh = GetSkeletalMesh();
+	UPhysicsAsset* Asset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
+	if (!Asset || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
+	{
+		return;
+	}
+
+	RefreshBoneTransformsNow();
+	if (ComponentSpaceTransforms.Num() != Mesh->GetNumBones())
+	{
+		KRS_LOG(Warning, "[Ragdoll] bone transforms not ready");
+		return;
+	}
+
+	physx::PxU32 NumShapes = 0;
+	for (const UBodySetup* Body : Asset->BodySetups)
+	{
+		if (Body)
+		{
+			NumShapes += Body->AggGeom.GetElementCount();
+		}
+	}
+
+	Aggregate = Physics->createAggregate(Asset->BodySetups.Num(), NumShapes, physx::PxGetAggregateFilterHint(physx::PxAggregateType::eGENERIC, false));
+	if (!Aggregate)
+	{
+		return;
+	}
+
+	const FTransform LocalToWorld(GetWorldRotation(), GetWorldLocation(), GetWorldScale3D());
+
+	BoneToBody.Empty();
+	BoneToBody.SetNum(Mesh->GetNumBones());
+
+	int32 NumFailed = 0;
+	for (UBodySetup* Body : Asset->BodySetups)
+	{
+		const int32 BoneIndex = Body ? Mesh->FindBoneIndex(Body->BoneName) : INDEX_NONE;
+		if (BoneIndex == INDEX_NONE)
+		{
+			NumFailed++;
+			continue;
+		}
+
+		TUniquePtr<FBodyInstance> BodyInstance = MakeUnique<FBodyInstance>();
+		BodyInstance->bSimulatePhysics = false;
+		BodyInstance->BoneIndex = BoneIndex;
+		BodyInstance->InitBody(Body, GetBoneTransform(BoneIndex, LocalToWorld), this, PhysScene, Aggregate);
+
+		if (BodyInstance->IsValidBodyInstance())
+		{
+			BoneToBody[BoneIndex] = BodyInstance.get();
+			Bodies.Add(std::move(BodyInstance));
+		}
+		else
+		{
+			NumFailed++;
+		}
+	}
+
+	InitConstraints(*Asset);
+	PhysScene->GetPxScene()->addAggregate(*Aggregate);
+	KRS_LOG(Warning, "[Ragdoll] bodies created: {}, failed: {}", Bodies.Num(), NumFailed);
+
+	if (BodyInstance.bSimulatePhysics)
+	{
+		SetSimulatePhysics(true);
+	}
+}
+
+void USkeletalMeshComponent::TermArticulated()
+{
+	Constraints.Empty();
+	for (auto& Body : Bodies)
+	{
+		Body->TermBody();
+	}
+	Bodies.Empty();
+
+	if (Aggregate)
+	{
+		Aggregate->release();
+		Aggregate = nullptr;
+	}
+
+	BoneToBody.Empty();
+}
+
+void USkeletalMeshComponent::UpdateKinematicBonesToAnim(ETeleportType TeleportType)
+{
+	if (Bodies.Num() == 0)
+	{
+		return;
+	}
+
+	const FTransform LocalToWorld(GetWorldRotation(), GetWorldLocation(), GetWorldScale3D());
+	for (auto& Body : Bodies)
+	{
+		if (Body->IsDynamic())
+		{
+			continue;
+		}
+		Body->SetBodyTransform(GetBoneTransform(Body->BoneIndex, LocalToWorld), TeleportType);
+	}
+}
+
+void USkeletalMeshComponent::BlendInPhysics()
+{
+	const TArray<FBoneInfo>& Bones = GetBones();
+	if (BoneToBody.Num() != Bones.Num() || BoneSpaceTransforms.Num() != Bones.Num())
+	{
+		return;
+	}
+
+	if (IsSimulatingRagdoll())
+	{
+		UpdateComponentToRootBody();
+	}
+
+	const FMatrix WorldToComponent = GetWorldMatrix().Inverse();
+
+	TArray<FMatrix> ComponentSpace;
+	ComponentSpace.SetNum(Bones.Num());
+
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const int32 Parent = Bones[i].ParentIndex;
+		FBodyInstance* Body = BoneToBody[i];
+
+		if (Body && Body->IsDynamic())
+		{
+			ComponentSpace[i] = Body->GetUnrealWorldTransform().GetLocalMatrix() * WorldToComponent;
+			BoneSpaceTransforms[i] = (Parent < 0) ? FTransform(ComponentSpace[i]) : FTransform(ComponentSpace[i] * ComponentSpace[Parent].Inverse());
+		}
+		else
+		{
+			const FMatrix Local = BoneSpaceTransforms[i].GetLocalMatrix();
+			ComponentSpace[i] = (Parent < 0) ? Local : Local * ComponentSpace[Parent];
+		}
+	}
+
+	UpdateBoneTransformsNow();
 }
 
 const TArray<FBoneInfo>& USkeletalMeshComponent::GetBones() const
@@ -402,6 +695,61 @@ void USkeletalMeshComponent::OnSkeletalMeshChanged()
 	for (const FBoneInfo& Bone : GetBones())
 		BoneSpaceTransforms.Add(Bone.LocalBindPose);
 }
+
+void USkeletalMeshComponent::InitConstraints(const UPhysicsAsset& Asset)
+{
+	const auto& Bones = GetBones();
+
+	TArray<physx::PxTransform> BindPoses;
+	BuildBindPoses(Bones, GetWorldScale3D(), BindPoses);
+
+	int32 NumFailed = 0;
+	for (const auto& Constraint : Asset.Constraints)
+	{
+		const int32 ChildBone = FindBoneIndex(Constraint.ChildBone);
+		const int32 ParentBone = FindBoneIndex(Constraint.ParentBone);
+		FBodyInstance* ChildBody = ChildBone >= 0 ? BoneToBody[ChildBone] : nullptr;
+		FBodyInstance* ParentBody = ParentBone >= 0 ? BoneToBody[ParentBone] : nullptr;
+		if (!ChildBody || !ParentBody)
+		{
+			NumFailed++;
+			continue;
+		}
+
+		const physx::PxQuat TwistAlign = physx::PxShortestRotation(physx::PxVec3(1, 0, 0), FindBoneAxis(Bones, ChildBone));
+		const physx::PxQuat Offset = K2PQuat(Constraint.FrameOffset.Quaternion().Normalized());
+		const physx::PxTransform JointBind(BindPoses[ChildBone].p, (BindPoses[ChildBone].q * TwistAlign * Offset).getNormalized());
+
+		const physx::PxTransform Frame0 = BindPoses[ParentBone].getInverse() * JointBind;
+		const physx::PxTransform Frame1 = BindPoses[ChildBone].getInverse() * JointBind;
+
+		TUniquePtr<FConstraintInstance> ConstraintInstance = MakeUnique<FConstraintInstance>();
+		ConstraintInstance->LinearX = EConstraintMotion::Locked;
+		ConstraintInstance->LinearY = EConstraintMotion::Locked;
+		ConstraintInstance->LinearZ = EConstraintMotion::Locked;
+		ConstraintInstance->Swing1Motion = Constraint.Swing1Motion;
+		ConstraintInstance->Swing2Motion = Constraint.Swing2Motion;
+		ConstraintInstance->TwistMotion = Constraint.TwistMotion;
+		ConstraintInstance->Swing1LimitAngle = Constraint.Swing1LimitDeg;
+		ConstraintInstance->Swing2LimitAngle = Constraint.Swing2LimitDeg;
+		ConstraintInstance->TwistLimitLowerAngle = Constraint.TwistMinDeg;
+		ConstraintInstance->TwistLimitUpperAngle = Constraint.TwistMaxDeg;
+
+		ConstraintInstance->InitConstraint(ParentBody, ChildBody, P2KTransform(Frame0), P2KTransform(Frame1));
+
+		if (ConstraintInstance->IsValidConstraint())
+		{
+			Constraints.Add(std::move(ConstraintInstance));
+		}
+		else
+		{
+			NumFailed++;
+		}
+	}
+
+	KRS_LOG(Info, "[Ragdoll] constraints created: {}, failed {}", Constraints.Num(), NumFailed);
+}
+
 UAnimSingleNodeInstance* USkeletalMeshComponent::GetSingleNodeInstance() const
 {
 	return Cast<UAnimSingleNodeInstance>(AnimInstance);
@@ -569,8 +917,73 @@ void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher)
 	}
 }
 
+void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher)
+{
+	if (!World || !LineBatcher) return;
+	for (TObjectIterator<USkeletalMeshComponent> It; It; ++It)
+	{
+		const USkeletalMeshComponent* Mesh = *It;
+		if (!Mesh || Mesh->GetWorld() != World || !Mesh->IsRegistered()) continue;
+		Mesh->DrawPhysicsAssetDebug(LineBatcher);
+	}
+}
+
+void FSkeletalMeshComponentEndPhysicsTickFunction::ExecuteTick(float DeltaTime)
+{
+	Target->EndPhysicsTickComponent(DeltaTime);
+}
+
+void USkeletalMeshComponent::DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const
+{
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	const UPhysicsAsset* PhysicsAsset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	if (!LineBatcher || !PhysicsAsset)
+	{
+		return;
+	}
+
+	const FVector4 ShapeColor(0.2f, 1.0f, 0.4f, 1.0f);
+	const FVector4 OffsetColor(1.0f, 0.9f, 0.2f, 1.0f);
+
+	for (const UBodySetup* Body : PhysicsAsset->BodySetups)
+	{
+		if (!Body) continue;
+		const int32 BoneIndex = Mesh->FindBoneIndex(Body->BoneName);
+		if (BoneIndex < 0 || BoneIndex >= ComponentSpaceTransforms.Num()) continue;
+
+		const FMatrix BoneToWorld = GetBoneWorldMatrix(BoneIndex);
+		const FVector BoneOrigin = BoneToWorld.TransformPosition(FVector::ZeroVector);
+		const FAggregateGeom& Geom = Body->AggGeom;
+
+		auto ShapeToWorld = [&](const FShapeElem& Elem)
+		{
+			const FMatrix M = FTransform(Elem.Rotation, Elem.Center).GetLocalMatrix() * BoneToWorld;
+			LineBatcher->AddLine(BoneOrigin, M.TransformPosition(FVector::ZeroVector), OffsetColor);
+			return M;
+		};
+
+		for (const FSphereElem& Elem : Geom.SphereElems)
+		{
+			DrawLocalSphere(LineBatcher, ShapeToWorld(Elem), Elem.Radius, ShapeColor);
+		}
+		for (const FBoxElem& Elem : Geom.BoxElems)
+		{
+			const FVector E(0.5f * Elem.X, 0.5f * Elem.Y, 0.5f * Elem.Z);
+			LineBatcher->AddOrientedBox(FBox{ E * -1.0f, E }, ShapeToWorld(Elem), ShapeColor);
+		}
+		for (const FCapsuleElem& Elem : Geom.CapsuleElems)
+		{
+			DrawLocalCapsule(LineBatcher, ShapeToWorld(Elem), Elem.Radius, Elem.Length, ShapeColor);
+		}
+	}
+}
+
 USkeletalMeshComponent::USkeletalMeshComponent()
 {
+	EndPhysicsTickFunction.Target = this;
+	EndPhysicsTickFunction.bCanEverTick = true;
+	EndPhysicsTickFunction.bStartWithTickEnabled = false;
+	EndPhysicsTickFunction.TickGroup = ETickingGroup::PostPhysics;
 }
 
 USkeletalMeshComponent::~USkeletalMeshComponent()
@@ -826,4 +1239,46 @@ void USkeletalMeshComponent::SetDissolveHidden(bool bHidden)
 	}
 	bDissolveHidden = bHidden;
 	SetVisibility(!bHidden);
+}
+
+void USkeletalMeshComponent::OnCreatePhysicsState()
+{
+	Super::OnCreatePhysicsState();
+	InitArticulated(GetWorld() ? GetWorld()->GetPhysicsScene() : nullptr);
+}
+
+void USkeletalMeshComponent::OnDestroyPhysicsState()
+{
+	TermArticulated();
+	Super::OnDestroyPhysicsState();
+}
+
+bool USkeletalMeshComponent::IsSimulatingRagdoll() const
+{
+	return Bodies.Num() > 0 && Bodies[0]->IsDynamic();
+}
+
+void USkeletalMeshComponent::UpdateComponentToRootBody()
+{
+	FBodyInstance* RootBody = nullptr;
+	for (auto* Body : BoneToBody)
+	{
+		if (Body && Body->IsDynamic())
+		{
+			RootBody = Body;
+			break;
+		}
+	}
+	if (!RootBody)
+	{
+		return;
+	}
+
+	const FVector Delta = RootBody->GetUnrealWorldTransform().Location - GetWorldLocation();
+
+	AActor* Owner = GetOwner();
+	USceneComponent* Target = (Owner && Owner->GetRootComponent()) ? Owner->GetRootComponent() : this;
+
+	const FTransform NewTransform(GetWorldRotation(), GetWorldLocation() + Delta, GetWorldScale3D());
+	Target->SetWorldTransform(NewTransform.GetLocalMatrix(), false, ETeleportType::None);
 }

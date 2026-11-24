@@ -39,11 +39,11 @@ USceneComponent::~USceneComponent()
 	DetachFromParent();
 }
 
-void USceneComponent::SetRelativeLocationAndRotation(const FVector& NewLocation, const FRotator& NewRotation)
+void USceneComponent::SetRelativeLocationAndRotation(const FVector& NewLocation, const FRotator& NewRotation, ETeleportType TeleportType)
 {
 	Transform.Location = NewLocation;
 	Transform.Rotation = RelativeRotationCache.RotatorToQuat(NewRotation);
-	MarkTransformDirty();
+	MarkTransformDirty(TeleportType);
 }
 
 void USceneComponent::PostEditChangeProperty(const FProperty& Property)
@@ -265,7 +265,7 @@ FMatrix USceneComponent::GetWorldMatrix() const
 	return FTransform(WorldRotation, WorldLocation, WorldScale).GetLocalMatrix();
 }
 
-void USceneComponent::SetWorldTransform(const FMatrix& InWorldMatrix, bool bSweep)
+void USceneComponent::SetWorldTransform(const FMatrix& InWorldMatrix, bool bSweep, ETeleportType TeleportType)
 {
 	FMatrix LocalMatrix = InWorldMatrix;
 	if (AttachParent)
@@ -304,11 +304,11 @@ void USceneComponent::SetWorldTransform(const FMatrix& InWorldMatrix, bool bSwee
 	RotationMatrix.SetAxis(2, ZAxis);
 
 	Transform.Rotation = RelativeRotationCache.RotatorToQuat(MatrixToRotator(RotationMatrix));
-		
-	MarkTransformDirty();
+
+	MarkTransformDirty(TeleportType);
 }
 
-void USceneComponent::SetWorldLocation(FVector NewLocation, bool bSweep)
+void USceneComponent::SetWorldLocation(FVector NewLocation, bool bSweep, ETeleportType TeleportType)
 {
 	FVector NewRelLocation = NewLocation;
 
@@ -317,10 +317,10 @@ void USceneComponent::SetWorldLocation(FVector NewLocation, bool bSweep)
 		NewRelLocation = GetAttachParent()->GetWorldMatrix().Inverse().TransformPosition(NewRelLocation);
 	}
 
-	SetRelativeLocation(NewRelLocation);
+	SetRelativeLocation(NewRelLocation, TeleportType);
 }
 
-void USceneComponent::SetWorldRotation(FRotator NewRotation, bool bSweep)
+void USceneComponent::SetWorldRotation(FRotator NewRotation, bool bSweep, ETeleportType TeleportType)
 {
 	FRotator NewRelRotation = NewRotation;
 
@@ -330,10 +330,10 @@ void USceneComponent::SetWorldRotation(FRotator NewRotation, bool bSweep)
 		NewRelRotation = NewRelQuat.ToFRotator();
 	}
 
-	SetRelativeRotation(NewRelRotation);
+	SetRelativeRotation(NewRelRotation, TeleportType);
 }
 
-void USceneComponent::SetWorldLocationAndRotation(FVector NewLocation, FRotator NewRotation, bool bSweep)
+void USceneComponent::SetWorldLocationAndRotation(FVector NewLocation, FRotator NewRotation, bool bSweep, ETeleportType TeleportType)
 {
 	FVector NewRelLocation = NewLocation;
 	FRotator NewRelRotation = NewRotation;
@@ -346,14 +346,14 @@ void USceneComponent::SetWorldLocationAndRotation(FVector NewLocation, FRotator 
 		NewRelRotation = NewRelQuat.ToFRotator();
 	}
 
-	SetRelativeLocationAndRotation(NewRelLocation, NewRelRotation);
+	SetRelativeLocationAndRotation(NewRelLocation, NewRelRotation, TeleportType);
 }
 
-void USceneComponent::SetWorldScale3D(FVector NewScale)
+void USceneComponent::SetWorldScale3D(FVector NewScale, ETeleportType TeleportType)
 {
 }
 
-bool USceneComponent::MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit)
+bool USceneComponent::MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit, ETeleportType TeleportType)
 {
 	FHitResult LocalHit(1.0f);
 	FHitResult& Result = Hit ? *Hit : LocalHit;
@@ -372,7 +372,7 @@ bool USceneComponent::MoveComponent(const FVector& Delta, const FRotator& NewRot
 				Destination = Start + Delta * Result.Time + Result.ImpactNormal * 0.001f;
 		}
 	}
-	SetWorldLocationAndRotation(Destination, NewRotation, false);
+	SetWorldLocationAndRotation(Destination, NewRotation, false, TeleportType);
 	return !bBlocked;
 }
 
@@ -385,12 +385,12 @@ float USceneComponent::GetCollisionRadius() const
 	return std::min({ Extent.X, Extent.Y, Extent.Z });
 }
 
-void USceneComponent::MarkTransformDirty()
+void USceneComponent::MarkTransformDirty(ETeleportType TeleportType)
 {
-	OnTransformDirty();         
+	OnTransformDirty(TeleportType);         
 
 	for (USceneComponent* Child : AttachChildren)
-		Child->MarkTransformDirty();      // 부모가 움직이면 자식의 월드 행렬도 바뀐다
+		Child->MarkTransformDirty(TeleportType);      // 부모가 움직이면 자식의 월드 행렬도 바뀐다
 }
 
 void USceneComponent::Serialize(FStructuredArchive::FRecord Record)

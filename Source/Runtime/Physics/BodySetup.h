@@ -9,7 +9,8 @@ class UBodySetup : public UObject
 	GENERATED_BODY()
 public:
 	UPROPERTY(EditAnywhere)
-	FAggregateGeom AggGeom;
+	FString BoneName;
 
-private:
+	UPROPERTY(EditAnywhere)
+	FAggregateGeom AggGeom;
 };
