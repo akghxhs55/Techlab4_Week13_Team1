@@ -4,19 +4,33 @@
 #include "Animation/AnimInstance.h"
 #include "SkeletalMeshComponent.generated.h"
 
+struct FConstraintInstance;
 class UAnimInstance;
 class UAnimSequence;
 class UBlendSpace1D;
 class UWorld;
 class FLineBatcher;
+namespace physx
+{
+	class PxAggregate;
+}
 
 // World의 SkeletalMeshComponent마다 root 디버그를 그린다 (DrawCollisionShapes와 같은 방식). PIE의 Show Root에서 호출
 void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher);
 // Settings > Debug Draw (PIE) > Show Root 값. 에디터가 매 프레임 갱신하고, 런타임 액터("root" 라벨 등)가 읽는다
 extern bool GShowSkeletalRootDebug;
+void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher);
 class UAnimationAsset;
 class UAnimSingleNodeInstance;
 class UAnimGraphInstance;
+
+class USkeletalMeshComponent;
+
+struct FSkeletalMeshComponentEndPhysicsTickFunction : public FTickFunction
+{
+	USkeletalMeshComponent* Target = nullptr;
+	virtual void ExecuteTick(float DeltaTime) override;
+};
 
 UCLASS()
 class USkeletalMeshComponent : public USkinnedMeshComponent
@@ -36,6 +50,17 @@ public:
 	UAnimInstance* GetAnimInstance() const { return AnimInstance; }
 	void BeginPlay() override;
 	void TickComponent(float DeltaTime) override;
+
+	virtual void RegisterComponentTickFunctions(bool bRegister) override;
+	void EndPhysicsTickComponent(float DeltaTime);
+
+	virtual void SetSimulatePhysics(bool bSimulate) override;
+	virtual void OnTransformDirty(ETeleportType TeleportType) override;
+
+	void InitArticulated(FPhysScene* PhysScene);
+	void TermArticulated();
+	void UpdateKinematicBonesToAnim(ETeleportType TeleportType);
+	void BlendInPhysics();
 
 	const TArray<FBoneInfo>& GetBones() const;
 	int32 FindBoneIndex(const FString& Name) const;
@@ -85,6 +110,9 @@ public:
 	// 디버그: root 본 구체 + 액터 위치(root 높이)에서 root까지의 선
 	void DrawRootDebug(FLineBatcher* LineBatcher) const;
 
+	// 디버그: 메시의 Physics 에셋 바디(구·박스·캡슐)를 각 본의 현재 월드 행렬 위에 그린다
+	void DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const;
+
 	void StartPreviewDissolve(float InDuration, const FVector4& InEdgeColor);
 	void UpdatePreviewDissolve(float DeltaTime);
 	void ResetPreviewDissolve();
@@ -93,6 +121,9 @@ public:
 	bool IsPreviewDissolveActive() const { return bPreviewDissolveActive; }
 
 protected:
+	virtual void OnCreatePhysicsState() override;
+	virtual void OnDestroyPhysicsState() override;
+
 	// 단일 애니메이션 에셋 경로/루프/재생 속도를 씬에 저장·복원한다 (Serialize에서 부른다)
 	void SerializeSingleAnimation(FStructuredArchive::FRecord& Record);
 
@@ -100,6 +131,10 @@ protected:
 	void OnSkeletalMeshChanged() override;
 
 private:
+	void InitConstraints(const UPhysicsAsset& Asset);
+	bool IsSimulatingRagdoll() const;
+	void UpdateComponentToRootBody();
+
     UPROPERTY()
     FString AnimBlueprintPath;
 
@@ -115,6 +150,13 @@ private:
 
 	FTransform PendingRootMotion;           // 월드 공간 누적값
 	bool bHasPendingRootMotion = false;
+
+	FSkeletalMeshComponentEndPhysicsTickFunction EndPhysicsTickFunction;
+	TArray<TUniquePtr<FBodyInstance>> Bodies;
+	physx::PxAggregate* Aggregate = nullptr;
+	TArray<FBodyInstance*> BoneToBody;
+	bool bPendingKinematicTeleport = false;
+	TArray<TUniquePtr<FConstraintInstance>> Constraints;
 
 	bool bPreviewDissolveActive = false;
 	bool bDissolveHidden = false;

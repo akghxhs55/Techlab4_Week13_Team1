@@ -13,6 +13,8 @@ struct FTransform
 		: Location(InL), Scale(InS), Rotation(InR.Quaternion()) {}
 	FTransform(const FQuat& InR, const FVector& InL, const FVector& InS = FVector::OneVector)
 		: Location(InL), Scale(InS), Rotation(InR) {}
+	// UE FTransform(const FMatrix&) / SetFromMatrix: 스케일·회전·위치로 분해한다
+	explicit FTransform(const FMatrix& InMatrix);
 
 	static FTransform Identity;
 

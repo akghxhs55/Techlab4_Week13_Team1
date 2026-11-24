@@ -11,6 +11,8 @@
 #include <vector>
 #include "SkeletalMesh.generated.h"
 
+class UPhysicsAsset;
+
 struct FSkeletalMeshLODRenderData
 {
 	TArray<FVertex> BindVertices;
@@ -57,6 +59,9 @@ public:
 	bool LoadSocketsFromFile(const FString& FilePath);
 	bool SaveSocketsToFile(const FString& FilePath) const;
 
+	UPhysicsAsset* GetPhysicsAsset() const { return PhysicsAsset; }
+	void SetPhysicsAsset(UPhysicsAsset* NewPhysicsAsset) { PhysicsAsset = NewPhysicsAsset; }
+
 private:
 	struct FMaterialSlotsHash
 	{
@@ -70,4 +75,5 @@ private:
 	TArray<FSkeletalMeshSocket> Sockets;
 	// UStaticMesh와 같은 캐시: 같은 머티리얼 조합의 컴포넌트끼리 섹션 목록 공유
 	TMap<TArray<UMaterialInterface*>, TWeakPtr<const FMeshRenderState>, FMaterialSlotsHash> RenderStates;
+	UPhysicsAsset* PhysicsAsset = nullptr;
 };
