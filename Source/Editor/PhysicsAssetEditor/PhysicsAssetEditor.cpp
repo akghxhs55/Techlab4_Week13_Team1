@@ -5,6 +5,9 @@
 #include "Engine/World.h"
 #include "Engine/Scene.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Asset/AssetManager.h"
+#include "Render/Mesh.h"
 #include "Render/SkeletalMesh.h"
 #include "Render/LineBatcher.h"
 #include "Physics/PhysicsAsset.h"
@@ -334,12 +337,12 @@ bool FPhysicsAssetEditor::StartSimulation()
 {
 	if (IsSimulationActive()) return true;
 	CancelViewportInteraction();
-	if (!Simulation || !MeshComponent || !PhysicsAsset)
+	if (!Simulation || !MeshComponent || !PreviewFloor || !PhysicsAsset)
 	{
 		SimulationError = "The preview mesh or physics asset is unavailable.";
 		return false;
 	}
-	const bool bStarted = Simulation->Start(*MeshComponent, *PhysicsAsset, SimulationError);
+	const bool bStarted = Simulation->Start(*MeshComponent, *PreviewFloor, *PhysicsAsset, SimulationError);
 	SyncShapeGizmo();
 	return bStarted;
 }
@@ -352,37 +355,15 @@ void FPhysicsAssetEditor::StopSimulation()
 	if (UWorld* World = PreviewScene.GetWorld()) World->GetScene().UpdateAllTransforms();
 }
 
-void FPhysicsAssetEditor::ToggleSimulationPause()
+void FPhysicsAssetEditor::ToggleSimulation()
 {
-	if (Simulation) Simulation->TogglePause();
-}
-
-void FPhysicsAssetEditor::StepSimulation()
-{
-	if (Simulation) Simulation->Step();
-}
-
-void FPhysicsAssetEditor::ResetSimulation()
-{
-	if (!IsSimulationActive()) return;
-	const bool bWasPaused = IsSimulationPaused();
-	StopSimulation();
-	if (StartSimulation() && bWasPaused) ToggleSimulationPause();
+	if (IsSimulationActive()) StopSimulation();
+	else StartSimulation();
 }
 
 bool FPhysicsAssetEditor::IsSimulationActive() const
 {
 	return Simulation && Simulation->IsActive();
-}
-
-bool FPhysicsAssetEditor::IsSimulationPaused() const
-{
-	return Simulation && Simulation->IsPaused();
-}
-
-float FPhysicsAssetEditor::GetSimulationTime() const
-{
-	return Simulation ? Simulation->GetElapsedTime() : 0.0f;
 }
 
 void FPhysicsAssetEditor::OnRenderLine(FLineBatcher& LineBatcher)
@@ -396,7 +377,6 @@ void FPhysicsAssetEditor::OnRenderDebugOverlay(const FSceneView* View)
 	PhysicsBodyLines->BeginFrame();
 	// 물리 형상 전용 배치에서 깊이를 검사하고, 장면 깊이에는 쓰지 않습니다.
 	PhysicsBodyLines->SetDepthTest(bBodyDepthTest, false);
-	if (Simulation) Simulation->DrawFloor(*PhysicsBodyLines);
 	const FShapeElem* SelectedShape = GetSelectedShape();
 	for (int32 Index = 0; Index < PreviewBodies.Num(); ++Index)
 	{
@@ -483,7 +463,41 @@ bool FPhysicsAssetEditor::InitializeResources()
 	ShapeGizmoTarget = Cast<USceneComponent>(PreviewScene.AddComponent(USceneComponent::StaticClass()));
 	if (!ShapeGizmoTarget) return false;
 	ShapeGizmoTarget->DetachFromParent();
+	if (!InitializePreviewFloor()) return false;
 	Simulation = MakeUnique<FPhysicsAssetSimulation>();
+	return true;
+}
+
+bool FPhysicsAssetEditor::InitializePreviewFloor()
+{
+	UStaticMesh* FloorMesh = UAssetManager::GetAssetByPath<UStaticMesh>("Cube");
+	if (!FloorMesh || !MeshComponent) return false;
+	const FBox Bounds = MeshComponent->CalcBounds();
+	const FBox& FloorBounds = FloorMesh->GetMeshData().AABB;
+	const FVector NativeSize = FloorBounds.Max - FloorBounds.Min;
+	const FVector MeshSize = Bounds.Max - Bounds.Min;
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		if (!std::isfinite(Bounds.Min[Axis]) || !std::isfinite(Bounds.Max[Axis]) ||
+			!std::isfinite(NativeSize[Axis]) || !std::isfinite(MeshSize[Axis]) ||
+			NativeSize[Axis] <= 0.0f || MeshSize[Axis] < 0.0f) return false;
+	}
+	// 바닥 윗면의 중심을 월드 원점에 맞추고, 캐릭터가 쓰러질 공간을 확보합니다.
+	const float HalfExtent = FMath::Max(1.0f, FMath::Max(MeshSize.Z, FMath::Max(MeshSize.X, MeshSize.Y))) * 2.0f;
+	const float Thickness = FMath::Max(0.05f, MeshSize.Z * 0.025f);
+	const FVector FloorScale(HalfExtent * 2.0f / NativeSize.X, HalfExtent * 2.0f / NativeSize.Y, Thickness / NativeSize.Z);
+	const FVector Center(0.0f, 0.0f, -Thickness * 0.5f);
+	const FVector NativeCenter = (FloorBounds.Min + FloorBounds.Max) * 0.5f;
+	PreviewFloor = Cast<UStaticMeshComponent>(PreviewScene.AddComponent(UStaticMeshComponent::StaticClass()));
+	if (!PreviewFloor) return false;
+	PreviewFloor->SetStaticMesh(FloorMesh);
+	PreviewFloor->DetachFromParent();
+	PreviewFloor->SetTransform(FTransform(FRotator(0.0f, 0.0f, 0.0f), Center - NativeCenter * FloorScale, FloorScale));
+	PreviewFloor->bGenerateOverlapEvents = false;
+	PreviewFloor->bBlockComponent = true;
+	PreviewFloor->BodyInstance.bSimulatePhysics = false;
+	PreviewFloor->BodyInstance.bEnableGravity = false;
+	PreviewFloor->BodyInstance.CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	return true;
 }
 
@@ -491,6 +505,7 @@ void FPhysicsAssetEditor::ShutdownResources()
 {
 	StopSimulation();
 	Simulation.reset();
+	PreviewFloor = nullptr;
 	CancelViewportInteraction();
 	ShapeGizmo.SetTarget(nullptr);
 	ShapeGizmoTarget = nullptr;

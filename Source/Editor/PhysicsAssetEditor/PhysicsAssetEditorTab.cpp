@@ -38,13 +38,9 @@ void FPhysicsAssetEditorTab::DrawMenuBar()
 	}
 	if (ImGui::BeginMenu("Simulation"))
 	{
-		if (ImGui::MenuItem("Simulate", nullptr, false, !PhysicsEditor.IsSimulationActive() && !PhysicsEditor.GetPreviewBodies().IsEmpty()))
-			PhysicsEditor.StartSimulation();
-		if (ImGui::MenuItem(PhysicsEditor.IsSimulationPaused() ? "Resume" : "Pause", nullptr, false, PhysicsEditor.IsSimulationActive()))
-			PhysicsEditor.ToggleSimulationPause();
-		if (ImGui::MenuItem("Step", nullptr, false, PhysicsEditor.IsSimulationPaused())) PhysicsEditor.StepSimulation();
-		if (ImGui::MenuItem("Reset", nullptr, false, PhysicsEditor.IsSimulationActive())) PhysicsEditor.ResetSimulation();
-		if (ImGui::MenuItem("Stop", nullptr, false, PhysicsEditor.IsSimulationActive())) PhysicsEditor.StopSimulation();
+		const bool bSimulating = PhysicsEditor.IsSimulationActive();
+		if (ImGui::MenuItem("Simulate", nullptr, bSimulating, bSimulating || !PhysicsEditor.GetPreviewBodies().IsEmpty()))
+			PhysicsEditor.ToggleSimulation();
 		ImGui::EndMenu();
 	}
 	EditorDock::DrawWindowMenu(Panels);
@@ -106,6 +102,16 @@ void FPhysicsAssetEditorTab::OnRender(bool bActive)
 	}
 	const ImGuiIO& IO = ImGui::GetIO();
 	const bool bTabFocused = bActive && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_DockHierarchy);
-	if ((bTabFocused || HasFocusedSubWindow()) && IO.KeyCtrl && !IO.KeyAlt && !IO.KeyShift &&
+	bool bPanelFocused = false;
+	for (const auto& Panel : Panels)
+	{
+		// 비활성 탭의 도킹 패널은 이번 프레임에 렌더링되지 않아 이전 포커스가 남을 수 있습니다.
+		if (Panel->IsOpen() && Panel->IsFocused() && (bActive || Panel->IsDetached(DockSpaceId)))
+		{
+			bPanelFocused = true;
+			break;
+		}
+	}
+	if ((bTabFocused || bPanelFocused) && IO.KeyCtrl && !IO.KeyAlt && !IO.KeyShift &&
 		!IO.WantTextInput && !IO.AppFocusLost && ImGui::IsKeyPressed(ImGuiKey_S, false)) PhysicsEditor.Save();
 }

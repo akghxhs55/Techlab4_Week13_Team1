@@ -26,8 +26,8 @@ private:
 		bool bRevealSelection, bool& bScrollToSelection);
 	void DrawBodyNode(int32 BodyIndex, bool bRevealSelection, bool& bScrollToSelection,
 		const FBodyTreeContext* BodyTree = nullptr);
-	bool bBodiesOnly = false;
-	bool bShowShapes = true;
+	bool bShowBones = true;
+	bool bShowBodies = true;
 	// 배열을 순회하는 동안에는 메뉴 요청만 보관하고 DrawContent 마지막에 적용합니다.
 	std::function<void()> PendingEdit;
 	char SearchBuffer[128] = {};

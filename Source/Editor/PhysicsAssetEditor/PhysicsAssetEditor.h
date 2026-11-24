@@ -8,6 +8,7 @@ class UBodySetup;
 class UPhysicsAsset;
 struct FPhysicsAssetConstraint;
 class FPhysicsAssetSimulation;
+class UStaticMeshComponent;
 
 // 에셋의 BodySetup을 참조하는 에디터 뷰입니다. 형상 데이터는 복사하지 않습니다.
 struct FPhysicsAssetPreviewBody
@@ -45,12 +46,8 @@ public:
 	const FGizmo* GetPreviewGizmo() const override { return !IsSimulationActive() && ShapeGizmo.GetTarget() && IsBodyVisible(SelectedBodyIndex) ? &ShapeGizmo : nullptr; }
 	bool StartSimulation();
 	void StopSimulation();
-	void ToggleSimulationPause();
-	void StepSimulation();
-	void ResetSimulation();
+	void ToggleSimulation();
 	bool IsSimulationActive() const;
-	bool IsSimulationPaused() const;
-	float GetSimulationTime() const;
 	const FString& GetSimulationError() const { return SimulationError; }
 	void SetBodyDrawMode(EBodyDrawMode Mode);
 	EBodyDrawMode GetBodyDrawMode() const { return BodyDrawMode; }
@@ -109,6 +106,7 @@ protected:
 private:
 	void MarkModified();
 	void RebuildBodyViews();
+	bool InitializePreviewFloor();
 	bool DiscardChanges();
 	TArray<uint8> SavedAssetBytes;
 	FString SaveMessage;
@@ -116,6 +114,7 @@ private:
 	bool bSaveFailed = false;
 	bool bDirtyBeforeGizmo = false;
 	TUniquePtr<FPhysicsAssetSimulation> Simulation;
+	UStaticMeshComponent* PreviewFloor = nullptr;
 	FString SimulationError;
 	FString PreviewDocumentKey;
 	FShapeElem* GetSelectedShape();

@@ -25,10 +25,21 @@
 #include "Particles/ParticleSystemFile.h"
 
 #include <filesystem>
+#include <cctype>
 #include <commdlg.h>
 
 namespace
 {
+	constexpr char PhysicsAssetSuffix[] = ".physics.json";
+
+	bool IsPhysicsAssetPath(const FString& Path)
+	{
+		FString Lower = Path;
+		for (char& Character : Lower)
+			Character = static_cast<char>(std::tolower(static_cast<unsigned char>(Character)));
+		return Lower.ends_with(".fbx.bin.physics.json");
+	}
+
 	constexpr int32 PhysicsAssetEditorLauncherIndex = 7;
 	struct FEditorLauncher
 	{
@@ -136,6 +147,11 @@ void FEditorManager::OpenEditor(const FString& AssetPath)
 		return;
 	}
 
+	if (IsPhysicsAssetPath(Path))
+	{
+		OpenPhysicsAssetEditor(Path);
+		return;
+	}
 	PendingOpens.Add(Path);
 }
 
@@ -540,9 +556,12 @@ void FEditorManager::CreateAnimBlueprintPreview(const FString& PreviewMeshPath)
 	Editors.Add(std::move(Editor));
 }
 
-void FEditorManager::OpenPhysicsAssetEditor(const FString& PreviewMeshPath)
+void FEditorManager::OpenPhysicsAssetEditor(const FString& AssetPath)
 {
 	if (bShuttingDown) return;
+	// Physics JSON은 같은 폴더의 <mesh>.fbx.bin.physics.json 규칙으로 원본 메시를 찾습니다.
+	const FString PreviewMeshPath = IsPhysicsAssetPath(AssetPath)
+		? AssetPath.substr(0, AssetPath.size() - (sizeof(PhysicsAssetSuffix) - 1)) : AssetPath;
 	const FString Path = FAssetUtils::GetAssetKey(PreviewMeshPath);
 	if (Path.empty())
 	{

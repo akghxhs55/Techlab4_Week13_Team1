@@ -15,27 +15,17 @@ void FPhysicsAssetViewportPanel::DrawContent()
 {
 	DrawPreviewViewToolbar(Editor, ToolbarState);
 	ImGui::PushID("RagdollSimulation");
-	ImGui::BeginDisabled(Editor.IsSimulationActive() || Editor.GetPreviewBodies().IsEmpty());
-	if (ImGui::Button("Simulate")) Editor.StartSimulation();
+	const bool bSimulating = Editor.IsSimulationActive();
+	EditorStyle::PushSelectedButton(bSimulating);
+	ImGui::BeginDisabled(!bSimulating && Editor.GetPreviewBodies().IsEmpty());
+	if (ImGui::Button("Simulate")) Editor.ToggleSimulation();
 	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!Editor.IsSimulationActive());
-	if (ImGui::Button(Editor.IsSimulationPaused() ? "Resume" : "Pause")) Editor.ToggleSimulationPause();
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!Editor.IsSimulationPaused());
-	if (ImGui::Button("Step")) Editor.StepSimulation();
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!Editor.IsSimulationActive());
-	if (ImGui::Button("Reset")) Editor.ResetSimulation();
-	ImGui::SameLine();
-	if (ImGui::Button("Stop")) Editor.StopSimulation();
-	ImGui::EndDisabled();
+	EditorStyle::PopSelectedButton(bSimulating);
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip(Editor.IsSimulationActive()
+			? "Stop simulation and restore the initial pose and position."
+			: "Start ragdoll simulation.");
 	ImGui::PopID();
-	if (Editor.IsSimulationActive())
-		ImGui::TextDisabled("%s | %.2f s | Stop restores the initial pose and position.",
-			Editor.IsSimulationPaused() ? "Paused" : "Simulating", Editor.GetSimulationTime());
 	if (!Editor.GetSimulationError().empty())
 	{
 		ImGui::PushStyleColor(ImGuiCol_Text, EditorColor::ToVec4(EditorColor::Error));

@@ -42,8 +42,8 @@ public:
 	int32 GetEditorCount() const { return Editors.Num(); }
 
 	void OpenAnimBlueprintPreview(const FString& PreviewMeshPath);
-	// 실제 피직스 에셋 연결 전에는 스켈레탈 메시를 선택해 미리보기 에디터를 엽니다.
-	void OpenPhysicsAssetEditor(const FString& PreviewMeshPath);
+	// 스켈레탈 메시 또는 해당 메시의 .fbx.bin.physics.json 파일로 피직스 에셋 에디터를 엽니다.
+	void OpenPhysicsAssetEditor(const FString& AssetPath);
 
 	// 이 문서 키를 연 에디터. 기본 에디터의 문서 키는 에셋 경로입니다.
 	FAssetEditor* FindEditor(const FString& Path) const;
