@@ -210,6 +210,7 @@ project "KurisuEngine"
 	location (ProjectRoot .. "/Build/Projects")
 	kind     "StaticLib"
 	CommonSettings()
+	ConfigurePhysX(false)
 
 	pchheader "EnginePCH.h"
 	pchsource (ProjectRoot .. "/Source/Runtime/EnginePCH.cpp")
@@ -279,6 +280,7 @@ project "KurisuEditor"
 	location (ProjectRoot .. "/Build/Projects")
 	kind     "WindowedApp"
 	CommonSettings()
+	ConfigurePhysX(true)
 
 	-- FBX 해석은 Editor에서 수행하고 Runtime/Game은 SDK에 의존하지 않는다.
 	includedirs { path.join(FbxSdkRoot, "include"), ProjectRoot, ProjectRoot .. "/Source/Editor/Resources" }
@@ -386,6 +388,7 @@ function ConfigureGameRuntime()
 	location (ProjectRoot .. "/Build/Projects")
 	kind     "WindowedApp"
 	CommonSettings()
+	ConfigurePhysX(true)
 
 	pchheader "EnginePCH.h"
 	pchsource (ProjectRoot .. "/Source/Game/GamePCH.cpp")
