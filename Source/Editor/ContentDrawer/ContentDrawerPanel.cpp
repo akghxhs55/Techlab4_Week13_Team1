@@ -641,6 +641,18 @@ namespace
 		{
 			return { "Material", IM_COL32(76, 185, 128, 255), true };
 		}
+		if (Ext == ".json")
+		{
+			const std::string FileName = ToLowerAscii(FPaths::ToUtf8(Path.filename()));
+			if (FileName.ends_with(".fbx.bin.physics.json"))
+			{
+				return { "Physics Asset", IM_COL32(120, 200, 90, 255), true };
+			}
+			if (FileName.ends_with(".fbx.bin.sockets.json"))
+			{
+				return { "Sockets", IM_COL32(130, 134, 142, 255), true };
+			}
+		}
 		if (Ext == ".json" || Ext == ".ttf" || Ext == ".otf")
 		{
 			return { "Font", IM_COL32(90, 190, 185, 255), true };

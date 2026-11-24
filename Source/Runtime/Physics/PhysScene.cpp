@@ -245,7 +245,7 @@ void FPhysScene::SyncComponentsToBodies()
 	for (PxU32 i = 0; i < Num; ++i)
 	{
 		auto* Body = static_cast<FBodyInstance*>(Actors[i]->userData);
-		if (Body && Body->OwnerComponent)
+		if (Body && Body->BoneIndex == INDEX_NONE && Body->OwnerComponent)
 		{
 			Body->OwnerComponent->SyncComponentToRBPhysics();
 		}

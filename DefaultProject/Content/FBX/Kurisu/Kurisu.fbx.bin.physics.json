@@ -1,0 +1,36 @@
+{
+    "Class": "UPhysicsAsset",
+    "Object": {
+        "Bodies": [
+            {
+                "Properties": {
+                    "AggGeom": {
+                        "BoxElems": [],
+                        "CapsuleElems": [
+                            {
+                                "Center": {
+                                    "X": 0.0,
+                                    "Y": 0.0,
+                                    "Z": 0.0
+                                },
+                                "Length": 4.449075698852539,
+                                "Radius": 1.1122689247131348,
+                                "Rotation": {
+                                    "Pitch": 0.0,
+                                    "Roll": 0.0,
+                                    "Yaw": 0.0
+                                }
+                            }
+                        ],
+                        "SphereElems": []
+                    },
+                    "BoneName": "Bip001-Pelvis"
+                }
+            }
+        ],
+        "Properties": {
+            "Constraints": []
+        }
+    },
+    "Version": 1
+}

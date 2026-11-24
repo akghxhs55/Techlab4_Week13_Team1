@@ -58,7 +58,7 @@ public:
 	virtual void PostEditChangeProperty(const FProperty& Property) override;
 	void SetComponentTickEnabled(bool bEnabled);
 	bool IsComponentTickEnabled() const { return PrimaryComponentTick.bCanEverTick && PrimaryComponentTick.IsTickFunctionEnabled(); }
-	void RegisterComponentTickFunctions(bool bRegister);
+	virtual void RegisterComponentTickFunctions(bool bRegister);
 
 	using Super::Serialize;
 	virtual void Serialize(FStructuredArchive::FRecord Record);

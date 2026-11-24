@@ -9,8 +9,23 @@ bool UFont::LoadFontAtlasJson(const FString& JsonPath)
 		return false;
 	}
 
-	json Root;
-	File >> Root;
+	json Root = json::parse(File, nullptr, false);
+	if (Root.is_discarded() || !Root.is_object()
+		|| !Root.contains("atlas") || !Root["atlas"].is_object()
+		|| !Root.contains("metrics") || !Root["metrics"].is_object() || !Root["metrics"].contains("lineHeight")
+		|| !Root.contains("glyphs") || !Root["glyphs"].is_array())
+	{
+		KRS_LOG(Warning, "[Font] {} is not a font atlas json", JsonPath);
+		return false;
+	}
+	{
+		const json& Atlas = Root["atlas"];
+		if (!Atlas.contains("width") || !Atlas.contains("height") || !Atlas.contains("distanceRange"))
+		{
+			KRS_LOG(Warning, "[Font] {} is missing atlas fields", JsonPath);
+			return false;
+		}
+	}
 
 	const auto& AtlasJson = Root["atlas"];
 	Width = AtlasJson["width"].get<float>();

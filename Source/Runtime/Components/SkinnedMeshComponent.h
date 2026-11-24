@@ -28,6 +28,9 @@ public:
 	virtual FString GetMaterialSlotName(int32 SlotIndex) const override;
 	virtual UMaterialInterface* GetDefaultMaterial(int32 SlotIndex) const override;
 
+	FTransform GetBoneTransform(int32 BoneIndex) const;
+	FTransform GetBoneTransform(int32 BoneIndex, const FTransform& LocalToWorld) const;
+
 	virtual bool LineTraceComponentLocal(const FRay& LocalRay, float& Out) override;
 
 	// 엔진 전체에 적용한다. 값을 바꾸면 RefreshSkinningMode로 기존 컴포넌트에 반영한다

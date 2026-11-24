@@ -5,8 +5,8 @@
 
 FAssetEditorTab::FAssetEditorTab(FAssetEditor& InEditor) : Editor(InEditor)
 {
-	// ### 뒤 ID는 처음 연 경로로 고정한다. 에디터 안에서 애셋이 바뀌어도(애니메이션 뷰어의 Asset Browser) 같은 창으로 남는다.
-	TabId = FString("###AssetEditor:") + Editor.GetAssetPath();
+	// ### 뒤 ID는 처음 연 문서로 고정합니다. 에셋 경로가 같아도 전용 에디터는 별도 탭을 가집니다.
+	TabId = FString("###AssetEditor:") + Editor.GetDocumentKey();
 }
 
 const char* FAssetEditorTab::GetTabName() const

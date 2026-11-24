@@ -26,6 +26,8 @@ struct FQuat
 	FQuat();
 	FQuat(float InX, float InY, float InZ, float InW = 1.0f);
 	explicit FQuat(FRotator InRotator);
+	// UE FQuat(const FMatrix&): 스케일이 없는 회전 행렬에서 직접 변환한다 (오일러를 거치지 않음)
+	explicit FQuat(const FMatrix& M);
 
 	/* Function */
 	FQuat operator * (const FQuat& Other) const;

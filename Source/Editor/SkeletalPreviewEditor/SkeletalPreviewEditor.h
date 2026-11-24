@@ -45,7 +45,7 @@ public:
 
 	void Tick(float DeltaTime) final;        // 순서 고정: 카메라, TickBeforeWorld, 월드 틱, TickAfterWorld, 입력 비우기
 	void OnRenderPreview() override;
-	void OnRenderLine(FLineBatcher& LineBatcher) override;
+	virtual void OnRenderLine(FLineBatcher& LineBatcher) override;
 
 	void FocusMesh();
 	void SetCameraSpeed(float Speed) { CameraSpeed = FMath::Clamp(Speed, 0.1f, 150.0f); }
