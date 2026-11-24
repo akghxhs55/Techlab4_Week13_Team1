@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ConstraintInstance.h"
 #include "PhysicsAsset.generated.h"
 
 class USkeletalMesh;
@@ -17,8 +18,17 @@ struct FPhysicsAssetConstraint
 	FString ParentBone;
 
 	UPROPERTY()
-	float Swing1LimitDeg = 45.0f;
+	EConstraintMotion Swing1Motion = EConstraintMotion::Limited;
 	
+	UPROPERTY()
+	EConstraintMotion Swing2Motion = EConstraintMotion::Limited;
+
+	UPROPERTY()
+	EConstraintMotion TwistMotion = EConstraintMotion::Limited;
+
+	UPROPERTY()
+	float Swing1LimitDeg = 45.0f;
+
 	UPROPERTY()
 	float Swing2LimitDeg = 45.0f;
 
@@ -27,6 +37,9 @@ struct FPhysicsAssetConstraint
 
 	UPROPERTY()
 	float TwistMaxDeg = 45.0f;
+
+	UPROPERTY()
+	FRotator FrameOffset = FRotator::Identitiy;
 };
 
 UCLASS()

@@ -4,6 +4,7 @@
 #include "Animation/AnimInstance.h"
 #include "SkeletalMeshComponent.generated.h"
 
+struct FConstraintInstance;
 class UAnimInstance;
 class UAnimSequence;
 class UBlendSpace1D;
@@ -22,6 +23,14 @@ void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher);
 class UAnimationAsset;
 class UAnimSingleNodeInstance;
 class UAnimGraphInstance;
+
+class USkeletalMeshComponent;
+
+struct FSkeletalMeshComponentEndPhysicsTickFunction : public FTickFunction
+{
+	USkeletalMeshComponent* Target = nullptr;
+	virtual void ExecuteTick(float DeltaTime) override;
+};
 
 UCLASS()
 class USkeletalMeshComponent : public USkinnedMeshComponent
@@ -42,12 +51,16 @@ public:
 	void BeginPlay() override;
 	void TickComponent(float DeltaTime) override;
 
+	virtual void RegisterComponentTickFunctions(bool bRegister) override;
+	void EndPhysicsTickComponent(float DeltaTime);
+
 	virtual void SetSimulatePhysics(bool bSimulate) override;
 	virtual void OnTransformDirty(ETeleportType TeleportType) override;
 
 	void InitArticulated(FPhysScene* PhysScene);
 	void TermArticulated();
 	void UpdateKinematicBonesToAnim(ETeleportType TeleportType);
+	void BlendInPhysics();
 
 	const TArray<FBoneInfo>& GetBones() const;
 	int32 FindBoneIndex(const FString& Name) const;
@@ -118,6 +131,8 @@ protected:
 	void OnSkeletalMeshChanged() override;
 
 private:
+	void InitConstraints(const UPhysicsAsset& Asset);
+
     UPROPERTY()
     FString AnimBlueprintPath;
 
@@ -134,8 +149,12 @@ private:
 	FTransform PendingRootMotion;           // 월드 공간 누적값
 	bool bHasPendingRootMotion = false;
 
+	FSkeletalMeshComponentEndPhysicsTickFunction EndPhysicsTickFunction;
 	TArray<TUniquePtr<FBodyInstance>> Bodies;
 	physx::PxAggregate* Aggregate = nullptr;
+	TArray<FBodyInstance*> BoneToBody;
+	bool bPendingKinematicTeleport = false;
+	TArray<TUniquePtr<FConstraintInstance>> Constraints;
 
 	bool bPreviewDissolveActive = false;
 	bool bDissolveHidden = false;

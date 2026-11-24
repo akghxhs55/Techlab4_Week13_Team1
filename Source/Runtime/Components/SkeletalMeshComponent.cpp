@@ -3,6 +3,7 @@
 
 #include <PxPhysics.h>
 #include <PxScene.h>
+#include <foundation/PxMathUtils.h>
 #include "Serialization/MathSerialization.h"
 #include "Animation/BonePose.h"
 #include "Animation/AnimNodeBase.h"
@@ -29,6 +30,7 @@
 #include "Physics/PhysicsAsset.h"
 #include "Physics/BodySetup.h"
 #include "Physics/PhysicsCore.h"
+#include "Physics/PhysXConversion.h"
 
 namespace
 {
@@ -76,6 +78,44 @@ namespace
 		{
 			LineBatcher->AddLine(M.TransformPosition(Top + Side * R), M.TransformPosition(Bottom + Side * R), Color);
 		}
+	}
+
+	void BuildBindPoses(const TArray<FBoneInfo>& Bones, const FVector& CompScale, TArray<physx::PxTransform>& Out)
+	{
+		TArray<FMatrix> CS;
+		CS.SetNum(Bones.Num());
+		Out.SetNum(Bones.Num());
+
+		for (int32 i = 0; i < Bones.Num(); ++i)
+		{
+			const FMatrix Local = Bones[i].LocalBindPose.GetLocalMatrix();
+			const int32 Parent = Bones[i].ParentIndex;
+			CS[i] = Parent < 0 ? Local : Local * CS[Parent];
+
+			const FTransform T(CS[i]);
+			const FVector P(T.Location.X * CompScale.X, T.Location.Y * CompScale.Y, T.Location.Z * CompScale.Z);
+			Out[i] = physx::PxTransform(K2PVector(P), K2PQuat(T.Rotation.Normalized()));
+		}
+	}
+
+	physx::PxVec3 FindBoneAxis(const TArray<FBoneInfo>& Bones, int32 Bone)
+	{
+		for (int32 B = Bone; B >= 0; B = Bones[B].ParentIndex)
+		{
+			for (int32 C = B + 1; C < Bones.Num(); ++C)
+			{
+				if (Bones[C].ParentIndex != B) continue;
+
+				const FVector& L = Bones[C].LocalBindPose.Location;
+				const float AX = std::abs(L.X), AY = std::abs(L.Y), AZ = std::abs(L.Z);
+				if (AX + AY + AZ < 1e-5f) continue;
+
+				if (AX >= AY && AX >= AZ) return { L.X > 0 ? 1.0f : -1.0f, 0, 0 };
+				if (AY >= AZ)             return { 0, L.Y > 0 ? 1.0f : -1.0f, 0 };
+				return { 0, 0, L.Z > 0 ? 1.0f : -1.0f };
+			}
+		}
+		return { 1, 0, 0 };
 	}
 }
 
@@ -165,7 +205,31 @@ void USkeletalMeshComponent::TickComponent(float DeltaTime)
 	UpdatePreviewDissolve(DeltaTime);
 	Super::TickComponent(DeltaTime);
 
-	UpdateKinematicBonesToAnim(ETeleportType::None);
+	UpdateKinematicBonesToAnim(bPendingKinematicTeleport ? ETeleportType::TeleportPhysics : ETeleportType::None);
+	bPendingKinematicTeleport = false;
+}
+
+void USkeletalMeshComponent::RegisterComponentTickFunctions(bool bRegister)
+{
+	Super::RegisterComponentTickFunctions(bRegister);
+
+	if (!bRegister)
+	{
+		EndPhysicsTickFunction.UnRegisterTickFunction();
+		return;
+	}
+	
+	if (IsRegistered() && GetWorld() && !EndPhysicsTickFunction.IsTickFunctionRegistered())
+	{
+		EndPhysicsTickFunction.RegisterTickFunction(GetWorld()->GetTickTaskManager());
+	}
+
+	EndPhysicsTickFunction.SetTickFunctionEnable(Bodies.Num() > 0 && Bodies[0]->IsDynamic());
+}
+
+void USkeletalMeshComponent::EndPhysicsTickComponent(float DeltaTime)
+{
+	BlendInPhysics();
 }
 
 void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
@@ -173,6 +237,13 @@ void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
 	for (auto& Body : Bodies)
 	{
 		Body->SetInstanceSimulatePhysics(bSimulate);
+	}
+
+	EndPhysicsTickFunction.SetTickFunctionEnable(bSimulate);
+
+	if (!bSimulate)
+	{
+		bPendingKinematicTeleport = true;
 	}
 }
 
@@ -219,6 +290,9 @@ void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
 
 	const FTransform LocalToWorld(GetWorldRotation(), GetWorldLocation(), GetWorldScale3D());
 
+	BoneToBody.Empty();
+	BoneToBody.SetNum(Mesh->GetNumBones());
+
 	int32 NumFailed = 0;
 	for (UBodySetup* Body : Asset->BodySetups)
 	{
@@ -236,6 +310,7 @@ void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
 
 		if (BodyInstance->IsValidBodyInstance())
 		{
+			BoneToBody[BoneIndex] = BodyInstance.get();
 			Bodies.Add(std::move(BodyInstance));
 		}
 		else
@@ -244,12 +319,19 @@ void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
 		}
 	}
 
+	InitConstraints(*Asset);
 	PhysScene->GetPxScene()->addAggregate(*Aggregate);
 	KRS_LOG(Warning, "[Ragdoll] bodies created: {}, failed: {}", Bodies.Num(), NumFailed);
+
+	if (BodyInstance.bSimulatePhysics)
+	{
+		SetSimulatePhysics(true);
+	}
 }
 
 void USkeletalMeshComponent::TermArticulated()
 {
+	Constraints.Empty();
 	for (auto& Body : Bodies)
 	{
 		Body->TermBody();
@@ -261,6 +343,8 @@ void USkeletalMeshComponent::TermArticulated()
 		Aggregate->release();
 		Aggregate = nullptr;
 	}
+
+	BoneToBody.Empty();
 }
 
 void USkeletalMeshComponent::UpdateKinematicBonesToAnim(ETeleportType TeleportType)
@@ -279,6 +363,39 @@ void USkeletalMeshComponent::UpdateKinematicBonesToAnim(ETeleportType TeleportTy
 		}
 		Body->SetBodyTransform(GetBoneTransform(Body->BoneIndex, LocalToWorld), TeleportType);
 	}
+}
+
+void USkeletalMeshComponent::BlendInPhysics()
+{
+	const TArray<FBoneInfo>& Bones = GetBones();
+	if (BoneToBody.Num() != Bones.Num() || BoneSpaceTransforms.Num() != Bones.Num())
+	{
+		return;
+	}
+
+	const FMatrix WorldToComponent = GetWorldMatrix().Inverse();
+
+	TArray<FMatrix> ComponentSpace;
+	ComponentSpace.SetNum(Bones.Num());
+
+	for (int32 i = 0; i < Bones.Num(); ++i)
+	{
+		const int32 Parent = Bones[i].ParentIndex;
+		FBodyInstance* Body = BoneToBody[i];
+
+		if (Body && Body->IsDynamic())
+		{
+			ComponentSpace[i] = Body->GetUnrealWorldTransform().GetLocalMatrix() * WorldToComponent;
+			BoneSpaceTransforms[i] = (Parent < 0) ? FTransform(ComponentSpace[i]) : FTransform(ComponentSpace[i] * ComponentSpace[Parent].Inverse());
+		}
+		else
+		{
+			const FMatrix Local = BoneSpaceTransforms[i].GetLocalMatrix();
+			ComponentSpace[i] = (Parent < 0) ? Local : Local * ComponentSpace[Parent];
+		}
+	}
+
+	UpdateBoneTransformsNow();
 }
 
 const TArray<FBoneInfo>& USkeletalMeshComponent::GetBones() const
@@ -573,6 +690,61 @@ void USkeletalMeshComponent::OnSkeletalMeshChanged()
 	for (const FBoneInfo& Bone : GetBones())
 		BoneSpaceTransforms.Add(Bone.LocalBindPose);
 }
+
+void USkeletalMeshComponent::InitConstraints(const UPhysicsAsset& Asset)
+{
+	const auto& Bones = GetBones();
+
+	TArray<physx::PxTransform> BindPoses;
+	BuildBindPoses(Bones, GetWorldScale3D(), BindPoses);
+
+	int32 NumFailed = 0;
+	for (const auto& Constraint : Asset.Constraints)
+	{
+		const int32 ChildBone = FindBoneIndex(Constraint.ChildBone);
+		const int32 ParentBone = FindBoneIndex(Constraint.ParentBone);
+		FBodyInstance* ChildBody = ChildBone >= 0 ? BoneToBody[ChildBone] : nullptr;
+		FBodyInstance* ParentBody = ParentBone >= 0 ? BoneToBody[ParentBone] : nullptr;
+		if (!ChildBody || !ParentBody)
+		{
+			NumFailed++;
+			continue;
+		}
+
+		const physx::PxQuat TwistAlign = physx::PxShortestRotation(physx::PxVec3(1, 0, 0), FindBoneAxis(Bones, ChildBone));
+		const physx::PxQuat Offset = K2PQuat(Constraint.FrameOffset.Quaternion().Normalized());
+		const physx::PxTransform JointBind(BindPoses[ChildBone].p, (BindPoses[ChildBone].q * TwistAlign * Offset).getNormalized());
+
+		const physx::PxTransform Frame0 = BindPoses[ParentBone].getInverse() * JointBind;
+		const physx::PxTransform Frame1 = BindPoses[ChildBone].getInverse() * JointBind;
+
+		TUniquePtr<FConstraintInstance> ConstraintInstance = MakeUnique<FConstraintInstance>();
+		ConstraintInstance->LinearX = EConstraintMotion::Locked;
+		ConstraintInstance->LinearY = EConstraintMotion::Locked;
+		ConstraintInstance->LinearZ = EConstraintMotion::Locked;
+		ConstraintInstance->Swing1Motion = Constraint.Swing1Motion;
+		ConstraintInstance->Swing2Motion = Constraint.Swing2Motion;
+		ConstraintInstance->TwistMotion = Constraint.TwistMotion;
+		ConstraintInstance->Swing1LimitAngle = Constraint.Swing1LimitDeg;
+		ConstraintInstance->Swing2LimitAngle = Constraint.Swing2LimitDeg;
+		ConstraintInstance->TwistLimitLowerAngle = Constraint.TwistMinDeg;
+		ConstraintInstance->TwistLimitUpperAngle = Constraint.TwistMaxDeg;
+
+		ConstraintInstance->InitConstraint(ParentBody, ChildBody, P2KTransform(Frame0), P2KTransform(Frame1));
+
+		if (ConstraintInstance->IsValidConstraint())
+		{
+			Constraints.Add(std::move(ConstraintInstance));
+		}
+		else
+		{
+			NumFailed++;
+		}
+	}
+
+	KRS_LOG(Info, "[Ragdoll] constraints created: {}, failed {}", Constraints.Num(), NumFailed);
+}
+
 UAnimSingleNodeInstance* USkeletalMeshComponent::GetSingleNodeInstance() const
 {
 	return Cast<UAnimSingleNodeInstance>(AnimInstance);
@@ -751,6 +923,11 @@ void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher)
 	}
 }
 
+void FSkeletalMeshComponentEndPhysicsTickFunction::ExecuteTick(float DeltaTime)
+{
+	Target->EndPhysicsTickComponent(DeltaTime);
+}
+
 void USkeletalMeshComponent::DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const
 {
 	const USkeletalMesh* Mesh = GetSkeletalMesh();
@@ -798,6 +975,10 @@ void USkeletalMeshComponent::DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) co
 
 USkeletalMeshComponent::USkeletalMeshComponent()
 {
+	EndPhysicsTickFunction.Target = this;
+	EndPhysicsTickFunction.bCanEverTick = true;
+	EndPhysicsTickFunction.bStartWithTickEnabled = false;
+	EndPhysicsTickFunction.TickGroup = ETickingGroup::PostPhysics;
 }
 
 USkeletalMeshComponent::~USkeletalMeshComponent()
