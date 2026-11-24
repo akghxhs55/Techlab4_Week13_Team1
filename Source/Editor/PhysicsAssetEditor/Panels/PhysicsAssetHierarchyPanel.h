@@ -33,6 +33,7 @@ private:
 	char SearchBuffer[128] = {};
 	int32 LastSelectedBone = -1;
 	int32 LastSelectedBody = -1;
+	int32 LastSelectedConstraint = -1;
 	int32 LastSelectedShapeType = 0;
 	int32 LastSelectedShapeIndex = -1;
 	uint32 LastTopologyRevision = 0;

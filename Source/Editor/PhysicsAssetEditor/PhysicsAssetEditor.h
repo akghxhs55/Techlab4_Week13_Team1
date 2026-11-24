@@ -4,11 +4,20 @@
 #include "Physics/AggregateGeom.h"
 #include "Editor/Gizmo/Gizmo.h"
 
-// 런타임 피직스 에셋에 연결하기 전의 에디터용 바디 설정입니다.
+class UBodySetup;
+class UPhysicsAsset;
+struct FPhysicsAssetConstraint;
+class FPhysicsAssetSimulation;
+
+// 에셋의 BodySetup을 참조하는 에디터 뷰입니다. 형상 데이터는 복사하지 않습니다.
 struct FPhysicsAssetPreviewBody
 {
-	int32 BoneIndex = -1;
-	FAggregateGeom Geometry;
+	FPhysicsAssetPreviewBody(int32 InBoneIndex, UBodySetup* InBodySetup)
+		: BoneIndex(InBoneIndex), BodySetup(InBodySetup) {}
+	int32 BoneIndex;
+	UBodySetup* BodySetup;
+	FAggregateGeom& GetGeometry();
+	const FAggregateGeom& GetGeometry() const;
 };
 
 // 피직스 에셋 편집에 사용할 스켈레탈 메시 미리보기 에디터입니다.
@@ -25,10 +34,24 @@ public:
 		USkeletalMesh& InPreviewMesh
 	);
 	~FPhysicsAssetEditor() override;
+	bool Save();
+	bool IsDirty() const override { return bDirty; }
+	bool ConfirmClose() override;
+	const FString& GetSaveMessage() const { return SaveMessage; }
+	bool HasSaveError() const { return bSaveFailed; }
 
 	void OnRenderLine(FLineBatcher& LineBatcher) override;
 	void OnRenderDebugOverlay(const FSceneView* View) override;
-	const FGizmo* GetPreviewGizmo() const override { return ShapeGizmo.GetTarget() && IsBodyVisible(SelectedBodyIndex) ? &ShapeGizmo : nullptr; }
+	const FGizmo* GetPreviewGizmo() const override { return !IsSimulationActive() && ShapeGizmo.GetTarget() && IsBodyVisible(SelectedBodyIndex) ? &ShapeGizmo : nullptr; }
+	bool StartSimulation();
+	void StopSimulation();
+	void ToggleSimulationPause();
+	void StepSimulation();
+	void ResetSimulation();
+	bool IsSimulationActive() const;
+	bool IsSimulationPaused() const;
+	float GetSimulationTime() const;
+	const FString& GetSimulationError() const { return SimulationError; }
 	void SetBodyDrawMode(EBodyDrawMode Mode);
 	EBodyDrawMode GetBodyDrawMode() const { return BodyDrawMode; }
 	void SetBodyColor(const FVector4& Color) { BodyColor = Color; }
@@ -52,6 +75,16 @@ public:
 	int32 GetSelectedBodyIndex() const { return SelectedBodyIndex; }
 	const FPhysicsAssetPreviewBody* GetSelectedBody() const;
 	const TArray<FPhysicsAssetPreviewBody>& GetPreviewBodies() const { return PreviewBodies; }
+	UPhysicsAsset* GetPhysicsAsset() const { return PhysicsAsset; }
+	int32 GetNearestParentBody(int32 ChildBodyIndex) const;
+	int32 FindConstraintForBody(int32 ChildBodyIndex) const;
+	bool CanAddConstraint(int32 ParentBodyIndex, int32 ChildBodyIndex) const;
+	int32 AddConstraint(int32 ParentBodyIndex, int32 ChildBodyIndex);
+	bool RemoveConstraint(int32 ConstraintIndex);
+	void SelectConstraint(int32 ConstraintIndex);
+	int32 GetSelectedConstraintIndex() const { return SelectedConstraintIndex; }
+	const FPhysicsAssetConstraint* GetSelectedConstraint() const;
+	bool SetSelectedConstraintProperties(const FPhysicsAssetConstraint& Properties);
 	int32 GetSelectedShapeIndex() const { return SelectedShapeIndex; }
 	EPreviewShapeType GetSelectedShapeType() const { return SelectedShapeType; }
 	uint32 GetTopologyRevision() const { return TopologyRevision; }
@@ -74,6 +107,16 @@ protected:
 	void CancelViewportInteraction() override;
 
 private:
+	void MarkModified();
+	void RebuildBodyViews();
+	bool DiscardChanges();
+	TArray<uint8> SavedAssetBytes;
+	FString SaveMessage;
+	bool bDirty = false;
+	bool bSaveFailed = false;
+	bool bDirtyBeforeGizmo = false;
+	TUniquePtr<FPhysicsAssetSimulation> Simulation;
+	FString SimulationError;
 	FString PreviewDocumentKey;
 	FShapeElem* GetSelectedShape();
 	const FShapeElem* GetSelectedShape() const;
@@ -95,8 +138,10 @@ private:
 
 	// 각 바디는 생성된 본을 유지하며, 본 선택과 바디 선택은 별도로 관리합니다.
 	TArray<FPhysicsAssetPreviewBody> PreviewBodies;
+	UPhysicsAsset* PhysicsAsset = nullptr; // 메시가 참조하는 에셋. 에디터 종료 시 해제하지 않습니다.
 	uint32 TopologyRevision = 0;
 	int32 SelectedBodyIndex = -1;
+	int32 SelectedConstraintIndex = -1;
 	EPreviewShapeType SelectedShapeType = EPreviewShapeType::None;
 	int32 SelectedShapeIndex = -1;
 	USceneComponent* ShapeGizmoTarget = nullptr;

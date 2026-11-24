@@ -12,10 +12,11 @@ UPhysicsAsset::~UPhysicsAsset()
 
 void UPhysicsAsset::ClearBodies()
 {
-	for (UBodySetup* Body : BodySetups)
+    // BodySetup도 UObject라서 해제하면 안되나?
+	/*for (UBodySetup* Body : BodySetups)
 	{
-		delete Body;
-	}
+        delete Body;
+	}*/
 	BodySetups.Empty();
 }
 

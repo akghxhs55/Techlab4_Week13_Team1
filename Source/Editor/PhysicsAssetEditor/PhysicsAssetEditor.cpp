@@ -1,15 +1,42 @@
 #include "EnginePCH.h"
 #include "PhysicsAssetEditor.h"
 #include "PhysicsAssetEditorTab.h"
+#include "PhysicsAssetSimulation.h"
+#include "Engine/World.h"
+#include "Engine/Scene.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Render/SkeletalMesh.h"
 #include "Render/LineBatcher.h"
+#include "Physics/PhysicsAsset.h"
+#include "Physics/BodySetup.h"
+#include "Asset/AssetUtils.h"
+#include "Core/Misc/Paths.h"
+#include "Serialization/JsonArchive.h"
 
 #include <cmath>
 #include <cfloat>
+#include <filesystem>
+#include <fstream>
+
+FAggregateGeom& FPhysicsAssetPreviewBody::GetGeometry()
+{
+	return BodySetup->AggGeom;
+}
+
+const FAggregateGeom& FPhysicsAssetPreviewBody::GetGeometry() const
+{
+	return BodySetup->AggGeom;
+}
 
 namespace
 {
+	bool ShapePropertiesEqual(const FShapeElem& A, const FVector& SizeA, const FShapeElem& B, const FVector& SizeB)
+	{
+		return A.Center.X == B.Center.X && A.Center.Y == B.Center.Y && A.Center.Z == B.Center.Z &&
+			A.Rotation.Pitch == B.Rotation.Pitch && A.Rotation.Yaw == B.Rotation.Yaw && A.Rotation.Roll == B.Rotation.Roll &&
+			SizeA.X == SizeB.X && SizeA.Y == SizeB.Y && SizeA.Z == SizeB.Z;
+	}
+
 	int32 GetShapeCount(const FAggregateGeom& Geometry, FPhysicsAssetEditor::EPreviewShapeType Type)
 	{
 		switch (Type)
@@ -179,6 +206,185 @@ FPhysicsAssetEditor::FPhysicsAssetEditor(
 
 FPhysicsAssetEditor::~FPhysicsAssetEditor() = default;
 
+void FPhysicsAssetEditor::MarkModified()
+{
+	bDirty = true;
+	bSaveFailed = false;
+	SaveMessage.clear();
+}
+
+bool FPhysicsAssetEditor::Save()
+{
+	const auto Fail = [this](const FString& Message)
+	{
+		SaveMessage = Message;
+		bSaveFailed = true;
+		KRS_LOG(Warning, "[PhysicsAssetEditor] {}", Message);
+		return false;
+	};
+	if (!PhysicsAsset) return Fail("There is no physics asset to save.");
+	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(GetAssetPath());
+	if (MeshFile.empty()) return Fail("Cannot resolve the skeletal mesh file path.");
+	for (const UBodySetup* Body : PhysicsAsset->BodySetups)
+		if (!Body) return Fail("Cannot save a physics asset containing a null body.");
+
+	// 저장할 때는 화면에 보이는 기즈모 편집을 확정합니다. 취소나 시뮬레이션 포즈는 저장하지 않습니다.
+	ShapeGizmo.EndDrag();
+	TArray<uint8> Bytes;
+	if (!FJsonArchive::SaveObjectToBytes(PhysicsAsset, Bytes)) return Fail("Could not serialize the physics asset.");
+	const FString PhysicsPath = MeshFile + ".physics.json";
+	const std::filesystem::path Target = FPaths::FromUtf8(PhysicsPath);
+	std::filesystem::path Temporary = Target;
+	Temporary += std::wstring(L".tmp.") + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(GetTickCount64());
+	const auto RemoveTemporary = [&]()
+	{
+		std::error_code Error;
+		std::filesystem::remove(Temporary, Error);
+	};
+	// 기존 로더와 같은 JSON을 사용하며, 임시 파일을 완전히 쓴 다음 교체합니다.
+	std::ofstream File(Temporary, std::ios::binary | std::ios::trunc);
+	if (!File) return Fail(FString("Cannot create the save file. Check write access: ") + PhysicsPath);
+	File.write(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<std::streamsize>(Bytes.Num()));
+	File.flush();
+	File.close();
+	if (!File)
+	{
+		RemoveTemporary();
+		return Fail(FString("Writing the physics asset failed: ") + PhysicsPath);
+	}
+	if (!MoveFileExW(Temporary.c_str(), Target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+	{
+		const DWORD Error = GetLastError();
+		RemoveTemporary();
+		KRS_LOG(Warning, "[PhysicsAssetEditor] Could not replace save file. Windows error: {}", Error);
+		return Fail(FString("Cannot replace the physics asset file. Check write access: ") + PhysicsPath);
+	}
+	SavedAssetBytes = std::move(Bytes);
+	bDirty = false;
+	bSaveFailed = false;
+	SaveMessage = FString("Saved: ") + PhysicsPath;
+	KRS_LOG(Info, "[PhysicsAssetEditor] Saved {}", PhysicsPath);
+	return true;
+}
+
+bool FPhysicsAssetEditor::DiscardChanges()
+{
+	if (!PhysicsAsset || SavedAssetBytes.IsEmpty())
+	{
+		SaveMessage = "The saved physics asset snapshot is unavailable.";
+		bSaveFailed = true;
+		return false;
+	}
+	StopSimulation();
+	SelectBone(-1);
+	// 로드가 기존 BodySetup을 해제하므로 편집 뷰의 참조를 먼저 비웁니다.
+	PreviewBodies.Empty();
+	const bool bRestored = FJsonArchive::LoadObjectFromBytes(PhysicsAsset, SavedAssetBytes);
+	RebuildBodyViews();
+	if (!bRestored)
+	{
+		SaveMessage = "Could not restore the last saved physics asset. The editor will remain open.";
+		bSaveFailed = true;
+		return false;
+	}
+	bDirty = false;
+	bSaveFailed = false;
+	SaveMessage.clear();
+	return true;
+}
+
+bool FPhysicsAssetEditor::ConfirmClose()
+{
+	ShapeGizmo.EndDrag();
+	if (!IsDirty()) return true;
+	const int Choice = MessageBoxW(GetActiveWindow(),
+		L"Save changes to this physics asset before closing?\n\nYes: Save and close\nNo: Discard edits and close\nCancel: Keep editing",
+		L"Unsaved Physics Asset", MB_YESNOCANCEL | MB_ICONQUESTION);
+	if (Choice == IDCANCEL || Choice == 0) return false;
+	if (Choice == IDYES && Save()) return true;
+	if (Choice == IDNO && DiscardChanges()) return true;
+	const std::wstring Message = FPaths::FromUtf8(SaveMessage).wstring();
+	MessageBoxW(GetActiveWindow(), Message.c_str(), L"Physics Asset", MB_OK | MB_ICONERROR);
+	return false;
+}
+
+void FPhysicsAssetEditor::RebuildBodyViews()
+{
+	PreviewBodies.Empty();
+	if (!PhysicsAsset || !Mesh) return;
+	for (UBodySetup* Setup : PhysicsAsset->BodySetups)
+	{
+		if (!Setup)
+		{
+			KRS_LOG(Warning, "[PhysicsAssetEditor] Skipped a null body setup.");
+			continue;
+		}
+		const int32 BoneIndex = Mesh->FindBoneIndex(Setup->BoneName);
+		if (BoneIndex < 0 || FindBodyByBone(BoneIndex) >= 0)
+		{
+			KRS_LOG(Warning, "[PhysicsAssetEditor] Skipped missing or duplicate body bone: {}", Setup->BoneName);
+			continue;
+		}
+		PreviewBodies.Emplace(BoneIndex, Setup);
+	}
+	++TopologyRevision;
+}
+
+bool FPhysicsAssetEditor::StartSimulation()
+{
+	if (IsSimulationActive()) return true;
+	CancelViewportInteraction();
+	if (!Simulation || !MeshComponent || !PhysicsAsset)
+	{
+		SimulationError = "The preview mesh or physics asset is unavailable.";
+		return false;
+	}
+	const bool bStarted = Simulation->Start(*MeshComponent, *PhysicsAsset, SimulationError);
+	SyncShapeGizmo();
+	return bStarted;
+}
+
+void FPhysicsAssetEditor::StopSimulation()
+{
+	if (Simulation) Simulation->Stop();
+	SimulationError.clear();
+	SyncShapeGizmo();
+	if (UWorld* World = PreviewScene.GetWorld()) World->GetScene().UpdateAllTransforms();
+}
+
+void FPhysicsAssetEditor::ToggleSimulationPause()
+{
+	if (Simulation) Simulation->TogglePause();
+}
+
+void FPhysicsAssetEditor::StepSimulation()
+{
+	if (Simulation) Simulation->Step();
+}
+
+void FPhysicsAssetEditor::ResetSimulation()
+{
+	if (!IsSimulationActive()) return;
+	const bool bWasPaused = IsSimulationPaused();
+	StopSimulation();
+	if (StartSimulation() && bWasPaused) ToggleSimulationPause();
+}
+
+bool FPhysicsAssetEditor::IsSimulationActive() const
+{
+	return Simulation && Simulation->IsActive();
+}
+
+bool FPhysicsAssetEditor::IsSimulationPaused() const
+{
+	return Simulation && Simulation->IsPaused();
+}
+
+float FPhysicsAssetEditor::GetSimulationTime() const
+{
+	return Simulation ? Simulation->GetElapsedTime() : 0.0f;
+}
+
 void FPhysicsAssetEditor::OnRenderLine(FLineBatcher& LineBatcher)
 {
 	FSkeletalPreviewEditor::OnRenderLine(LineBatcher);
@@ -190,6 +396,7 @@ void FPhysicsAssetEditor::OnRenderDebugOverlay(const FSceneView* View)
 	PhysicsBodyLines->BeginFrame();
 	// 물리 형상 전용 배치에서 깊이를 검사하고, 장면 깊이에는 쓰지 않습니다.
 	PhysicsBodyLines->SetDepthTest(bBodyDepthTest, false);
+	if (Simulation) Simulation->DrawFloor(*PhysicsBodyLines);
 	const FShapeElem* SelectedShape = GetSelectedShape();
 	for (int32 Index = 0; Index < PreviewBodies.Num(); ++Index)
 	{
@@ -197,16 +404,42 @@ void FPhysicsAssetEditor::OnRenderDebugOverlay(const FSceneView* View)
 		const FPhysicsAssetPreviewBody& Body = PreviewBodies[Index];
 		if (Body.BoneIndex < 0 || Body.BoneIndex >= Mesh->GetNumBones()) continue;
 		const FVector4& Color = Index == SelectedBodyIndex ? SelectedBodyColor : BodyColor;
-		DrawAggregateGeometry(*PhysicsBodyLines, Body.Geometry, MeshComponent->GetBoneWorldMatrix(Body.BoneIndex),
+		DrawAggregateGeometry(*PhysicsBodyLines, Body.GetGeometry(), MeshComponent->GetBoneWorldMatrix(Body.BoneIndex),
 			Color, SelectedShape, SelectedShapeColor);
+	}
+	if (PhysicsAsset)
+	{
+		for (int32 Index = 0; Index < PhysicsAsset->Constraints.Num(); ++Index)
+		{
+			const FPhysicsAssetConstraint& Constraint = PhysicsAsset->Constraints[Index];
+			const int32 Parent = Mesh->FindBoneIndex(Constraint.ParentBone);
+			const int32 Child = Mesh->FindBoneIndex(Constraint.ChildBone);
+			if (Parent < 0 || Child < 0 || FindBodyByBone(Parent) < 0 || FindBodyByBone(Child) < 0) continue;
+			const bool bSelected = Index == SelectedConstraintIndex;
+			if (BodyDrawMode == EBodyDrawMode::None ||
+				(BodyDrawMode == EBodyDrawMode::SelectedOnly && !bSelected &&
+					SelectedBodyIndex != FindBodyByBone(Parent) && SelectedBodyIndex != FindBodyByBone(Child))) continue;
+			const FVector ParentPosition = MeshComponent->GetBoneWorldMatrix(Parent).TransformPosition(FVector::ZeroVector);
+			const FVector ChildPosition = MeshComponent->GetBoneWorldMatrix(Child).TransformPosition(FVector::ZeroVector);
+			const FVector4 Color = bSelected ? SelectedShapeColor : FVector4(0.4f, 0.7f, 1.0f, 1.0f);
+			// 연결 관계와 자식 본의 앵커 위치를 표시합니다. 조인트 프레임 계산은 런타임이 담당합니다.
+			PhysicsBodyLines->AddLine(ParentPosition, ChildPosition, Color);
+			PhysicsBodyLines->AddSphere(ChildPosition, FMath::Max(BoneSphereSize, 0.005f), Color);
+		}
 	}
 	PhysicsBodyLines->OnRender(View->ViewProjectionMatrix);
 }
 
 bool FPhysicsAssetEditor::IsBodyVisible(int32 BodyIndex) const
 {
-	return BodyIndex >= 0 && BodyIndex < PreviewBodies.Num() && BodyDrawMode != EBodyDrawMode::None &&
-		(BodyDrawMode != EBodyDrawMode::SelectedOnly || BodyIndex == SelectedBodyIndex);
+	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() || BodyDrawMode == EBodyDrawMode::None) return false;
+	if (BodyDrawMode == EBodyDrawMode::All || BodyIndex == SelectedBodyIndex) return true;
+	if (const FPhysicsAssetConstraint* Constraint = GetSelectedConstraint())
+	{
+		const FString& BoneName = PreviewBodies[BodyIndex].BodySetup->BoneName;
+		return BoneName == Constraint->ParentBone || BoneName == Constraint->ChildBone;
+	}
+	return false;
 }
 
 void FPhysicsAssetEditor::SetBodyDrawMode(EBodyDrawMode Mode)
@@ -231,16 +464,33 @@ bool FPhysicsAssetEditor::InitializeResources()
 
 	PreviewBodies.Empty();
 	SelectedBodyIndex = -1;
+	SelectedConstraintIndex = -1;
+	PhysicsAsset = Mesh->GetPhysicsAsset();
+	if (!PhysicsAsset)
+	{
+		PhysicsAsset = NewObject<UPhysicsAsset>(Mesh);
+		if (!PhysicsAsset) return false;
+		Mesh->SetPhysicsAsset(PhysicsAsset);
+	}
+	for (const UBodySetup* Body : PhysicsAsset->BodySetups)
+		if (!Body) return false;
+	if (!FJsonArchive::SaveObjectToBytes(PhysicsAsset, SavedAssetBytes)) return false;
+	bDirty = false;
+	bSaveFailed = false;
+	RebuildBodyViews();
 	PhysicsBodyLines = MakeUnique<FLineBatcher>();
 	if (!PhysicsBodyLines->Init(nullptr, PreviewScene.GetWorld())) return false;
 	ShapeGizmoTarget = Cast<USceneComponent>(PreviewScene.AddComponent(USceneComponent::StaticClass()));
 	if (!ShapeGizmoTarget) return false;
 	ShapeGizmoTarget->DetachFromParent();
+	Simulation = MakeUnique<FPhysicsAssetSimulation>();
 	return true;
 }
 
 void FPhysicsAssetEditor::ShutdownResources()
 {
+	StopSimulation();
+	Simulation.reset();
 	CancelViewportInteraction();
 	ShapeGizmo.SetTarget(nullptr);
 	ShapeGizmoTarget = nullptr;
@@ -248,6 +498,8 @@ void FPhysicsAssetEditor::ShutdownResources()
 	SelectedShapeIndex = -1;
 	SelectedBodyIndex = -1;
 	PreviewBodies.Empty();
+	SelectedConstraintIndex = -1;
+	PhysicsAsset = nullptr;
 	PhysicsBodyLines.reset();
 	FSkeletalPreviewEditor::ShutdownResources();
 }
@@ -265,9 +517,119 @@ const FPhysicsAssetPreviewBody* FPhysicsAssetEditor::GetSelectedBody() const
 		? &PreviewBodies[SelectedBodyIndex] : nullptr;
 }
 
+int32 FPhysicsAssetEditor::GetNearestParentBody(int32 ChildBodyIndex) const
+{
+	if (!Mesh || ChildBodyIndex < 0 || ChildBodyIndex >= PreviewBodies.Num()) return -1;
+	const TArray<FBoneInfo>& Bones = Mesh->GetRefSkeleton();
+	const int32 ChildBone = PreviewBodies[ChildBodyIndex].BoneIndex;
+	if (ChildBone < 0 || ChildBone >= Bones.Num()) return -1;
+	int32 Bone = Bones[ChildBone].ParentIndex;
+	for (int32 Step = 0; Bone >= 0 && Bone < Bones.Num() && Step < Bones.Num(); ++Step)
+	{
+		const int32 BodyIndex = FindBodyByBone(Bone);
+		if (BodyIndex >= 0) return BodyIndex;
+		Bone = Bones[Bone].ParentIndex;
+	}
+	return -1;
+}
+
+int32 FPhysicsAssetEditor::FindConstraintForBody(int32 ChildBodyIndex) const
+{
+	if (!PhysicsAsset || ChildBodyIndex < 0 || ChildBodyIndex >= PreviewBodies.Num()) return -1;
+	const FString& ChildName = PreviewBodies[ChildBodyIndex].BodySetup->BoneName;
+	for (int32 Index = 0; Index < PhysicsAsset->Constraints.Num(); ++Index)
+		if (PhysicsAsset->Constraints[Index].ChildBone == ChildName) return Index;
+	return -1;
+}
+
+bool FPhysicsAssetEditor::CanAddConstraint(int32 ParentBodyIndex, int32 ChildBodyIndex) const
+{
+	return !IsSimulationActive() && PhysicsAsset && ParentBodyIndex >= 0 && ParentBodyIndex < PreviewBodies.Num() &&
+		ChildBodyIndex >= 0 && ChildBodyIndex < PreviewBodies.Num() && ParentBodyIndex != ChildBodyIndex &&
+		GetNearestParentBody(ChildBodyIndex) == ParentBodyIndex && FindConstraintForBody(ChildBodyIndex) < 0 &&
+		PreviewBodies[ParentBodyIndex].GetGeometry().GetElementCount() > 0 &&
+		PreviewBodies[ChildBodyIndex].GetGeometry().GetElementCount() > 0;
+}
+
+int32 FPhysicsAssetEditor::AddConstraint(int32 ParentBodyIndex, int32 ChildBodyIndex)
+{
+	if (!CanAddConstraint(ParentBodyIndex, ChildBodyIndex)) return -1;
+	CancelViewportInteraction();
+	const int32 Index = PhysicsAsset->Constraints.Num();
+	FPhysicsAssetConstraint& Constraint = PhysicsAsset->Constraints.Emplace_GetRef();
+	Constraint.ParentBone = PreviewBodies[ParentBodyIndex].BodySetup->BoneName;
+	Constraint.ChildBone = PreviewBodies[ChildBodyIndex].BodySetup->BoneName;
+	++TopologyRevision;
+	MarkModified();
+	SelectConstraint(Index);
+	return Index;
+}
+
+bool FPhysicsAssetEditor::RemoveConstraint(int32 ConstraintIndex)
+{
+	if (IsSimulationActive() || !PhysicsAsset || ConstraintIndex < 0 || ConstraintIndex >= PhysicsAsset->Constraints.Num()) return false;
+	if (SelectedConstraintIndex == ConstraintIndex) SelectedConstraintIndex = -1;
+	else if (SelectedConstraintIndex > ConstraintIndex) --SelectedConstraintIndex;
+	PhysicsAsset->Constraints.RemoveAt(static_cast<uint32>(ConstraintIndex));
+	++TopologyRevision;
+	MarkModified();
+	return true;
+}
+
+void FPhysicsAssetEditor::SelectConstraint(int32 ConstraintIndex)
+{
+	CancelViewportInteraction();
+	SelectedConstraintIndex = -1;
+	SelectedBodyIndex = -1;
+	SelectedShapeType = EPreviewShapeType::None;
+	SelectedShapeIndex = -1;
+	ShapeGizmo.SetTarget(nullptr);
+	if (!PhysicsAsset || !Mesh || ConstraintIndex < 0 || ConstraintIndex >= PhysicsAsset->Constraints.Num()) return;
+	SelectBone(Mesh->FindBoneIndex(PhysicsAsset->Constraints[ConstraintIndex].ChildBone));
+	SelectedConstraintIndex = ConstraintIndex;
+}
+
+const FPhysicsAssetConstraint* FPhysicsAssetEditor::GetSelectedConstraint() const
+{
+	return PhysicsAsset && SelectedConstraintIndex >= 0 && SelectedConstraintIndex < PhysicsAsset->Constraints.Num()
+		? &PhysicsAsset->Constraints[SelectedConstraintIndex] : nullptr;
+}
+
+bool FPhysicsAssetEditor::SetSelectedConstraintProperties(const FPhysicsAssetConstraint& Properties)
+{
+	if (IsSimulationActive() || !GetSelectedConstraint()) return false;
+	const auto ValidMotion = [](EConstraintMotion Motion)
+	{
+		return Motion == EConstraintMotion::Locked || Motion == EConstraintMotion::Limited || Motion == EConstraintMotion::Free;
+	};
+	if (!ValidMotion(Properties.Swing1Motion) || !ValidMotion(Properties.Swing2Motion) || !ValidMotion(Properties.TwistMotion) ||
+		!std::isfinite(Properties.Swing1LimitDeg) || !std::isfinite(Properties.Swing2LimitDeg) ||
+		!std::isfinite(Properties.TwistMinDeg) || !std::isfinite(Properties.TwistMaxDeg) ||
+		!std::isfinite(Properties.FrameOffset.Pitch) || !std::isfinite(Properties.FrameOffset.Yaw) ||
+		!std::isfinite(Properties.FrameOffset.Roll)) return false;
+	// 연결 대상 변경은 생성/삭제를 거치게 하고 선택한 제약의 설정만 갱신합니다.
+	FPhysicsAssetConstraint& Constraint = PhysicsAsset->Constraints[SelectedConstraintIndex];
+	const FPhysicsAssetConstraint Previous = Constraint;
+	Constraint.Swing1Motion = Properties.Swing1Motion;
+	Constraint.Swing2Motion = Properties.Swing2Motion;
+	Constraint.TwistMotion = Properties.TwistMotion;
+	Constraint.Swing1LimitDeg = FMath::Clamp(Properties.Swing1LimitDeg, 0.1f, 179.0f);
+	Constraint.Swing2LimitDeg = FMath::Clamp(Properties.Swing2LimitDeg, 0.1f, 179.0f);
+	Constraint.TwistMinDeg = FMath::Clamp(FMath::Min(Properties.TwistMinDeg, Properties.TwistMaxDeg), -179.0f, 179.0f);
+	Constraint.TwistMaxDeg = FMath::Clamp(FMath::Max(Properties.TwistMinDeg, Properties.TwistMaxDeg), -179.0f, 179.0f);
+	Constraint.FrameOffset = Properties.FrameOffset;
+	if (Previous.Swing1Motion != Constraint.Swing1Motion || Previous.Swing2Motion != Constraint.Swing2Motion ||
+		Previous.TwistMotion != Constraint.TwistMotion || Previous.Swing1LimitDeg != Constraint.Swing1LimitDeg ||
+		Previous.Swing2LimitDeg != Constraint.Swing2LimitDeg || Previous.TwistMinDeg != Constraint.TwistMinDeg ||
+		Previous.TwistMaxDeg != Constraint.TwistMaxDeg || Previous.FrameOffset.Pitch != Constraint.FrameOffset.Pitch ||
+		Previous.FrameOffset.Yaw != Constraint.FrameOffset.Yaw || Previous.FrameOffset.Roll != Constraint.FrameOffset.Roll)
+		MarkModified();
+	return true;
+}
+
 int32 FPhysicsAssetEditor::AddBody(int32 BoneIndex, EPreviewShapeType ShapeType)
 {
-	if (!Mesh || !MeshComponent || BoneIndex < 0 || BoneIndex >= Mesh->GetNumBones() ||
+	if (IsSimulationActive() || !PhysicsAsset || !Mesh || !MeshComponent || BoneIndex < 0 || BoneIndex >= Mesh->GetNumBones() ||
 		(ShapeType != EPreviewShapeType::Sphere && ShapeType != EPreviewShapeType::Box && ShapeType != EPreviewShapeType::Capsule))
 		return -1;
 	const int32 ExistingIndex = FindBodyByBone(BoneIndex);
@@ -279,17 +641,25 @@ int32 FPhysicsAssetEditor::AddBody(int32 BoneIndex, EPreviewShapeType ShapeType)
 
 	// 재할당 전에 진행 중인 조작을 정리합니다. 선택은 포인터 대신 인덱스로 보관합니다.
 	CancelViewportInteraction();
+	UBodySetup* Setup = NewObject<UBodySetup>(PhysicsAsset);
+	if (!Setup) return -1;
+	Setup->BoneName = Mesh->GetRefSkeleton()[BoneIndex].Name;
+	PhysicsAsset->BodySetups.Add(Setup);
 	const int32 BodyIndex = PreviewBodies.Num();
-	FPhysicsAssetPreviewBody& Body = PreviewBodies.Emplace_GetRef();
-	Body.BoneIndex = BoneIndex;
+	PreviewBodies.Emplace(BoneIndex, Setup);
 	++TopologyRevision;
+	MarkModified();
 	AddShape(BodyIndex, ShapeType);
 	return BodyIndex;
 }
 
 bool FPhysicsAssetEditor::RemoveBody(int32 BodyIndex)
 {
-	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num()) return false;
+	if (IsSimulationActive() || !PhysicsAsset || BodyIndex < 0 || BodyIndex >= PreviewBodies.Num()) return false;
+	UBodySetup* Setup = PreviewBodies[BodyIndex].BodySetup;
+	const int32 AssetIndex = PhysicsAsset->BodySetups.Find(Setup);
+	if (AssetIndex < 0) return false;
+	const FString BoneName = Setup->BoneName;
 	CancelViewportInteraction();
 	ShapeGizmo.SetTarget(nullptr);
 	if (SelectedBodyIndex == BodyIndex)
@@ -303,19 +673,28 @@ bool FPhysicsAssetEditor::RemoveBody(int32 BodyIndex)
 		--SelectedBodyIndex;
 	}
 	PreviewBodies.RemoveAt(static_cast<uint32>(BodyIndex));
+	PhysicsAsset->BodySetups.RemoveAt(static_cast<uint32>(AssetIndex));
+	for (int32 Index = PhysicsAsset->Constraints.Num() - 1; Index >= 0; --Index)
+	{
+		const FPhysicsAssetConstraint& Constraint = PhysicsAsset->Constraints[Index];
+		if (Constraint.ChildBone == BoneName || Constraint.ParentBone == BoneName)
+			RemoveConstraint(Index);
+	}
+	delete Setup;
 	++TopologyRevision;
+	MarkModified();
 	SyncShapeGizmo();
 	return true;
 }
 
 int32 FPhysicsAssetEditor::AddShape(int32 BodyIndex, EPreviewShapeType ShapeType)
 {
-	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() ||
+	if (IsSimulationActive() || BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() ||
 		(ShapeType != EPreviewShapeType::Sphere && ShapeType != EPreviewShapeType::Box && ShapeType != EPreviewShapeType::Capsule))
 		return -1;
 	CancelViewportInteraction();
 	ShapeGizmo.SetTarget(nullptr);
-	FAggregateGeom& Geometry = PreviewBodies[BodyIndex].Geometry;
+	FAggregateGeom& Geometry = PreviewBodies[BodyIndex].GetGeometry();
 	const int32 ShapeIndex = GetShapeCount(Geometry, ShapeType);
 	const float Radius = FMath::Max(BoneSphereSize * 2.0f, 0.01f);
 	FShapeElem* Shape = nullptr;
@@ -341,17 +720,18 @@ int32 FPhysicsAssetEditor::AddShape(int32 BodyIndex, EPreviewShapeType ShapeType
 	Shape->Center = FVector::ZeroVector;
 	Shape->Rotation = FRotator(0.0f, 0.0f, 0.0f);
 	++TopologyRevision;
+	MarkModified();
 	SelectShape(BodyIndex, ShapeType, ShapeIndex);
 	return ShapeIndex;
 }
 
 bool FPhysicsAssetEditor::RemoveShape(int32 BodyIndex, EPreviewShapeType ShapeType, int32 ShapeIndex)
 {
-	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() || ShapeIndex < 0 ||
-		ShapeIndex >= GetShapeCount(PreviewBodies[BodyIndex].Geometry, ShapeType)) return false;
+	if (IsSimulationActive() || BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() || ShapeIndex < 0 ||
+		ShapeIndex >= GetShapeCount(PreviewBodies[BodyIndex].GetGeometry(), ShapeType)) return false;
 	CancelViewportInteraction();
 	ShapeGizmo.SetTarget(nullptr);
-	FAggregateGeom& Geometry = PreviewBodies[BodyIndex].Geometry;
+	FAggregateGeom& Geometry = PreviewBodies[BodyIndex].GetGeometry();
 	switch (ShapeType)
 	{
 	case EPreviewShapeType::Sphere: Geometry.SphereElems.RemoveAt(static_cast<uint32>(ShapeIndex)); break;
@@ -372,6 +752,7 @@ bool FPhysicsAssetEditor::RemoveShape(int32 BodyIndex, EPreviewShapeType ShapeTy
 		}
 	}
 	++TopologyRevision;
+	MarkModified();
 	SyncShapeGizmo();
 	return true;
 }
@@ -379,7 +760,7 @@ bool FPhysicsAssetEditor::RemoveShape(int32 BodyIndex, EPreviewShapeType ShapeTy
 bool FPhysicsAssetEditor::SelectShape(int32 BodyIndex, EPreviewShapeType ShapeType, int32 ShapeIndex)
 {
 	if (BodyIndex < 0 || BodyIndex >= PreviewBodies.Num() || ShapeIndex < 0 ||
-		ShapeIndex >= GetShapeCount(PreviewBodies[BodyIndex].Geometry, ShapeType)) return false;
+		ShapeIndex >= GetShapeCount(PreviewBodies[BodyIndex].GetGeometry(), ShapeType)) return false;
 	SelectBody(BodyIndex);
 	SelectedShapeType = ShapeType;
 	SelectedShapeIndex = ShapeIndex;
@@ -390,6 +771,7 @@ bool FPhysicsAssetEditor::SelectShape(int32 BodyIndex, EPreviewShapeType ShapeTy
 void FPhysicsAssetEditor::SelectBody(int32 BodyIndex)
 {
 	CancelViewportInteraction();
+	SelectedConstraintIndex = -1;
 	SelectedBodyIndex = -1;
 	SelectedShapeType = EPreviewShapeType::None;
 	SelectedShapeIndex = -1;
@@ -399,9 +781,9 @@ void FPhysicsAssetEditor::SelectBody(int32 BodyIndex)
 	// SelectBone의 훅에서 이전 선택을 정리한 후 새 바디를 선택합니다.
 	SelectBone(Body.BoneIndex);
 	SelectedBodyIndex = BodyIndex;
-	if (!Body.Geometry.CapsuleElems.IsEmpty()) SelectedShapeType = EPreviewShapeType::Capsule;
-	else if (!Body.Geometry.BoxElems.IsEmpty()) SelectedShapeType = EPreviewShapeType::Box;
-	else if (!Body.Geometry.SphereElems.IsEmpty()) SelectedShapeType = EPreviewShapeType::Sphere;
+	if (!Body.GetGeometry().CapsuleElems.IsEmpty()) SelectedShapeType = EPreviewShapeType::Capsule;
+	else if (!Body.GetGeometry().BoxElems.IsEmpty()) SelectedShapeType = EPreviewShapeType::Box;
+	else if (!Body.GetGeometry().SphereElems.IsEmpty()) SelectedShapeType = EPreviewShapeType::Sphere;
 	if (SelectedShapeType != EPreviewShapeType::None) SelectedShapeIndex = 0;
 	SyncShapeGizmo();
 }
@@ -409,7 +791,7 @@ void FPhysicsAssetEditor::SelectBody(int32 BodyIndex)
 FShapeElem* FPhysicsAssetEditor::GetSelectedShape()
 {
 	if (!GetSelectedBody() || SelectedShapeIndex < 0) return nullptr;
-	FAggregateGeom& Geometry = PreviewBodies[SelectedBodyIndex].Geometry;
+	FAggregateGeom& Geometry = PreviewBodies[SelectedBodyIndex].GetGeometry();
 	switch (SelectedShapeType)
 	{
 	case EPreviewShapeType::Sphere:
@@ -426,7 +808,7 @@ const FShapeElem* FPhysicsAssetEditor::GetSelectedShape() const
 {
 	const FPhysicsAssetPreviewBody* Body = GetSelectedBody();
 	if (!Body || SelectedShapeIndex < 0) return nullptr;
-	const FAggregateGeom& Geometry = Body->Geometry;
+	const FAggregateGeom& Geometry = Body->GetGeometry();
 	switch (SelectedShapeType)
 	{
 	case EPreviewShapeType::Sphere:
@@ -442,7 +824,7 @@ const FShapeElem* FPhysicsAssetEditor::GetSelectedShape() const
 FVector FPhysicsAssetEditor::GetSelectedShapeSize() const
 {
 	if (!GetSelectedShape()) return FVector::ZeroVector;
-	const FAggregateGeom& Geometry = PreviewBodies[SelectedBodyIndex].Geometry;
+	const FAggregateGeom& Geometry = PreviewBodies[SelectedBodyIndex].GetGeometry();
 	switch (SelectedShapeType)
 	{
 	case EPreviewShapeType::Sphere:
@@ -464,7 +846,7 @@ FVector FPhysicsAssetEditor::GetSelectedShapeSize() const
 void FPhysicsAssetEditor::SetSelectedShapeSize(const FVector& Size)
 {
 	if (!GetSelectedShape()) return;
-	FAggregateGeom& Geometry = PreviewBodies[SelectedBodyIndex].Geometry;
+	FAggregateGeom& Geometry = PreviewBodies[SelectedBodyIndex].GetGeometry();
 	switch (SelectedShapeType)
 	{
 	case EPreviewShapeType::Sphere:
@@ -496,7 +878,7 @@ bool FPhysicsAssetEditor::GetSelectedShapeProperties(FShapeElem& OutShape, FVect
 
 bool FPhysicsAssetEditor::SetSelectedShapeProperties(const FShapeElem& Shape, const FVector& Size)
 {
-	if (!GetSelectedShape() ||
+	if (IsSimulationActive() || !GetSelectedShape() ||
 		!std::isfinite(Shape.Center.X) || !std::isfinite(Shape.Center.Y) || !std::isfinite(Shape.Center.Z) ||
 		!std::isfinite(Shape.Rotation.Pitch) || !std::isfinite(Shape.Rotation.Yaw) || !std::isfinite(Shape.Rotation.Roll) ||
 		!std::isfinite(Size.X) || !std::isfinite(Size.Y) || !std::isfinite(Size.Z))
@@ -520,15 +902,17 @@ bool FPhysicsAssetEditor::SetSelectedShapeProperties(const FShapeElem& Shape, co
 
 	// 디테일과 기즈모가 같은 형상을 수정하므로 이전 드래그 상태를 먼저 정리합니다.
 	CancelViewportInteraction();
+	const bool bChanged = !ShapePropertiesEqual(*GetSelectedShape(), GetSelectedShapeSize(), Shape, ValidSize);
 	*GetSelectedShape() = Shape;
 	SetSelectedShapeSize(ValidSize);
+	if (bChanged) MarkModified();
 	SyncShapeGizmo();
 	return true;
 }
 
 void FPhysicsAssetEditor::SetGizmoMode(EGizmoMode Mode)
 {
-	if (ShapeGizmo.GetMode() == Mode) return;
+	if (IsSimulationActive() || ShapeGizmo.GetMode() == Mode) return;
 	CancelViewportInteraction();
 	ShapeGizmo.SetMode(Mode);
 	SyncShapeGizmo();
@@ -542,6 +926,7 @@ void FPhysicsAssetEditor::CancelViewportInteraction()
 		{
 			*Shape = DragStartShape;
 			SetSelectedShapeSize(DragStartSize);
+			bDirty = bDirtyBeforeGizmo;
 		}
 	}
 	ShapeGizmo.EndDrag();
@@ -550,6 +935,7 @@ void FPhysicsAssetEditor::CancelViewportInteraction()
 void FPhysicsAssetEditor::OnBoneSelected()
 {
 	CancelViewportInteraction();
+	SelectedConstraintIndex = -1;
 	SelectedBodyIndex = -1;
 	SelectedShapeType = EPreviewShapeType::None;
 	SelectedShapeIndex = -1;
@@ -558,6 +944,13 @@ void FPhysicsAssetEditor::OnBoneSelected()
 
 void FPhysicsAssetEditor::TickAfterWorld(float DeltaTime)
 {
+	if (IsSimulationActive())
+	{
+		Simulation->Tick(DeltaTime);
+		if (UWorld* World = PreviewScene.GetWorld()) World->GetScene().UpdateAllTransforms();
+		if (!UpdateShapePicking()) UpdateBonePicking();
+		return;
+	}
 	if (!UpdateShapeGizmo() && !UpdateShapePicking())
 		UpdateBonePicking();
 	SyncShapeGizmo();
@@ -594,24 +987,24 @@ bool FPhysicsAssetEditor::UpdateShapePicking()
 				HitShapeIndex = Index;
 			}
 		};
-		for (int32 Index = 0; Index < Body.Geometry.SphereElems.Num(); ++Index)
+		for (int32 Index = 0; Index < Body.GetGeometry().SphereElems.Num(); ++Index)
 		{
-			const FSphereElem& Sphere = Body.Geometry.SphereElems[Index];
+			const FSphereElem& Sphere = Body.GetGeometry().SphereElems[Index];
 			if (!std::isfinite(Sphere.Radius) || Sphere.Radius <= 0.0f) continue;
 			TestShape(Sphere, EPreviewShapeType::Sphere, Index, [&](const FRay& Ray, float& T)
 			{ return RayHitsSphere(Ray, FVector::ZeroVector, Sphere.Radius, T); });
 		}
-		for (int32 Index = 0; Index < Body.Geometry.BoxElems.Num(); ++Index)
+		for (int32 Index = 0; Index < Body.GetGeometry().BoxElems.Num(); ++Index)
 		{
-			const FBoxElem& Box = Body.Geometry.BoxElems[Index];
+			const FBoxElem& Box = Body.GetGeometry().BoxElems[Index];
 			if (!std::isfinite(Box.X) || !std::isfinite(Box.Y) || !std::isfinite(Box.Z) ||
 				Box.X <= 0.0f || Box.Y <= 0.0f || Box.Z <= 0.0f) continue;
 			TestShape(Box, EPreviewShapeType::Box, Index, [&](const FRay& Ray, float& T)
 			{ return RayHitsBox(Ray, FVector(Box.X, Box.Y, Box.Z) * 0.5f, T); });
 		}
-		for (int32 Index = 0; Index < Body.Geometry.CapsuleElems.Num(); ++Index)
+		for (int32 Index = 0; Index < Body.GetGeometry().CapsuleElems.Num(); ++Index)
 		{
-			const FCapsuleElem& Capsule = Body.Geometry.CapsuleElems[Index];
+			const FCapsuleElem& Capsule = Body.GetGeometry().CapsuleElems[Index];
 			if (!std::isfinite(Capsule.Radius) || !std::isfinite(Capsule.Length) ||
 				Capsule.Radius <= 0.0f || Capsule.Length < 0.0f) continue;
 			TestShape(Capsule, EPreviewShapeType::Capsule, Index, [&](const FRay& Ray, float& T)
@@ -636,6 +1029,11 @@ FQuat FPhysicsAssetEditor::GetPreviewBoneWorldRotation() const
 
 void FPhysicsAssetEditor::SyncShapeGizmo()
 {
+	if (IsSimulationActive())
+	{
+		ShapeGizmo.SetTarget(nullptr);
+		return;
+	}
 	const FShapeElem* Shape = GetSelectedShape();
 	const FPhysicsAssetPreviewBody* Body = GetSelectedBody();
 	if (!Shape || !Body || !IsBodyVisible(SelectedBodyIndex) || !ShapeGizmoTarget || !Mesh || !MeshComponent ||
@@ -679,6 +1077,7 @@ bool FPhysicsAssetEditor::UpdateShapeGizmo()
 		}
 		DragStartShape = *GetSelectedShape();
 		DragStartSize = GetSelectedShapeSize();
+		bDirtyBeforeGizmo = bDirty;
 		DragScaleAxis = ShapeGizmo.GetHoveredAxis();
 		DragBoneInverse = BoneToWorld.Inverse();
 		DragBoneRotation = GetPreviewBoneWorldRotation();
@@ -692,6 +1091,8 @@ void FPhysicsAssetEditor::ApplyShapeGizmoTransform()
 {
 	FShapeElem* Shape = GetSelectedShape();
 	if (!Shape || !ShapeGizmoTarget) return;
+	const FShapeElem Before = *Shape;
+	const FVector SizeBefore = GetSelectedShapeSize();
 	switch (ShapeGizmo.GetMode())
 	{
 	case EGizmoMode::Location:
@@ -724,4 +1125,5 @@ void FPhysicsAssetEditor::ApplyShapeGizmoTransform()
 	}
 	default: break;
 	}
+	if (!ShapePropertiesEqual(Before, SizeBefore, *Shape, GetSelectedShapeSize())) MarkModified();
 }

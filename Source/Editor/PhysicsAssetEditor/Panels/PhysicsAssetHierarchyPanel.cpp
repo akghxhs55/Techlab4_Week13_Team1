@@ -3,6 +3,7 @@
 #include "Editor/PhysicsAssetEditor/PhysicsAssetEditor.h"
 #include "Editor/EditorUI/EditorStyle.h"
 #include "Render/SkeletalMesh.h"
+#include "Physics/PhysicsAsset.h"
 
 #include <cstdio>
 #include <utility>
@@ -19,11 +20,11 @@ namespace
 	bool BodyMatchesFilter(const FPhysicsAssetPreviewBody& Body, const FString& BoneName, const char* Filter)
 	{
 		if (!Filter[0] || EditorStyle::ContainsIgnoreCase((FString("Body: ") + BoneName).c_str(), Filter)) return true;
-		for (int32 Index = 0; Index < Body.Geometry.CapsuleElems.Num(); ++Index)
+		for (int32 Index = 0; Index < Body.GetGeometry().CapsuleElems.Num(); ++Index)
 			if (ShapeMatchesFilter("Capsule", Index, Filter)) return true;
-		for (int32 Index = 0; Index < Body.Geometry.SphereElems.Num(); ++Index)
+		for (int32 Index = 0; Index < Body.GetGeometry().SphereElems.Num(); ++Index)
 			if (ShapeMatchesFilter("Sphere", Index, Filter)) return true;
-		for (int32 Index = 0; Index < Body.Geometry.BoxElems.Num(); ++Index)
+		for (int32 Index = 0; Index < Body.GetGeometry().BoxElems.Num(); ++Index)
 			if (ShapeMatchesFilter("Box", Index, Filter)) return true;
 		return false;
 	}
@@ -41,6 +42,7 @@ void FPhysicsAssetHierarchyPanel::DrawContent()
 	{
 		LastSelectedBone = -1;
 		LastSelectedBody = -1;
+		LastSelectedConstraint = -1;
 		ImGui::TextDisabled("No preview skeletal mesh.");
 		return;
 	}
@@ -84,13 +86,16 @@ void FPhysicsAssetHierarchyPanel::DrawContent()
 
 	const int32 SelectedBone = Editor.GetSelectedBoneIndex();
 	const int32 SelectedBody = Editor.GetSelectedBodyIndex();
+	const int32 SelectedConstraint = Editor.GetSelectedConstraintIndex();
 	const int32 SelectedShapeType = static_cast<int32>(Editor.GetSelectedShapeType());
 	const int32 SelectedShapeIndex = Editor.GetSelectedShapeIndex();
 	const bool bRevealSelection = bViewChanged || LastSelectedBone != SelectedBone || LastSelectedBody != SelectedBody ||
+		LastSelectedConstraint != SelectedConstraint ||
 		LastSelectedShapeType != SelectedShapeType || LastSelectedShapeIndex != SelectedShapeIndex ||
 		LastTopologyRevision != Editor.GetTopologyRevision();
 	LastSelectedBone = SelectedBone;
 	LastSelectedBody = SelectedBody;
+	LastSelectedConstraint = SelectedConstraint;
 	LastSelectedShapeType = SelectedShapeType;
 	LastSelectedShapeIndex = SelectedShapeIndex;
 	LastTopologyRevision = Editor.GetTopologyRevision();
@@ -176,7 +181,8 @@ void FPhysicsAssetHierarchyPanel::DrawBoneNode(int32 BoneIndex, const TArray<int
 	ImGui::TableNextRow();
 	ImGui::TableNextColumn();
 	ImGui::PushID(BoneIndex);
-	const bool bBoneSelected = Editor.GetSelectedBodyIndex() < 0 && Editor.GetSelectedBoneIndex() == BoneIndex;
+	const bool bBoneSelected = Editor.GetSelectedBodyIndex() < 0 && Editor.GetSelectedConstraintIndex() < 0 &&
+		Editor.GetSelectedBoneIndex() == BoneIndex;
 	ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow |
 		ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DrawLinesToNodes;
 	if (!bHasChildren) Flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
@@ -192,6 +198,7 @@ void FPhysicsAssetHierarchyPanel::DrawBoneNode(int32 BoneIndex, const TArray<int
 	}
 	if (ImGui::BeginPopupContextItem("##BoneContext"))
 	{
+		ImGui::BeginDisabled(Editor.IsSimulationActive());
 		if (ImGui::BeginMenu("Add Body", BodyIndex < 0))
 		{
 			if (ImGui::MenuItem("Capsule")) PendingEdit = [this, BoneIndex] { Editor.AddBody(BoneIndex, FPhysicsAssetEditor::EPreviewShapeType::Capsule); };
@@ -201,6 +208,7 @@ void FPhysicsAssetHierarchyPanel::DrawBoneNode(int32 BoneIndex, const TArray<int
 		}
 		if (BodyIndex >= 0 && ImGui::MenuItem("Select Body")) Editor.SelectBody(BodyIndex);
 		if (BodyIndex >= 0 && ImGui::MenuItem("Delete Body")) PendingEdit = [this, BodyIndex] { Editor.RemoveBody(BodyIndex); };
+		ImGui::EndDisabled();
 		ImGui::EndPopup();
 	}
 
@@ -226,8 +234,10 @@ void FPhysicsAssetHierarchyPanel::DrawBodyNode(int32 BodyIndex, bool bRevealSele
 	const FPhysicsAssetPreviewBody& Body = Editor.GetPreviewBodies()[BodyIndex];
 	const FString BodyLabel = FString("Body: ") + Editor.GetBoneItems()[Body.BoneIndex].Name;
 	const bool bBodySelected = Editor.GetSelectedBodyIndex() == BodyIndex;
-	const bool bHasShapes = bShowShapes && Body.Geometry.GetElementCount() > 0;
-	bool bHasChildren = bHasShapes;
+	const int32 ConstraintIndex = Editor.FindConstraintForBody(BodyIndex);
+	const bool bConstraintSelected = ConstraintIndex >= 0 && ConstraintIndex == Editor.GetSelectedConstraintIndex();
+	const bool bHasShapes = bShowShapes && Body.GetGeometry().GetElementCount() > 0;
+	bool bHasChildren = bHasShapes || ConstraintIndex >= 0;
 	if (BodyTree)
 	{
 		for (int32 Child : BodyTree->Children[BodyIndex])
@@ -241,7 +251,8 @@ void FPhysicsAssetHierarchyPanel::DrawBodyNode(int32 BodyIndex, bool bRevealSele
 	if (!bHasChildren) Flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 	if (bBodySelected) Flags |= ImGuiTreeNodeFlags_Selected;
 	const bool bSelectedDescendant = BodyTree && BodyTree->SelectionAncestors[Body.BoneIndex];
-	if (bHasChildren && (SearchBuffer[0] || (bRevealSelection && (bBodySelected || bSelectedDescendant)))) ImGui::SetNextItemOpen(true);
+	if (bHasChildren && (SearchBuffer[0] || (bRevealSelection && (bBodySelected || bConstraintSelected || bSelectedDescendant))))
+		ImGui::SetNextItemOpen(true);
 	const bool bOpen = ImGui::TreeNodeEx("##Body", Flags, "%s", BodyLabel.c_str());
 	if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) Editor.SelectBody(BodyIndex);
 	if (bBodySelected && (!bShowShapes || Editor.GetSelectedShapeType() == FPhysicsAssetEditor::EPreviewShapeType::None) && bScrollToSelection)
@@ -251,6 +262,12 @@ void FPhysicsAssetHierarchyPanel::DrawBodyNode(int32 BodyIndex, bool bRevealSele
 	}
 	if (ImGui::BeginPopupContextItem("##BodyContext"))
 	{
+		ImGui::BeginDisabled(Editor.IsSimulationActive());
+		const int32 ParentBody = Editor.GetNearestParentBody(BodyIndex);
+		if (ImGui::MenuItem("Connect to Parent", nullptr, false, Editor.CanAddConstraint(ParentBody, BodyIndex)))
+			PendingEdit = [this, ParentBody, BodyIndex] { Editor.AddConstraint(ParentBody, BodyIndex); };
+		if (ConstraintIndex >= 0 && ImGui::MenuItem("Select Constraint")) Editor.SelectConstraint(ConstraintIndex);
+		ImGui::Separator();
 		if (ImGui::BeginMenu("Add Shape"))
 		{
 			if (ImGui::MenuItem("Capsule")) PendingEdit = [this, BodyIndex] { Editor.AddShape(BodyIndex, FPhysicsAssetEditor::EPreviewShapeType::Capsule); };
@@ -259,10 +276,36 @@ void FPhysicsAssetHierarchyPanel::DrawBodyNode(int32 BodyIndex, bool bRevealSele
 			ImGui::EndMenu();
 		}
 		if (ImGui::MenuItem("Delete Body")) PendingEdit = [this, BodyIndex] { Editor.RemoveBody(BodyIndex); };
+		ImGui::EndDisabled();
 		ImGui::EndPopup();
 	}
 	if (bOpen && bHasChildren)
 	{
+		if (ConstraintIndex >= 0)
+		{
+			const FPhysicsAssetConstraint& Constraint = Editor.GetPhysicsAsset()->Constraints[ConstraintIndex];
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			const bool bSelected = Editor.GetSelectedConstraintIndex() == ConstraintIndex;
+			const ImGuiTreeNodeFlags ConstraintFlags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+				ImGuiTreeNodeFlags_SpanAvailWidth | (bSelected ? ImGuiTreeNodeFlags_Selected : 0);
+			ImGui::TreeNodeEx("##IncomingConstraint", ConstraintFlags, "Constraint: %s -> %s",
+				Constraint.ParentBone.c_str(), Constraint.ChildBone.c_str());
+			if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) Editor.SelectConstraint(ConstraintIndex);
+			if (bSelected && bScrollToSelection)
+			{
+				ImGui::SetScrollHereY(0.5f);
+				bScrollToSelection = false;
+			}
+			if (ImGui::BeginPopupContextItem("##ConstraintContext"))
+			{
+				ImGui::BeginDisabled(Editor.IsSimulationActive());
+				if (ImGui::MenuItem("Delete Constraint"))
+					PendingEdit = [this, ConstraintIndex] { Editor.RemoveConstraint(ConstraintIndex); };
+				ImGui::EndDisabled();
+				ImGui::EndPopup();
+			}
+		}
 		const bool bShowAllShapes = !SearchBuffer[0] || EditorStyle::ContainsIgnoreCase(BodyLabel.c_str(), SearchBuffer);
 		const auto DrawShape = [&](FPhysicsAssetEditor::EPreviewShapeType Type, int32 Index, const char* Name)
 		{
@@ -284,7 +327,9 @@ void FPhysicsAssetHierarchyPanel::DrawBodyNode(int32 BodyIndex, bool bRevealSele
 			}
 			if (ImGui::BeginPopupContextItem("##ShapeContext"))
 			{
+				ImGui::BeginDisabled(Editor.IsSimulationActive());
 				if (ImGui::MenuItem("Delete Shape")) PendingEdit = [this, BodyIndex, Type, Index] { Editor.RemoveShape(BodyIndex, Type, Index); };
+				ImGui::EndDisabled();
 				ImGui::EndPopup();
 			}
 			ImGui::PopID();
@@ -292,11 +337,11 @@ void FPhysicsAssetHierarchyPanel::DrawBodyNode(int32 BodyIndex, bool bRevealSele
 		};
 		if (bHasShapes)
 		{
-			for (int32 Index = 0; Index < Body.Geometry.CapsuleElems.Num(); ++Index)
+			for (int32 Index = 0; Index < Body.GetGeometry().CapsuleElems.Num(); ++Index)
 				DrawShape(FPhysicsAssetEditor::EPreviewShapeType::Capsule, Index, "Capsule");
-			for (int32 Index = 0; Index < Body.Geometry.SphereElems.Num(); ++Index)
+			for (int32 Index = 0; Index < Body.GetGeometry().SphereElems.Num(); ++Index)
 				DrawShape(FPhysicsAssetEditor::EPreviewShapeType::Sphere, Index, "Sphere");
-			for (int32 Index = 0; Index < Body.Geometry.BoxElems.Num(); ++Index)
+			for (int32 Index = 0; Index < Body.GetGeometry().BoxElems.Num(); ++Index)
 				DrawShape(FPhysicsAssetEditor::EPreviewShapeType::Box, Index, "Box");
 		}
 		if (BodyTree)

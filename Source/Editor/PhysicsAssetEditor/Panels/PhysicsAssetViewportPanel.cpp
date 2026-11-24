@@ -4,6 +4,7 @@
 #include "Editor/Viewports/EditorViewportClient.h"
 #include "Render/Texture2D.h"
 #include "Editor/Viewports/ViewportToolbarWidgets.h"
+#include "Editor/EditorUI/EditorStyle.h"
 
 FPhysicsAssetViewportPanel::FPhysicsAssetViewportPanel(FPhysicsAssetEditor& InEditor)
 	: FPhysicsAssetEditorPanel(InEditor, "Viewport")
@@ -13,6 +14,41 @@ FPhysicsAssetViewportPanel::FPhysicsAssetViewportPanel(FPhysicsAssetEditor& InEd
 void FPhysicsAssetViewportPanel::DrawContent()
 {
 	DrawPreviewViewToolbar(Editor, ToolbarState);
+	ImGui::PushID("RagdollSimulation");
+	ImGui::BeginDisabled(Editor.IsSimulationActive() || Editor.GetPreviewBodies().IsEmpty());
+	if (ImGui::Button("Simulate")) Editor.StartSimulation();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!Editor.IsSimulationActive());
+	if (ImGui::Button(Editor.IsSimulationPaused() ? "Resume" : "Pause")) Editor.ToggleSimulationPause();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!Editor.IsSimulationPaused());
+	if (ImGui::Button("Step")) Editor.StepSimulation();
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!Editor.IsSimulationActive());
+	if (ImGui::Button("Reset")) Editor.ResetSimulation();
+	ImGui::SameLine();
+	if (ImGui::Button("Stop")) Editor.StopSimulation();
+	ImGui::EndDisabled();
+	ImGui::PopID();
+	if (Editor.IsSimulationActive())
+		ImGui::TextDisabled("%s | %.2f s | Stop restores the initial pose and position.",
+			Editor.IsSimulationPaused() ? "Paused" : "Simulating", Editor.GetSimulationTime());
+	if (!Editor.GetSimulationError().empty())
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, EditorColor::ToVec4(EditorColor::Error));
+		ImGui::TextWrapped("%s", Editor.GetSimulationError().c_str());
+		ImGui::PopStyleColor();
+	}
+	if (!Editor.GetSaveMessage().empty())
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, EditorColor::ToVec4(Editor.HasSaveError() ? EditorColor::Error : EditorColor::TextSecondary));
+		ImGui::TextWrapped("%s", Editor.GetSaveMessage().c_str());
+		ImGui::PopStyleColor();
+	}
+	else if (Editor.IsDirty()) ImGui::TextDisabled("Unsaved changes (Ctrl+S)");
 
 	FEditorViewportClient* Client = Editor.GetViewportClient();
 	const ImVec2 Size = ImGui::GetContentRegionAvail();
@@ -50,7 +86,7 @@ void FPhysicsAssetViewportPanel::DrawContent()
 	{
 		Editor.FocusMesh();
 	}
-	if (bKeyboardInput && bHovered && !bCameraDragging && !bMouseDown && !Editor.IsGizmoDragging())
+	if (bKeyboardInput && bHovered && !bCameraDragging && !bMouseDown && !Editor.IsGizmoDragging() && !Editor.IsSimulationActive())
 	{
 		if (ImGui::IsKeyPressed(ImGuiKey_W, false)) Editor.SetGizmoMode(EGizmoMode::Location);
 		else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) Editor.SetGizmoMode(EGizmoMode::Rotation);
@@ -88,7 +124,9 @@ void FPhysicsAssetViewportPanel::DrawContent()
 	// 렌더 타깃 크기 변경과 렌더링은 에디터에서 처리합니다.
 	Editor.SetViewportState(static_cast<uint32>(Size.x), static_cast<uint32>(Size.y), CameraInput, PointerInput);
 
+	ImGui::BeginDisabled(Editor.IsSimulationActive());
 	const int ClickedMode = ViewportToolbarWidgets::TransformModeOverlay("##PhysicsAssetGizmoToolbar", Origin,
 		static_cast<int>(Editor.GetGizmoMode()));
 	if (ClickedMode >= 0) Editor.SetGizmoMode(static_cast<EGizmoMode>(ClickedMode));
+	ImGui::EndDisabled();
 }

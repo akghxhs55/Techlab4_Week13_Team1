@@ -4,6 +4,7 @@
 #include "Editor/Details/PropertyEditor.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Render/SkeletalMesh.h"
+#include "Physics/PhysicsAsset.h"
 
 #include <cfloat>
 
@@ -18,6 +19,51 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 	if (!Mesh)
 	{
 		ImGui::TextWrapped("No preview skeletal mesh is available.");
+		return;
+	}
+
+	if (const FPhysicsAssetConstraint* Selected = Editor.GetSelectedConstraint())
+	{
+		ImGui::BeginDisabled(Editor.IsSimulationActive());
+		FPhysicsAssetConstraint Properties = *Selected;
+		ImGui::PushID("ConstraintProperties");
+		ImGui::PushID(Editor.GetSelectedConstraintIndex());
+		ImGui::PushID(static_cast<int>(Editor.GetTopologyRevision()));
+		ImGui::TextDisabled("Parent Body");
+		ImGui::TextWrapped("%s", Properties.ParentBone.c_str());
+		ImGui::TextDisabled("Child Body");
+		ImGui::TextWrapped("%s", Properties.ChildBone.c_str());
+		ImGui::Separator();
+		ImGui::TextDisabled("Linear Motion: Locked");
+		const auto DrawMotion = [](const char* Label, EConstraintMotion& Motion)
+		{
+			const char* Names[] = { "Locked", "Limited", "Free" };
+			int Value = static_cast<int>(Motion);
+			if (!ImGui::Combo(Label, &Value, Names, IM_ARRAYSIZE(Names))) return false;
+			Motion = static_cast<EConstraintMotion>(Value);
+			return true;
+		};
+		bool bChanged = DrawMotion("Swing 1", Properties.Swing1Motion);
+		ImGui::BeginDisabled(Properties.Swing1Motion != EConstraintMotion::Limited);
+		bChanged |= ImGui::SliderFloat("Swing 1 Limit", &Properties.Swing1LimitDeg, 0.1f, 179.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::EndDisabled();
+		bChanged |= DrawMotion("Swing 2", Properties.Swing2Motion);
+		ImGui::BeginDisabled(Properties.Swing2Motion != EConstraintMotion::Limited);
+		bChanged |= ImGui::SliderFloat("Swing 2 Limit", &Properties.Swing2LimitDeg, 0.1f, 179.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::EndDisabled();
+		bChanged |= DrawMotion("Twist", Properties.TwistMotion);
+		ImGui::BeginDisabled(Properties.TwistMotion != EConstraintMotion::Limited);
+		bChanged |= ImGui::DragFloatRange2("Twist Limits", &Properties.TwistMinDeg, &Properties.TwistMaxDeg,
+			0.5f, -179.0f, 179.0f, "Min %.1f deg", "Max %.1f deg", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::EndDisabled();
+		bChanged |= FPropertyEditor::DrawRotator("Frame Offset", Properties.FrameOffset);
+		if (bChanged && !Editor.SetSelectedConstraintProperties(Properties))
+			ImGui::TextWrapped("Constraint values must be finite numbers.");
+		ImGui::PopID();
+		ImGui::PopID();
+		ImGui::PopID();
+		if (ImGui::Button("Delete Constraint")) Editor.RemoveConstraint(Editor.GetSelectedConstraintIndex());
+		ImGui::EndDisabled();
 		return;
 	}
 
@@ -63,7 +109,7 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 			ImGui::PushID(Editor.GetSelectedShapeIndex());
 			ImGui::PushID(static_cast<int>(Editor.GetTopologyRevision()));
 			ImGui::TextDisabled("Bone Space / Rotation in Degrees");
-			ImGui::BeginDisabled(Editor.IsGizmoDragging());
+			ImGui::BeginDisabled(Editor.IsGizmoDragging() || Editor.IsSimulationActive());
 			bool bChanged = FPropertyEditor::DrawVector3("Location", Shape.Center.V, 0.0f);
 			bChanged |= FPropertyEditor::DrawRotator("Rotation", Shape.Rotation);
 
@@ -132,8 +178,8 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 		if (Body)
 		{
 			ImGui::Text("Body Index: %d", Editor.GetSelectedBodyIndex());
-			ImGui::Text("Shapes: %d", Body->Geometry.GetElementCount());
-			ImGui::TextWrapped("Changes are kept until this editor is closed.");
+			ImGui::Text("Shapes: %d", Body->GetGeometry().GetElementCount());
+			ImGui::TextWrapped("Save changes to the mesh's .physics.json file with Ctrl+S.");
 		}
 		else
 		{
@@ -144,9 +190,9 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 	{
 		if (Body)
 		{
-			ImGui::Text("Spheres: %d", Body->Geometry.SphereElems.Num());
-			ImGui::Text("Boxes: %d", Body->Geometry.BoxElems.Num());
-			ImGui::Text("Capsules: %d", Body->Geometry.CapsuleElems.Num());
+			ImGui::Text("Spheres: %d", Body->GetGeometry().SphereElems.Num());
+			ImGui::Text("Boxes: %d", Body->GetGeometry().BoxElems.Num());
+			ImGui::Text("Capsules: %d", Body->GetGeometry().CapsuleElems.Num());
 		}
 		else
 		{
@@ -155,6 +201,25 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 	}
 	if (ImGui::CollapsingHeader("Constraint"))
 	{
-		ImGui::TextWrapped("Constraint data is not connected. Select a constraint to edit its frames and linear/angular limits once constraint selection is available.");
+		const int32 ChildBody = Editor.GetSelectedBodyIndex();
+		const int32 ParentBody = Editor.GetNearestParentBody(ChildBody);
+		const int32 ConstraintIndex = Editor.FindConstraintForBody(ChildBody);
+		if (ConstraintIndex >= 0)
+		{
+			if (ImGui::Button("Edit Constraint")) Editor.SelectConstraint(ConstraintIndex);
+		}
+		else if (ParentBody >= 0)
+		{
+			const int32 ParentBone = Editor.GetPreviewBodies()[ParentBody].BoneIndex;
+			ImGui::TextWrapped("Parent Body: %s", Bones[ParentBone].Name.c_str());
+			ImGui::BeginDisabled(!Editor.CanAddConstraint(ParentBody, ChildBody));
+			if (ImGui::Button("Connect to Parent")) Editor.AddConstraint(ParentBody, ChildBody);
+			ImGui::EndDisabled();
+			ImGui::TextWrapped("Both bodies must have collision shapes.");
+		}
+		else
+		{
+			ImGui::TextWrapped("Select a child body with an ancestor body to create a constraint.");
+		}
 	}
 }

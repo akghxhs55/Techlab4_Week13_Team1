@@ -5,6 +5,7 @@
 #include "Panels/PhysicsAssetHierarchyPanel.h"
 #include "Panels/PhysicsAssetDetailsPanel.h"
 #include "Panels/PhysicsAssetSettingsPanel.h"
+#include "Panels/PhysicsAssetGraphPanel.h"
 
 FPhysicsAssetEditorTab::FPhysicsAssetEditorTab(FPhysicsAssetEditor& InEditor)
 	: FAssetEditorTab(InEditor)
@@ -18,6 +19,7 @@ FPhysicsAssetEditorTab::FPhysicsAssetEditorTab(FPhysicsAssetEditor& InEditor)
 	Panels.Add(MakeUnique<FPhysicsAssetHierarchyPanel>(InEditor));
 	Panels.Add(MakeUnique<FPhysicsAssetDetailsPanel>(InEditor));
 	Panels.Add(MakeUnique<FPhysicsAssetSettingsPanel>(InEditor));
+	Panels.Add(MakeUnique<FPhysicsAssetGraphPanel>(InEditor));
 	for (auto& Panel : Panels)
 	{
 		Panel->SetDockClass(PanelClassId);
@@ -27,7 +29,24 @@ FPhysicsAssetEditorTab::FPhysicsAssetEditorTab(FPhysicsAssetEditor& InEditor)
 
 void FPhysicsAssetEditorTab::DrawMenuBar()
 {
-	FAssetEditorTab::DrawMenuBar();
+	if (ImGui::BeginMenu("File"))
+	{
+		if (ImGui::MenuItem("Save", "Ctrl+S", false, PhysicsEditor.GetPhysicsAsset() != nullptr)) PhysicsEditor.Save();
+		ImGui::Separator();
+		if (ImGui::MenuItem("Close Editor")) PhysicsEditor.Close();
+		ImGui::EndMenu();
+	}
+	if (ImGui::BeginMenu("Simulation"))
+	{
+		if (ImGui::MenuItem("Simulate", nullptr, false, !PhysicsEditor.IsSimulationActive() && !PhysicsEditor.GetPreviewBodies().IsEmpty()))
+			PhysicsEditor.StartSimulation();
+		if (ImGui::MenuItem(PhysicsEditor.IsSimulationPaused() ? "Resume" : "Pause", nullptr, false, PhysicsEditor.IsSimulationActive()))
+			PhysicsEditor.ToggleSimulationPause();
+		if (ImGui::MenuItem("Step", nullptr, false, PhysicsEditor.IsSimulationPaused())) PhysicsEditor.StepSimulation();
+		if (ImGui::MenuItem("Reset", nullptr, false, PhysicsEditor.IsSimulationActive())) PhysicsEditor.ResetSimulation();
+		if (ImGui::MenuItem("Stop", nullptr, false, PhysicsEditor.IsSimulationActive())) PhysicsEditor.StopSimulation();
+		ImGui::EndMenu();
+	}
 	EditorDock::DrawWindowMenu(Panels);
 }
 
@@ -40,10 +59,12 @@ void FPhysicsAssetEditorTab::BuildDefaultLayout(ImGuiID InDockSpaceId, const ImV
 	const ImGuiID HierarchyId = ImGui::DockBuilderSplitNode(ViewportId, ImGuiDir_Left, 0.22f, nullptr, &ViewportId);
 	ImGuiID DetailsId = ImGui::DockBuilderSplitNode(ViewportId, ImGuiDir_Right, 0.28f, nullptr, &ViewportId);
 	const ImGuiID SettingsId = ImGui::DockBuilderSplitNode(DetailsId, ImGuiDir_Down, 0.40f, nullptr, &DetailsId);
+	const ImGuiID GraphId = ImGui::DockBuilderSplitNode(ViewportId, ImGuiDir_Down, 0.30f, nullptr, &ViewportId);
 	ImGui::DockBuilderDockWindow(Panels[0]->GetWindowName(), ViewportId);
 	ImGui::DockBuilderDockWindow(Panels[1]->GetWindowName(), HierarchyId);
 	ImGui::DockBuilderDockWindow(Panels[2]->GetWindowName(), DetailsId);
 	ImGui::DockBuilderDockWindow(Panels[3]->GetWindowName(), SettingsId);
+	ImGui::DockBuilderDockWindow(Panels[4]->GetWindowName(), GraphId);
 	ImGui::DockBuilderFinish(InDockSpaceId);
 }
 
@@ -83,4 +104,8 @@ void FPhysicsAssetEditorTab::OnRender(bool bActive)
 			Panel->OnRender();
 		}
 	}
+	const ImGuiIO& IO = ImGui::GetIO();
+	const bool bTabFocused = bActive && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_DockHierarchy);
+	if ((bTabFocused || HasFocusedSubWindow()) && IO.KeyCtrl && !IO.KeyAlt && !IO.KeyShift &&
+		!IO.WantTextInput && !IO.AppFocusLost && ImGui::IsKeyPressed(ImGuiKey_S, false)) PhysicsEditor.Save();
 }

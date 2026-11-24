@@ -21,8 +21,9 @@ void FPhysicsAssetSettingsPanel::DrawContent()
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		if (ImGui::Combo("##PhysicsBodyDrawing", &Mode, ModeNames, IM_ARRAYSIZE(ModeNames)))
 			Editor.SetBodyDrawMode(static_cast<FPhysicsAssetEditor::EBodyDrawMode>(Mode));
-		if (Editor.GetBodyDrawMode() == FPhysicsAssetEditor::EBodyDrawMode::SelectedOnly && Editor.GetSelectedBodyIndex() < 0)
-			ImGui::TextWrapped("Select a body in the skeleton tree to display it.");
+		if (Editor.GetBodyDrawMode() == FPhysicsAssetEditor::EBodyDrawMode::SelectedOnly &&
+			Editor.GetSelectedBodyIndex() < 0 && !Editor.GetSelectedConstraint())
+			ImGui::TextWrapped("Select a body or constraint to display its bodies.");
 
 		FVector4 BodyColor = Editor.GetBodyColor();
 		ImGui::TextUnformatted("Body Color");
