@@ -132,6 +132,8 @@ protected:
 
 private:
 	void InitConstraints(const UPhysicsAsset& Asset);
+	bool IsSimulatingRagdoll();
+	void UpdateComponentToRootBody();
 
     UPROPERTY()
     FString AnimBlueprintPath;

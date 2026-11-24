@@ -373,6 +373,11 @@ void USkeletalMeshComponent::BlendInPhysics()
 		return;
 	}
 
+	if (IsSimulatingRagdoll())
+	{
+		UpdateComponentToRootBody();
+	}
+
 	const FMatrix WorldToComponent = GetWorldMatrix().Inverse();
 
 	TArray<FMatrix> ComponentSpace;
@@ -1246,4 +1251,34 @@ void USkeletalMeshComponent::OnDestroyPhysicsState()
 {
 	TermArticulated();
 	Super::OnDestroyPhysicsState();
+}
+
+bool USkeletalMeshComponent::IsSimulatingRagdoll()
+{
+	return Bodies.Num() > 0 && Bodies[0]->IsDynamic();
+}
+
+void USkeletalMeshComponent::UpdateComponentToRootBody()
+{
+	FBodyInstance* RootBody = nullptr;
+	for (auto* Body : BoneToBody)
+	{
+		if (Body && Body->IsDynamic())
+		{
+			RootBody = Body;
+			break;
+		}
+	}
+	if (!RootBody)
+	{
+		return;
+	}
+
+	const FVector Delta = RootBody->GetUnrealWorldTransform().Location - GetWorldLocation();
+
+	AActor* Owner = GetOwner();
+	USceneComponent* Target = (Owner && Owner->GetRootComponent()) ? Owner->GetRootComponent() : this;
+
+	const FTransform NewTransform(GetWorldRotation(), GetWorldLocation() + Delta, GetWorldScale3D());
+	Target->SetWorldTransform(NewTransform.GetLocalMatrix(), false, ETeleportType::None);
 }
