@@ -1,5 +1,6 @@
 #include "EnginePCH.h"
 #include "GameFramework/Actor/WheeledVehiclePawn.h"
+#include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/VehicleMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -8,12 +9,22 @@
 
 AWheeledVehiclePawn::AWheeledVehiclePawn()
 {
+	// 1. 차체 루트 충돌체 (스케일 1.0 유지 -> 자식 컴포넌트의 Shear 왜곡 방지)
+	ChassisCollision = CreateDefaultSubobject<UBoxComponent>("ChassisCollision");
+	SetRootComponent(ChassisCollision);
+	ChassisCollision->BoxExtent = FVector(2.0f, 1.0f, 0.5f); // 4m x 2m x 1m의 로컬 반 크기
+	ChassisCollision->BodyInstance.bSimulatePhysics = true;
+	ChassisCollision->BodyInstance.bEnableGravity = true;
+	ChassisCollision->BodyInstance.CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
+	ChassisCollision->BodyInstance.MassInKgOverride = 1500.0f;
+	ChassisCollision->BodyInstance.LinearDamping = 0.15f;
+	ChassisCollision->BodyInstance.AngularDamping = 0.5f;
+
+	// 2. 차체 렌더링용 비주얼 메시 (ChassisCollision의 자식으로 붙이며, 자식을 갖지 않음)
 	MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>("Mesh");
-	SetRootComponent(MeshComponent);
-	MeshComponent->BodyInstance.bSimulatePhysics = true;
-	MeshComponent->BodyInstance.bEnableGravity = true;
-	MeshComponent->BodyInstance.CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
-	MeshComponent->BodyInstance.MassInKgOverride = 1500.0f;
+	MeshComponent->SetupAttachment(ChassisCollision);
+	MeshComponent->BodyInstance.bSimulatePhysics = false;
+	MeshComponent->BodyInstance.CollisionEnabled = ECollisionEnabled::NoCollision;
 
 	// 기본 큐브 메시 지정
 	UStaticMesh* CubeMesh = UAssetManager::GetAssetByPath<UStaticMesh>("Cube");
@@ -23,11 +34,13 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	}
 	MeshComponent->SetRelativeScale3D(FVector(4.0f, 2.0f, 1.0f));
 
+	// 3. 차량 무브먼트 컴포넌트 (루트 물리 컴포넌트 바인딩)
 	VehicleMovement = CreateDefaultSubobject<UVehicleMovementComponent>("VehicleMovement");
-	VehicleMovement->SetUpdatedComponent(MeshComponent);
+	VehicleMovement->SetUpdatedComponent(ChassisCollision);
 
+	// 4. 스프링암 및 카메라
 	SpringArmComponent = CreateDefaultSubobject<USpringArmComponent>("SpringArm");
-	SpringArmComponent->SetupAttachment(MeshComponent);
+	SpringArmComponent->SetupAttachment(ChassisCollision);
 	SpringArmComponent->TargetArmLength = 6.0f;
 	SpringArmComponent->TargetOffset = FVector(0.0f, 0.0f, 1.5f);
 	SpringArmComponent->SetRelativeRotation(FRotator(15.0f, 0.0f, 0.0f));
@@ -37,7 +50,7 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	CameraComponent = CreateDefaultSubobject<UCameraComponent>("Camera");
 	CameraComponent->SetupAttachment(SpringArmComponent);
 
-	// 바퀴 비주얼 컴포넌트 생성 (실린더 또는 큐브 메시)
+	// 5. 바퀴 비주얼 컴포넌트 생성 (ChassisCollision 직속 자식 -> 부모 스케일 1.0으로 왜곡 없음)
 	UStaticMesh* WheelAsset = UAssetManager::GetAssetByPath<UStaticMesh>("Cylinder");
 	if (!WheelAsset)
 	{
@@ -47,9 +60,10 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	auto SetupWheelComp = [&](UStaticMeshComponent*& Comp, const char* Name)
 	{
 		Comp = CreateDefaultSubobject<UStaticMeshComponent>(Name);
-		Comp->SetupAttachment(MeshComponent);
+		Comp->SetupAttachment(ChassisCollision);
 		Comp->SetStaticMesh(WheelAsset);
-		Comp->SetRelativeScale3D(FVector(0.7f, 0.2f, 0.7f)); // 직경 70cm, 폭 20cm
+		// Cylinder 기본(반경 1m, 높이 1m) -> 바퀴 반경 0.35m(지름 0.7m), 폭 0.2m에 맞춤
+		Comp->SetRelativeScale3D(FVector(0.35f, 0.35f, 0.20f));
 		Comp->BodyInstance.bSimulatePhysics = false;
 		Comp->BodyInstance.CollisionEnabled = ECollisionEnabled::NoCollision;
 	};
@@ -72,13 +86,18 @@ void AWheeledVehiclePawn::Tick(float DeltaTime)
 	// 바퀴 비주얼 컴포넌트 실시간 동기화 (서스펜션 상하 스트로크 + 조향각 + 롤링 회전)
 	if (VehicleMovement)
 	{
+		// 실린더 메시는 중심축이 Z축(위쪽)에 있으므로, Roll 90도 회전을 합성하여 차량 좌우(Y축) 회전축과 일치시킴
+		const FQuat CylinderOrientation = FRotator(0.0f, 0.0f, 90.0f).Quaternion();
+
 		for (int32 i = 0; i < 4; ++i)
 		{
 			if (UStaticMeshComponent* WheelComp = GetWheelMesh(i))
 			{
 				const FTransform LocalWheelPose = VehicleMovement->GetWheelLocalTransform(i);
 				WheelComp->SetRelativeLocation(LocalWheelPose.Location);
-				WheelComp->SetRelativeRotation(LocalWheelPose.Rotation.ToFRotator());
+
+				const FQuat TotalWheelRot = LocalWheelPose.Rotation * CylinderOrientation;
+				WheelComp->SetRelativeRotation(TotalWheelRot.ToFRotator());
 			}
 		}
 	}

@@ -293,12 +293,19 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 			TotalBrakeTorque += Wheel.MaxHandbrakeTorque;
 		}
 
+		const float SignVal = (LongSpeed > 0.0f) ? 1.0f : ((LongSpeed < 0.0f) ? -1.0f : 0.0f);
+
 		if (TotalBrakeTorque > 0.0f && std::abs(LongSpeed) > 0.05f)
 		{
 			const float MaxBrakeForce = TotalBrakeTorque / Wheel.Radius;
 			const float BrakeForceMag = FMath::Min(MaxBrakeForce, std::abs(LongSpeed) * Params.ChassisMass * 2.0f);
-			const float SignVal = (LongSpeed > 0.0f) ? 1.0f : ((LongSpeed < 0.0f) ? -1.0f : 0.0f);
 			WheelDriveForce -= SignVal * BrakeForceMag;
+		}
+		else if (std::abs(Throttle) < 0.01f && std::abs(LongSpeed) > 0.05f)
+		{
+			// 스로틀을 뗐을 때 자연 감속 (엔진 브레이크 + 타이어 굴림 저항: 바퀴당 약 250N)
+			const float CoastResistance = FMath::Min(250.0f, std::abs(LongSpeed) * (Params.ChassisMass * 0.25f));
+			WheelDriveForce -= SignVal * CoastResistance;
 		}
 
 		const PxVec3 LongForce = WheelForward * WheelDriveForce;

@@ -134,6 +134,13 @@ void UVehicleMovementComponent::TickComponent(float DeltaTime)
 
 		RawSteeringInput = FMath::Clamp(RightInput, -1.0f, 1.0f);
 	}
+	else
+	{
+		// 키 입력을 떼면 즉시 조작 입력을 0으로 초기화
+		RawThrottleInput = 0.0f;
+		RawSteeringInput = 0.0f;
+		RawBrakeInput = 0.0f;
+	}
 
 	// 2. 조작 입력 스무딩 보간
 	CurrentThrottle = FMath::FInterpTo(CurrentThrottle, RawThrottleInput, DeltaTime, ThrottleInputRate);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GameFramework/Pawn.h"
+#include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/VehicleMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -9,7 +10,7 @@
 
 /**
  * 4륜 차량 기본 폰 (Unreal AWheeledVehiclePawn 대응)
- * 차체 스태틱 메시, 4륜 무브먼트 컴포넌트, 3인칭 스프링암 및 카메라를 기본 제공합니다.
+ * 차체 충돌체/스태틱 메시, 4륜 무브먼트 컴포넌트, 3인칭 스프링암 및 카메라를 기본 제공합니다.
  */
 UCLASS()
 class AWheeledVehiclePawn : public APawn
@@ -25,6 +26,7 @@ public:
 
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
 
+	UBoxComponent* GetChassisCollision() const { return ChassisCollision; }
 	UStaticMeshComponent* GetMeshComponent() const { return MeshComponent; }
 	UVehicleMovementComponent* GetVehicleMovement() const { return VehicleMovement; }
 	USpringArmComponent* GetSpringArmComponent() const { return SpringArmComponent; }
@@ -39,6 +41,9 @@ public:
 	void SetHandbrakeInput(bool bVal);
 
 protected:
+	UPROPERTY(VisibleAnywhere)
+	UBoxComponent* ChassisCollision = nullptr;
+
 	UPROPERTY(VisibleAnywhere)
 	UStaticMeshComponent* MeshComponent = nullptr;
 
