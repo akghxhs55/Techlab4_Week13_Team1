@@ -68,6 +68,7 @@ public:
 	bool IsGizmoDragging() const { return ShapeGizmo.IsUsing(); }
 	int32 AddBody(int32 BoneIndex, EPreviewShapeType ShapeType = EPreviewShapeType::Capsule);
 	bool RemoveBody(int32 BodyIndex);
+	bool GenerateBodies();
 	int32 AddShape(int32 BodyIndex, EPreviewShapeType ShapeType);
 	bool RemoveShape(int32 BodyIndex, EPreviewShapeType ShapeType, int32 ShapeIndex);
 	bool SelectShape(int32 BodyIndex, EPreviewShapeType ShapeType, int32 ShapeIndex);

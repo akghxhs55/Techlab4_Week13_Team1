@@ -51,6 +51,17 @@ void FPhysicsAssetViewportPanel::DrawContent()
 		FString Message;
 		FStatOverlay::ExecCommand("stat physics", Message);
 	}
+
+	const char* GenerateLabel = "Generate Bodies";
+	const float GenerateWidth = ImGui::CalcTextSize(GenerateLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+	ImGui::SameLine();
+	const float RightX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - GenerateWidth;
+	if (RightX > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(RightX);
+	ImGui::BeginDisabled(Editor.IsSimulationActive() || !Editor.GetPhysicsAsset());
+	if (ImGui::Button(GenerateLabel)) Editor.GenerateBodies();
+	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip("Fit capsule bodies and constraints to the skin weights. Replaces existing bodies.");
 	if (!Editor.GetSimulationError().empty())
 	{
 		ImGui::PushStyleColor(ImGuiCol_Text, EditorColor::ToVec4(EditorColor::Error));
