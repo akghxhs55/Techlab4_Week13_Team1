@@ -1253,7 +1253,7 @@ void USkeletalMeshComponent::OnDestroyPhysicsState()
 	Super::OnDestroyPhysicsState();
 }
 
-bool USkeletalMeshComponent::IsSimulatingRagdoll()
+bool USkeletalMeshComponent::IsSimulatingRagdoll() const
 {
 	return Bodies.Num() > 0 && Bodies[0]->IsDynamic();
 }

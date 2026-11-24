@@ -10,18 +10,6 @@ UPhysicsAsset::~UPhysicsAsset()
 	ClearBodies();
 }
 
-int32 UPhysicsAsset::FindBodyIndex(const FString& BoneName) const
-{
-	for (int32 i = 0; i < BodySetups.Num(); ++i)
-	{
-		if (BodySetups[i] && BodySetups[i]->BoneName == BoneName)
-		{
-			return i;
-		}
-	}
-	return -1;
-}
-
 void UPhysicsAsset::ClearBodies()
 {
 	for (UBodySetup* Body : BodySetups)

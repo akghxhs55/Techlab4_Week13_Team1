@@ -132,7 +132,7 @@ protected:
 
 private:
 	void InitConstraints(const UPhysicsAsset& Asset);
-	bool IsSimulatingRagdoll();
+	bool IsSimulatingRagdoll() const;
 	void UpdateComponentToRootBody();
 
     UPROPERTY()

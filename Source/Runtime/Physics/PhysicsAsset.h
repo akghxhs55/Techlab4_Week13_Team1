@@ -55,7 +55,6 @@ public:
 
 	bool Validate(const USkeletalMesh& Mesh, const FString& DebugName) const;
 
-	int32 FindBodyIndex(const FString& BoneName) const;
 	void ClearBodies();
 
 	TArray<UBodySetup*> BodySetups;
