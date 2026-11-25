@@ -80,6 +80,12 @@ public:
 	UPROPERTY(EditAnywhere)
 	float SteeringInputRate = 6.0f;     // 조향 반응 속도 (1/s)
 
+	UPROPERTY(EditAnywhere)
+	float DownforceScale = 1.0f;        // 공력 다운포스 배율 (1.0 = 기본 프리셋)
+
+	UPROPERTY(EditAnywhere)
+	float TireGripScale = 1.0f;         // 타이어 마찰력 배율 (1.0 = 기본 프리셋)
+
 protected:
 	bool TryInitVehicle();
 

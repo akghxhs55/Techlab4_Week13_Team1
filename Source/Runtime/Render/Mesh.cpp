@@ -4,6 +4,9 @@
 #include "Asset/AssetManager.h"
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Physics/BodySetup.h"
+#include "Physics/PhysicsCore.h"
+#include <PxPhysics.h>
+#include <cooking/PxCooking.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -36,6 +39,57 @@ UBodySetup* UStaticMesh::GetBodySetup()
     Box.Z = std::max(Bounds.Max.Z - Bounds.Min.Z, MinThickness);
 
     return BodySetup;
+}
+
+bool UStaticMesh::EnsureTriangleMesh()
+{
+    UBodySetup* Setup = GetBodySetup();
+    if (!Setup)
+    {
+        return false;
+    }
+    if (Setup->TriangleMesh)
+    {
+        return true;
+    }
+    if (MeshData.Vertices.IsEmpty() || MeshData.Indices.Num() < 3)
+    {
+        return false;
+    }
+
+    physx::PxPhysics* Physics = FPhysicsCore::IsInitialized() ? FPhysicsCore::GetPhysics() : nullptr;
+    if (!Physics)
+    {
+        return false;
+    }
+
+    physx::PxTriangleMeshDesc Desc;
+    Desc.points.count = static_cast<physx::PxU32>(MeshData.Vertices.Num());
+    Desc.points.stride = sizeof(FVertex);
+    Desc.points.data = MeshData.Vertices.GetData();
+    Desc.triangles.count = static_cast<physx::PxU32>(MeshData.Indices.Num() / 3);
+    Desc.triangles.stride = 3 * sizeof(uint32);
+    Desc.triangles.data = MeshData.Indices.GetData();
+
+    physx::PxCookingParams CookingParams(Physics->getTolerancesScale());
+    CookingParams.suppressTriangleMeshRemapTable = true;
+
+    physx::PxTriangleMeshCookingResult::Enum Result = physx::PxTriangleMeshCookingResult::eSUCCESS;
+    Setup->TriangleMesh = PxCreateTriangleMesh(
+        CookingParams,
+        Desc,
+        Physics->getPhysicsInsertionCallback(),
+        &Result);
+
+    if (!Setup->TriangleMesh)
+    {
+        KRS_LOG(Error, "[PhysX] Failed to cook TriangleMesh for '{}' (result={})", GetPath(), static_cast<int32>(Result));
+        return false;
+    }
+
+    KRS_LOG(Info, "[PhysX] Cooked TriangleMesh for '{}' ({} verts, {} tris)",
+        GetPath(), MeshData.Vertices.Num(), MeshData.Indices.Num() / 3);
+    return true;
 }
 
 UMaterialInterface* UStaticMesh::GetMaterial(uint32 SlotIndex) const

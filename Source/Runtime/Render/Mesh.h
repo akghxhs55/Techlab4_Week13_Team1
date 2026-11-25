@@ -86,6 +86,7 @@ public:
 	const FBox& GetRenderBounds() const { return RenderBounds; }
 	// 처음 부를 때 메시 AABB로 박스 하나를 만든다 콜리전 편집이 생기면 저장된 형상으로 바꾼다
 	UBodySetup* GetBodySetup();
+	bool EnsureTriangleMesh();
 	TSharedPtr<const FMeshRenderState> GetRenderState(const std::vector<UMaterialInterface*>& Materials);
     void RegisterProxy(FPrimitiveSceneProxy* Proxy);
     void UnregisterProxy(FPrimitiveSceneProxy* Proxy);

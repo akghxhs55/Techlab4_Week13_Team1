@@ -139,12 +139,17 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 	const PxVec3 RightDir = ChassisPose.q.rotate(PxVec3(0.0f, 1.0f, 0.0f));
 	const PxVec3 UpDir = ChassisPose.q.rotate(PxVec3(0.0f, 0.0f, 1.0f));
 
-	// 2. 조향각 계산 (전륜 조향)
+	// 2. 조향각 계산 (전륜 조향 + 속도 반비례 감쇠로 중·고속 스핀 방지 및 정밀 코너링)
+	const PxVec3 ChassisVel = ChassisActor->getLinearVelocity();
+	const float CurrentForwardSpeed = ChassisVel.dot(ForwardDir);
+	const float SpeedRatio = std::abs(CurrentForwardSpeed) / std::max(Params.HighSpeedSteerRefSpeed, 1.0f);
+	const float SteerSpeedScale = std::max(Params.MinHighSpeedSteerScale, 1.0f / (1.0f + std::pow(SpeedRatio, 1.6f)));
+
 	float SteerAngleRad[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	WheelStates[0].SteerAngle = Steer * Params.FrontLeftWheel.MaxSteerAngle;
+	WheelStates[0].SteerAngle = Steer * Params.FrontLeftWheel.MaxSteerAngle * SteerSpeedScale;
 	SteerAngleRad[0] = FMath::DegreesToRadians(WheelStates[0].SteerAngle);
 
-	WheelStates[1].SteerAngle = Steer * Params.FrontRightWheel.MaxSteerAngle;
+	WheelStates[1].SteerAngle = Steer * Params.FrontRightWheel.MaxSteerAngle * SteerSpeedScale;
 	SteerAngleRad[1] = FMath::DegreesToRadians(WheelStates[1].SteerAngle);
 
 	WheelStates[2].SteerAngle = 0.0f;
@@ -152,6 +157,21 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 
 	WheelStates[3].SteerAngle = 0.0f;
 	SteerAngleRad[3] = 0.0f;
+
+	// 2.5 공력 다운포스(Downforce) 및 공기저항(Drag) 인가
+	if (CurrentForwardSpeed > 1.0f && Params.DownforceCoeff > 0.0f)
+	{
+		// 전진 속도^2에 비례하는 하향력 (약간의 후방 공력 중심으로 고속 리어 접지력 보강)
+		const float DownforceMag = Params.DownforceCoeff * CurrentForwardSpeed * CurrentForwardSpeed;
+		const PxVec3 AeroCenterPos = ChassisPose.transform(PxVec3(-0.30f, 0.0f, 0.0f));
+		PxRigidBodyExt::addForceAtPos(*ChassisActor, -UpDir * DownforceMag, AeroCenterPos, PxForceMode::eFORCE);
+	}
+	const float LinearSpeed = ChassisVel.magnitude();
+	if (LinearSpeed > 0.5f && Params.AeroDragCoeff > 0.0f)
+	{
+		const float DragMag = Params.AeroDragCoeff * LinearSpeed * LinearSpeed;
+		ChassisActor->addForce(-ChassisVel.getNormalized() * DragMag, PxForceMode::eFORCE);
+	}
 
 	// 3. 지면 레이캐스트 (차체 액터 충돌 무시 필터 콜백)
 	class FVehicleRaycastFilterCallback : public PxQueryFilterCallback
@@ -279,7 +299,10 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		const float LongSpeed = WheelVel.dot(WheelForward);
 		const float LatSpeed = WheelVel.dot(WheelRight);
 
-		// (C) 종방향 추진력 및 제동력 (후륜 구동 분배)
+		// (C) 종방향 추진력 및 제동력 (후륜 구동 분배 + 타이어 종방향 트랙션 한계)
+		const float NormalLoad = SuspForce.magnitude();
+		const float MaxLongFriction = NormalLoad * Params.TireLongitudinalFriction;
+
 		float WheelDriveForce = 0.0f;
 		if (i >= 2) // Rear wheels (2, 3)
 		{
@@ -303,19 +326,25 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		}
 		else if (std::abs(Throttle) < 0.01f && std::abs(LongSpeed) > 0.05f)
 		{
-			// 스로틀을 뗐을 때 자연 감속 (엔진 브레이크 + 타이어 굴림 저항: 바퀴당 약 250N)
-			const float CoastResistance = FMath::Min(250.0f, std::abs(LongSpeed) * (Params.ChassisMass * 0.25f));
+			// 스로틀을 뗐을 때 자연 감속 (엔진 브레이크 + 타이어 굴림 저항)
+			const float CoastResistance = FMath::Min(350.0f, std::abs(LongSpeed) * (Params.ChassisMass * 0.35f));
 			WheelDriveForce -= SignVal * CoastResistance;
 		}
+
+		WheelDriveForce = FMath::Clamp(WheelDriveForce, -MaxLongFriction, MaxLongFriction);
 
 		const PxVec3 LongForce = WheelForward * WheelDriveForce;
 		PxRigidBodyExt::addForceAtPos(*ChassisActor, LongForce, WheelWorldPos, PxForceMode::eFORCE);
 
-		// (D) 횡방향 타이어 마찰력 (Cornering Grip)
-		const float NormalLoad = SuspForce.magnitude();
-		const float MaxLateralFriction = NormalLoad * 1.0f;
-		const float CorneringStiffness = 12000.0f;
-		const float LatForceMag = FMath::Clamp(-LatSpeed * CorneringStiffness, -MaxLateralFriction, MaxLateralFriction);
+		// (D) 횡방향 타이어 마찰력 (슬립각 기반 코너링 포스 + 전후 그립 밸런스 + 마찰원)
+		const float LateralFrictionCoeff = (i < 2) ? Params.TireLateralFriction : Params.RearTireLateralFriction;
+		const float MaxTotalLateral = NormalLoad * LateralFrictionCoeff;
+		const float UsedLongRatio = (MaxLongFriction > 1.0f) ? FMath::Clamp(std::abs(WheelDriveForce) / MaxLongFriction, 0.0f, 1.0f) : 0.0f;
+		// 풀가속 중에도 리어 횡그립이 급감하지 않도록 마찰원 감쇠 완만화 (최소 74% 이상 유지)
+		const float EffectiveMaxLateral = MaxTotalLateral * std::sqrt(std::max(0.55f, 1.0f - 0.25f * UsedLongRatio * UsedLongRatio));
+		const float EffectiveLongSpeed = std::max(std::abs(LongSpeed), 8.0f);
+		const float SlipAngleRad = std::atan2(LatSpeed, EffectiveLongSpeed);
+		const float LatForceMag = FMath::Clamp(-SlipAngleRad * Params.CorneringStiffness, -EffectiveMaxLateral, EffectiveMaxLateral);
 
 		const PxVec3 LatForce = WheelRight * LatForceMag;
 		PxRigidBodyExt::addForceAtPos(*ChassisActor, LatForce, WheelWorldPos, PxForceMode::eFORCE);

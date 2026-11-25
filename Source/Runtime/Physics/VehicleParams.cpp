@@ -22,6 +22,14 @@ void FVehicleParams::SetupFerrariF1()
 	ChassisDimensions = FVector(5.53f, 1.96f, 1.10f); // 페라리 F1 실측: 전장 5.53m, 전폭 1.96m, 전고 1.10m
 	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.25f); // 초저중심 레이싱 카 무게중심
 	PeakTorque = 4500.0f; // V6 터보 하이브리드 파워유닛 (1000마력+)
+	DownforceCoeff = 2.6f;            // 고속(288km/h)에서 차체 중량 ~2배 수준의 다운포스 생성
+	AeroDragCoeff = 1.6f;             // 최고속도 약 315~320 km/h 균형
+	TireLateralFriction = 1.75f;      // 전륜 F1 슬릭 타이어 그립 (약언더스티어 안정화 밸런스)
+	RearTireLateralFriction = 2.25f;  // 후륜 광폭 슬릭 타이어 고그립 (스핀 방지)
+	TireLongitudinalFriction = 1.85f; // 급가속·풀브레이킹 트랙션 한계
+	CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 (N/rad)
+	MinHighSpeedSteerScale = 0.12f;   // 초고속 직선/130R에서 3.8도 내외 정밀 조향
+	HighSpeedSteerRefSpeed = 18.0f;   // 65km/h 기준 부드러운 반비례 조향 감쇠
 
 	// 전륜 좌측 (Wheel 0) - 실측: X = +1.522m, Y = -0.800m, Z = -0.22m, 반경 0.358m, 폭 0.305m
 	FrontLeftWheel.Offset = FVector(1.522f, -0.800f, -0.22f);
@@ -63,6 +71,14 @@ void FVehicleParams::SetupKoenigseggGemera()
 	ChassisDimensions = FVector(4.975f, 1.988f, 1.295f); // 코닉세그 제메라 실측: 전장 4.975m, 전폭 1.988m, 전고 1.295m
 	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);
 	PeakTorque = 4500.0f; // 1700hp / 3500+ Nm
+	DownforceCoeff = 0.65f;
+	AeroDragCoeff = 0.95f;
+	TireLateralFriction = 1.35f;
+	RearTireLateralFriction = 1.55f;
+	TireLongitudinalFriction = 1.35f;
+	CorneringStiffness = 45000.0f;
+	MinHighSpeedSteerScale = 0.15f;
+	HighSpeedSteerRefSpeed = 20.0f;
 
 	// 전륜 좌측 (Wheel 0) - 실측: X = +1.483m, Y = -0.842m, Z = -0.20m, 21인치(반경 0.355m)
 	FrontLeftWheel.Offset = FVector(1.483f, -0.842f, -0.2f);

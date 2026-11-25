@@ -34,10 +34,30 @@ void UStaticMeshComponent::SetStaticMesh(UStaticMesh* InStaticMesh)
 	if (StaticMesh == InStaticMesh)
 		return;
 
+	const bool bRecreatePhysics = IsPhysicsStateCreated();
+	if (bRecreatePhysics)
+		OnDestroyPhysicsState();
+
 	StaticMesh = InStaticMesh;
 	ClearOverrideMaterials();
 	MarkRenderStateDirty();
 	OnTransformDirty(ETeleportType::None);
+
+	if (bRecreatePhysics && ShouldCreatePhysicsState())
+		OnCreatePhysicsState();
+}
+
+UBodySetup* UStaticMeshComponent::GetBodySetup()
+{
+	if (!StaticMesh || bEditorIcon)
+		return nullptr;
+
+	UBodySetup* Setup = StaticMesh->GetBodySetup();
+	if (Setup && BodyInstance.bUseTriangleMesh && !BodyInstance.bSimulatePhysics)
+	{
+		StaticMesh->EnsureTriangleMesh();
+	}
+	return Setup;
 }
 
 int32 UStaticMeshComponent::GetNumMaterials() const

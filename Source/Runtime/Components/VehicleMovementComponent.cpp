@@ -85,6 +85,10 @@ bool UVehicleMovementComponent::TryInitVehicle()
 			VehicleParams.ChassisMass = ChassisMass;
 			VehicleParams.FrontLeftWheel.MaxSteerAngle = MaxSteerAngle;
 			VehicleParams.FrontRightWheel.MaxSteerAngle = MaxSteerAngle;
+			VehicleParams.DownforceCoeff *= std::max(0.0f, DownforceScale);
+			VehicleParams.TireLateralFriction *= std::max(0.1f, TireGripScale);
+			VehicleParams.RearTireLateralFriction *= std::max(0.1f, TireGripScale);
+			VehicleParams.TireLongitudinalFriction *= std::max(0.1f, TireGripScale);
 
 			for (int32 i = 0; i < 4; ++i)
 			{
@@ -160,9 +164,10 @@ void UVehicleMovementComponent::TickComponent(float DeltaTime)
 		RawBrakeInput = 0.0f;
 	}
 
-	// 2. 조작 입력 스무딩 보간
+	// 2. 조작 입력 스무딩 보간 (고속일수록 키보드 조향 응답을 부드럽게 완화)
+	const float HighSpeedSteerDamp = FMath::Lerp(1.0f, 0.55f, FMath::Clamp(std::abs(GetForwardSpeed()) / 60.0f, 0.0f, 1.0f));
 	CurrentThrottle = FMath::FInterpTo(CurrentThrottle, RawThrottleInput, DeltaTime, ThrottleInputRate);
-	CurrentSteer = FMath::FInterpTo(CurrentSteer, RawSteeringInput, DeltaTime, SteeringInputRate);
+	CurrentSteer = FMath::FInterpTo(CurrentSteer, RawSteeringInput, DeltaTime, SteeringInputRate * HighSpeedSteerDamp);
 	CurrentBrake = FMath::FInterpTo(CurrentBrake, RawBrakeInput, DeltaTime, 10.0f);
 
 	// 3. PhysX 시뮬레이션 파이프라인 구동

@@ -57,6 +57,16 @@ struct FVehicleParams
 	FVector CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);// 무게중심 오프셋 (저중심 안정화)
 	float PeakTorque = 4000.0f;                             // 총 구동 토크 (N*m)
 
+	// 공력(다운포스/항력) 및 타이어 그립·고속 조향 제원
+	float DownforceCoeff = 2.6f;            // 속도^2 비례 하향력 계수 (N / (m/s)^2)
+	float AeroDragCoeff = 1.6f;             // 속도^2 비례 공기저항 계수 (N / (m/s)^2)
+	float TireLateralFriction = 1.75f;      // 전륜 횡방향 타이어 마찰계수 (F1 슬릭)
+	float RearTireLateralFriction = 2.25f;  // 후륜 광폭 타이어 횡방향 마찰계수 (고속 오버스티어 억제)
+	float TireLongitudinalFriction = 1.85f; // 종방향 가감속 트랙션 마찰계수
+	float CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 (N / rad)
+	float MinHighSpeedSteerScale = 0.12f;   // 고속 시 최대 조향각 배율 (32도 * 0.12 ≈ 3.8도)
+	float HighSpeedSteerRefSpeed = 18.0f;   // 고속 조향 감쇠 기준 속도 (m/s ≈ 65 km/h에서 50% 감쇠)
+
 	// 4개 바퀴 설정 (0: FL, 1: FR, 2: RL, 3: RR)
 	FWheelConfig FrontLeftWheel;
 	FWheelConfig FrontRightWheel;
