@@ -48,8 +48,8 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 
 	if (bIsCustomChassis)
 	{
-		// 실측 OBJ: 바닥이 Z=0이므로 박스 충돌체 중심(Z=0)에 맞춰 Z=-0.564m 오프셋 적용
-		MeshComponent->SetRelativeLocation(FVector(0.0f, 0.0f, -0.564f));
+		// 물리 평형 시 바퀴 중심(Chassis 기준 -0.324m)과 F1 차체 허브(+0.334m)를 일치시켜 바퀴와 서스펜션 암 정렬
+		MeshComponent->SetRelativeLocation(FVector(0.0f, 0.0f, -0.658f));
 		MeshComponent->SetRelativeScale3D(FVector(1.0f, 1.0f, 1.0f));
 	}
 	else

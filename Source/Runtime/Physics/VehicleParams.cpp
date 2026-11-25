@@ -23,8 +23,8 @@ void FVehicleParams::SetupFerrariF1()
 	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.25f); // 초저중심 레이싱 카 무게중심
 	PeakTorque = 4500.0f; // V6 터보 하이브리드 파워유닛 (1000마력+)
 
-	// 전륜 좌측 (Wheel 0) - 실측: X = +1.521m, Y = -0.764m, Z = -0.22m, 반경 0.358m, 폭 0.305m
-	FrontLeftWheel.Offset = FVector(1.521f, -0.764f, -0.22f);
+	// 전륜 좌측 (Wheel 0) - 실측: X = +1.522m, Y = -0.800m, Z = -0.22m, 반경 0.358m, 폭 0.305m
+	FrontLeftWheel.Offset = FVector(1.522f, -0.800f, -0.22f);
 	FrontLeftWheel.Radius = 0.358f;
 	FrontLeftWheel.HalfWidth = 0.152f;
 	FrontLeftWheel.Mass = 15.0f;
@@ -37,9 +37,9 @@ void FVehicleParams::SetupFerrariF1()
 	FrontLeftWheel.MaxBrakeTorque = 3000.0f;    // 카본 브레이크의 강력한 제동력
 	FrontLeftWheel.MaxHandbrakeTorque = 0.0f;
 
-	// 전륜 우측 (Wheel 1) - 실측: X = +1.521m, Y = +0.764m, Z = -0.22m
+	// 전륜 우측 (Wheel 1) - 실측: X = +1.522m, Y = +0.800m, Z = -0.22m
 	FrontRightWheel = FrontLeftWheel;
-	FrontRightWheel.Offset = FVector(1.521f, 0.764f, -0.22f);
+	FrontRightWheel.Offset = FVector(1.522f, 0.800f, -0.22f);
 
 	// 후륜 좌측 (Wheel 2) - 실측: X = -2.011m, Y = -0.762m, Z = -0.22m, 반경 0.358m, 광폭 0.405m
 	RearLeftWheel = FrontLeftWheel;

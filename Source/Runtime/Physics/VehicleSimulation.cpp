@@ -249,9 +249,9 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 	{
 		const FWheelConfig& Wheel = Params.GetWheel(i);
 
-		// 서스펜션 압축이 반영된 휠 로컬 위치
+		// 서스펜션 압축이 반영된 휠 로컬 위치 (PhysX 5: Offset은 최대 압축 위치이므로 TravelDist - Jounce만큼 아래로 이동)
 		FVector LocalWheelPos = Wheel.Offset;
-		LocalWheelPos.Z += WheelStates[i].SuspensionJounce;
+		LocalWheelPos.Z -= (Wheel.SuspensionTravelDist - WheelStates[i].SuspensionJounce);
 		const PxVec3 WheelWorldPos = ChassisPose.transform(K2PVector(LocalWheelPos));
 
 		WheelStates[i].LocalPose.Location = LocalWheelPos;
