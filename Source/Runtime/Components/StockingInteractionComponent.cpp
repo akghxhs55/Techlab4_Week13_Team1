@@ -70,36 +70,14 @@ void UStockingInteractionComponent::TickComponent(float DeltaTime)
 {
 	Super::TickComponent(DeltaTime);
 
-	if (!bUseGameViewportInput)
-	{
-		return;
-	}
-
-	UWorld* World = GetWorld();
+	const UWorld* World = GetWorld();
 	if (!World || !World->IsGameWorld())
 	{
 		return;
 	}
 
-	FRay WorldRay{};
-	if (!BuildGameViewportRay(WorldRay))
-	{
-		if (bIsGrabbing)
-		{
-			EndGrab();
-		}
-		return;
-	}
-
-	if (FInputSystem::IsMousePressed(EMouseButton::Left))
-	{
-		BeginGrabFromRay(WorldRay);
-	}
-	else if (bIsGrabbing && FInputSystem::IsMouseDown(EMouseButton::Left))
-	{
-		UpdateGrabFromRay(WorldRay);
-	}
-	else if (bIsGrabbing)
+	// 인게임 뷰포트 마우스 당기기 입력 비활성화
+	if (bIsGrabbing)
 	{
 		EndGrab();
 	}

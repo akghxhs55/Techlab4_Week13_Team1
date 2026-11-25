@@ -22,6 +22,7 @@ public:
 
 	virtual void TickComponent(float DeltaTime) override;
 	virtual void Serialize(FStructuredArchive::FRecord Record) override;
+	virtual void PostDuplicate(bool bDuplicateForPIE) override;
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 	virtual FBox CalcLocalBounds() const override;
 	virtual void PostEditChangeProperty(const FProperty& Property) override;
@@ -169,7 +170,7 @@ public:
 	bool bEnableRagdollImpactTearing = true;
 
 	UPROPERTY(EditAnywhere)
-	float ImpactTearImpulseThreshold = 6.0f;
+	float ImpactTearImpulseThreshold = 1.5f;
 
 	UPROPERTY(EditAnywhere)
 	float ImpactScrapeSensitivity = 0.35f;
@@ -208,6 +209,8 @@ private:
 
 	void BuildRestAdjacency(const USkeletalMesh& Mesh);
 	void BuildCoveredBoneMask(const USkeletalMesh& Mesh);
+	bool IsCoveredImpactBone(int32 BoneIndex) const;
+	void FinalizeStockingSetupAfterLoad();
 	void BindSourceImpactListener();
 	void UnbindSourceImpactListener();
 	void HandleSourcePhysicsImpact(const FSkeletalPhysicsImpact& Impact);

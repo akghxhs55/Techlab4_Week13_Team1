@@ -12,6 +12,7 @@
 #include "Render/LineBatcher.h"
 #include "Physics/PhysicsAsset.h"
 #include "Physics/BodySetup.h"
+#include "Physics/PhysicsBoneUtils.h"
 #include "Physics/PhysXConversion.h"
 #include "Asset/AssetUtils.h"
 #include "Core/Misc/Paths.h"
@@ -177,23 +178,7 @@ namespace
 			const FTransform Bind(BindMatrices[Index]);
 			BindPoses[Index] = K2PTransform(FTransform(Bind.Rotation, Bind.Location * Scale));
 		}
-		physx::PxVec3 BoneAxis(1.0f, 0.0f, 0.0f);
-		bool bFoundAxis = false;
-		for (int32 Bone = Child; Bone >= 0 && !bFoundAxis; Bone = Bones[Bone].ParentIndex)
-		{
-			for (int32 Index = Bone + 1; Index < Bones.Num(); ++Index)
-			{
-				if (Bones[Index].ParentIndex != Bone) continue;
-				const FVector& Offset = Bones[Index].LocalBindPose.Location;
-				const float X = std::abs(Offset.X), Y = std::abs(Offset.Y), Z = std::abs(Offset.Z);
-				if (X + Y + Z < 1e-5f) continue;
-				BoneAxis = X >= Y && X >= Z ? physx::PxVec3(Offset.X > 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f) :
-					(Y >= Z ? physx::PxVec3(0.0f, Offset.Y > 0.0f ? 1.0f : -1.0f, 0.0f) :
-						physx::PxVec3(0.0f, 0.0f, Offset.Z > 0.0f ? 1.0f : -1.0f));
-				bFoundAxis = true;
-				break;
-			}
-		}
+		const physx::PxVec3 BoneAxis = K2PVector(FPhysicsBoneUtils::FindBoneAxis(Bones, Child));
 		const physx::PxQuat Alignment = physx::PxShortestRotation(physx::PxVec3(1.0f, 0.0f, 0.0f), BoneAxis);
 		const physx::PxQuat Offset = K2PQuat(Constraint.FrameOffset.Quaternion().Normalized());
 		const physx::PxTransform JointBind(BindPoses[Child].p, (BindPoses[Child].q * Alignment * Offset).getNormalized());

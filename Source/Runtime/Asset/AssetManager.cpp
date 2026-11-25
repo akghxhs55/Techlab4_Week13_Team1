@@ -3,6 +3,7 @@
 #include "Render/Buffer.h"
 #include "Render/Material.h"
 #include "Render/MaterialInstance.h"
+#include "Render/StockingMaterial.h"
 #include "Serialization/JsonArchive.h"
 #include <fstream>
 #include <set>
@@ -472,6 +473,12 @@ void UAssetManager::CreateDefaultMaterial() {
 	DefaultMat->ParamLayout = EMaterialParamLayout::StaticMesh;
 	DefaultMat->ParamBuffer = RenderCommand::CreateConstantBuffer(sizeof(FStaticMeshMaterialParams));
 	RegisterAsset("DefaultMaterial", DefaultMat);
+
+	// 씬 역직렬화 시 스타킹 마스터 머티리얼을 찾을 수 있도록 기본 에셋으로 등록한다
+	if (UMaterial* StockingMaster = FStockingMaterialLibrary::GetOrCreateStockingMasterMaterial())
+	{
+		RegisterAsset("Engine/Materials/M_StockingMaster_Lit", StockingMaster);
+	}
 }
 
 void UAssetManager::CreateBillboardMaterial()

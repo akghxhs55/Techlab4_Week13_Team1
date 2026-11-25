@@ -1,8 +1,12 @@
 #include "EnginePCH.h"
 #include "Components/StockingComponent.h"
+#include "Asset/AssetUtils.h"
+#include "Core/Misc/Paths.h"
 #include "Engine/StockingSceneProxy.h"
+#include "Engine/World.h"
 #include "Physics/ClothCore.h"
 #include "Render/SkeletalMeshObject.h"
+#include "Render/Material.h"
 #include "Render/MaterialInstance.h"
 #include "Render/Texture2D.h"
 #include "Serialization/StructuredArchive.h"
@@ -12,6 +16,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <queue>
 #include <unordered_map>
@@ -48,6 +53,12 @@ namespace
 	{
 		const float Dot = std::fabs(A.X * B.X + A.Y * B.Y + A.Z * B.Z + A.W * B.W);
 		return (1.0f - std::min(Dot, 1.0f)) <= Tolerance;
+	}
+
+	bool IsInGameWorld(const UActorComponent* Component)
+	{
+		const UWorld* World = Component ? Component->GetWorld() : nullptr;
+		return World && World->IsGameWorld();
 	}
 
 	bool AreMatricesClose(const FMatrix& A, const FMatrix& B, float Tolerance)
@@ -109,7 +120,17 @@ void UStockingComponent::TickComponent(float DeltaTime)
 		RebuildTearMaskTexture();
 	}
 
-	StepPullState(DeltaTime);
+	if (IsInGameWorld(this))
+	{
+		if (HasActiveDeformation())
+		{
+			ResetPullImmediately();
+		}
+	}
+	else
+	{
+		StepPullState(DeltaTime);
+	}
 	BindDeformationCallback();
 
 	if (SourceSkeletalMeshComponent)
@@ -156,33 +177,124 @@ void UStockingComponent::Serialize(FStructuredArchive::FRecord Record)
 {
 	Super::Serialize(Record);
 
-	if (Record.GetUnderlyingArchive().IsLoading())
+	FArchive& Ar = Record.GetUnderlyingArchive();
+	const bool bDuplicateForPIE = Ar.HasAnyPortFlags(EPropertyPortFlags::PPF_DuplicateForPIE);
+	FString RegionFilePath = (!Ar.IsLoading() && StockingRegion) ? StockingRegion->GetRegionFilePath() : FString();
+	if (!bDuplicateForPIE)
 	{
-		UMaterialInterface* SlotMat = GetOverrideMaterial(0);
-		if (!SlotMat || !SlotMat->GetBaseMaterial())
+		const bool bHasRegionPath = !RegionFilePath.empty();
+		if (TOptional<FStructuredArchive::FSlot> RegionSlot = Record.TryEnterField("StockingRegionPath", bHasRegionPath))
 		{
-			SetMaterial(0, GetEffectiveStockingMaterial());
+			RegionSlot.GetValue() << RegionFilePath;
 		}
-
-		if (StockingRegion && SourceSkeletalMeshComponent && !GetSkeletalMesh() && SourceSkeletalMeshComponent->GetSkeletalMesh())
-		{
-			FString Error;
-			RebuildStockingMesh(Error);
-		}
-		else if (USkeletalMesh* Mesh = GetSkeletalMesh())
-		{
-			if (WeldedVertexCount == 0)
-			{
-				BuildRestAdjacency(*Mesh);
-				BuildCoveredBoneMask(*Mesh);
-			}
-			BindSourceImpactListener();
-		}
-
-		SyncTearMaskBinding();
-		bHasSyncedPoseState = false;
-		BindDeformationCallback();
 	}
+
+	if (Ar.IsLoading())
+	{
+		if (!StockingRegion && !RegionFilePath.empty())
+		{
+			FString ResolvedPath = RegionFilePath;
+			if (!std::filesystem::exists(FPaths::FromUtf8(ResolvedPath)))
+			{
+				const FString AssetFile = FAssetUtils::ResolveAssetFilePath(RegionFilePath);
+				if (!AssetFile.empty())
+				{
+					ResolvedPath = AssetFile;
+				}
+			}
+			if (std::filesystem::exists(FPaths::FromUtf8(ResolvedPath)))
+			{
+				UStockingRegion* LoadedRegion = NewObject<UStockingRegion>(this);
+				FString LoadError;
+				if (LoadedRegion && LoadedRegion->LoadFromFile(ResolvedPath, LoadError))
+				{
+					StockingRegion = LoadedRegion;
+				}
+			}
+		}
+
+		// PIE 복제는 하위 객체 직렬화가 모두 끝난 PostDuplicate에서 후처리한다
+		if (!bDuplicateForPIE)
+		{
+			FinalizeStockingSetupAfterLoad();
+		}
+	}
+}
+
+void UStockingComponent::PostDuplicate(bool bDuplicateForPIE)
+{
+	Super::PostDuplicate(bDuplicateForPIE);
+	FinalizeStockingSetupAfterLoad();
+}
+
+void UStockingComponent::FinalizeStockingSetupAfterLoad()
+{
+	if (!SourceSkeletalMeshComponent)
+	{
+		if (USkeletalMeshComponent* ParentSkel = Cast<USkeletalMeshComponent>(GetAttachParent()))
+		{
+			SourceSkeletalMeshComponent = ParentSkel;
+		}
+		else if (AActor* Owner = GetOwner())
+		{
+			for (UActorComponent* Comp : Owner->GetComponents())
+			{
+				if (USkeletalMeshComponent* SkelComp = Cast<USkeletalMeshComponent>(Comp))
+				{
+					if (static_cast<const UActorComponent*>(SkelComp) != this)
+					{
+						SourceSkeletalMeshComponent = SkelComp;
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	UMaterialInterface* SlotMat = GetOverrideMaterial(0);
+	if (SlotMat && SlotMat->GetBaseMaterial())
+	{
+		if (!StockingMaterial)
+		{
+			if (UMaterialInstanceDynamic* SlotDyn = Cast<UMaterialInstanceDynamic>(SlotMat))
+			{
+				DefaultStockingMaterial = SlotDyn;
+			}
+		}
+	}
+	else
+	{
+		if (!StockingMaterial && StockingRegion && StockingRegion->bHasSavedMaterialParams)
+		{
+			if (UMaterialInstanceDynamic* DefaultMat = GetDefaultStockingMaterialInstance())
+			{
+				FStockingMaterialLibrary::ApplyParameters(DefaultMat, StockingRegion->SavedMaterialParams);
+			}
+		}
+		SetMaterial(0, GetEffectiveStockingMaterial());
+	}
+
+	USkeletalMesh* ExistingMesh = GetSkeletalMesh();
+	const bool bHasValidMesh = ExistingMesh && !ExistingMesh->GetRenderData().LODRenderData.IsEmpty();
+	if (StockingRegion && SourceSkeletalMeshComponent && !bHasValidMesh && SourceSkeletalMeshComponent->GetSkeletalMesh())
+	{
+		FString Error;
+		RebuildStockingMesh(Error);
+	}
+	else if (bHasValidMesh)
+	{
+		if (WeldedVertexCount == 0)
+		{
+			BuildRestAdjacency(*ExistingMesh);
+			BuildCoveredBoneMask(*ExistingMesh);
+		}
+		BindSourceImpactListener();
+	}
+
+	EnsureTearMaskTexture();
+	SyncTearMaskBinding();
+	bHasSyncedPoseState = false;
+	BindDeformationCallback();
 }
 
 FPrimitiveSceneProxy* UStockingComponent::CreateSceneProxy()
@@ -220,6 +332,7 @@ void UStockingComponent::PostEditChangeProperty(const FProperty& Property)
 	else if (Name == "StockingMaterial")
 	{
 		SetMaterial(0, GetEffectiveStockingMaterial());
+		SyncTearMaskBinding();
 		MarkRenderStateDirty();
 	}
 	else if (Name == "SurfaceOffset" || Name == "BoundsPadding" || Name == "MaxPullDistance")
@@ -479,6 +592,14 @@ bool UStockingComponent::RebuildStockingMesh(FString& OutError)
 	}
 
 	const USkeletalMesh& SourceMesh = *SourceSkeletalMeshComponent->GetSkeletalMesh();
+	UMaterialInterface* PreservedOverrideMat = (!StockingMaterial && GetOverrideMaterial(0) && GetOverrideMaterial(0)->GetBaseMaterial())
+		? GetOverrideMaterial(0) : nullptr;
+	ReferenceScale = std::max(UStockingRegion::ComputeReferenceScale(SourceMesh, 0), 0.05f);
+	if (SurfaceOffset > 0.0f)
+	{
+		StockingRegion->SurfaceOffset = SurfaceOffset;
+	}
+
 	USkeletalMesh* NewStockingMesh = NewObject<USkeletalMesh>(this);
 	if (!NewStockingMesh)
 	{
@@ -510,8 +631,15 @@ bool UStockingComponent::RebuildStockingMesh(FString& OutError)
 	BindSourceImpactListener();
 	bHasSyncedPoseState = false;
 	LastSyncedSourceTransforms.Reset();
+	if (!PreservedOverrideMat && !StockingMaterial && StockingRegion->bHasSavedMaterialParams)
+	{
+		if (UMaterialInstanceDynamic* DefaultMat = GetDefaultStockingMaterialInstance())
+		{
+			FStockingMaterialLibrary::ApplyParameters(DefaultMat, StockingRegion->SavedMaterialParams);
+		}
+	}
 	SetSkeletalMesh(GeneratedStockingMesh);
-	SetMaterial(0, GetEffectiveStockingMaterial());
+	SetMaterial(0, PreservedOverrideMat ? PreservedOverrideMat : GetEffectiveStockingMaterial());
 	RepairAllTears();
 	BindDeformationCallback();
 	MarkRenderStateDirty();
@@ -522,6 +650,12 @@ bool UStockingComponent::RebuildStockingMesh(FString& OutError)
 
 void UStockingComponent::BeginPull(uint32 TriangleIndex, const FVector& Barycentric, const FVector& TargetWorldPosition)
 {
+	// 인게임에서는 당기기 기능을 비활성화하고 충돌 찢어짐만 유지
+	if (IsInGameWorld(this))
+	{
+		return;
+	}
+
 	USkeletalMesh* Mesh = GetSkeletalMesh();
 	if (!Mesh || Mesh->GetRenderData().LODRenderData.IsEmpty())
 	{
@@ -618,6 +752,12 @@ void UStockingComponent::RefreshBoneTransforms()
 
 bool UStockingComponent::ShouldUsePostSkinDeform() const
 {
+	// 인게임에서는 관절 주름과 당기기 변형을 끄고 GPU 스키닝만 사용
+	if (IsInGameWorld(this))
+	{
+		return false;
+	}
+
 	const bool bNvClothActive = bUseNvClothSimulation && ClothSolver && ClothInstance && ClothFabric;
 	const bool bHasOffsetDelta = std::fabs(SurfaceOffset - BakedSurfaceOffset) > 1e-5f;
 	return bNvClothActive || HasActiveDeformation() || bHasOffsetDelta;
@@ -625,12 +765,13 @@ bool UStockingComponent::ShouldUsePostSkinDeform() const
 
 bool UStockingComponent::HasPoseOrPullChanged(const TArray<FMatrix>& SourceTransforms, FSkeletalMeshObject* MeshObject) const
 {
+	const bool bIsGameWorld = IsInGameWorld(this);
 	if (!bHasSyncedPoseState ||
 		LastSyncedSourceComponent != SourceSkeletalMeshComponent ||
 		LastSyncedMeshObject != MeshObject ||
 		bLastSyncedUseNvCloth != bUseNvClothSimulation ||
 		std::fabs(LastSyncedSurfaceOffset - SurfaceOffset) > 1e-6f ||
-		(bUseNvClothSimulation && ClothSolver && ClothInstance && ClothFabric && bNeedsClothTeleport) ||
+		(!bIsGameWorld && bUseNvClothSimulation && ClothSolver && ClothInstance && ClothFabric && bNeedsClothTeleport) ||
 		bLastSyncedPulling != bIsPulling ||
 		bLastSyncedHasGrabAnchor != bHasGrabAnchor ||
 		LastSyncedGrabbedTriangleIndex != GrabbedTriangleIndex)
@@ -846,6 +987,45 @@ void UStockingComponent::BuildCoveredBoneMask(const USkeletalMesh& Mesh)
 	}
 }
 
+bool UStockingComponent::IsCoveredImpactBone(int32 BoneIndex) const
+{
+	if (BoneIndex < 0 || BoneIndex >= CoveredBoneMask.Num())
+	{
+		return true;
+	}
+	if (CoveredBoneMask[BoneIndex] != 0)
+	{
+		return true;
+	}
+	if (!SourceSkeletalMeshComponent || !SourceSkeletalMeshComponent->GetSkeletalMesh())
+	{
+		return false;
+	}
+
+	const TArray<FBoneInfo>& Bones = SourceSkeletalMeshComponent->GetSkeletalMesh()->GetRefSkeleton();
+	const int32 NumBones = FMath::Min(Bones.Num(), CoveredBoneMask.Num());
+	// 트위스트나 보조 본에 스킨 가중치가 몰린 경우 부모 물리 본의 충격도 커버된 것으로 본다
+	for (int32 Child = BoneIndex + 1; Child < NumBones; ++Child)
+	{
+		if (CoveredBoneMask[Child] == 0)
+		{
+			continue;
+		}
+		for (int32 Parent = Bones[Child].ParentIndex; Parent >= 0; Parent = Bones[Parent].ParentIndex)
+		{
+			if (Parent == BoneIndex)
+			{
+				return true;
+			}
+			if (SourceSkeletalMeshComponent->GetBodyInstance(Bones[Parent].Name))
+			{
+				break;
+			}
+		}
+	}
+	return false;
+}
+
 void UStockingComponent::BindSourceImpactListener()
 {
 	if (BoundImpactSource == SourceSkeletalMeshComponent)
@@ -893,7 +1073,7 @@ void UStockingComponent::HandleSourcePhysicsImpact(const FSkeletalPhysicsImpact&
 	}
 
 	// 스타킹이 덮고 있지 않은 본의 충돌은 즉시 무시
-	if (Impact.BoneIndex >= 0 && Impact.BoneIndex < CoveredBoneMask.Num() && CoveredBoneMask[Impact.BoneIndex] == 0)
+	if (!IsCoveredImpactBone(Impact.BoneIndex))
 	{
 		return;
 	}
@@ -1026,7 +1206,7 @@ bool UStockingComponent::ApplyWorldImpactTear(
 		return false;
 	}
 
-	if (HitBoneIndex >= 0 && HitBoneIndex < CoveredBoneMask.Num() && CoveredBoneMask[HitBoneIndex] == 0)
+	if (!IsCoveredImpactBone(HitBoneIndex))
 	{
 		return false;
 	}
@@ -1042,7 +1222,7 @@ bool UStockingComponent::ApplyWorldImpactTear(
 
 	const FMatrix InvWorld = GetWorldMatrix().Inverse();
 	const FVector LocalPoint = InvWorld.TransformPosition(WorldLocation);
-	const float MaxSearchDist = 0.14f * std::max(ReferenceScale, 0.05f);
+	const float MaxSearchDist = 0.25f * std::max(ReferenceScale, 0.05f);
 
 	uint32 HitTri = 0;
 	FVector HitBary(1.0f, 0.0f, 0.0f);
@@ -1197,17 +1377,33 @@ void UStockingComponent::EnsureTearMaskTexture()
 
 void UStockingComponent::SyncTearMaskBinding()
 {
-	UMaterialInstanceDynamic* DynMat = Cast<UMaterialInstanceDynamic>(GetEffectiveStockingMaterial());
-	if (!DynMat || !IsValid(DynMat))
+	UMaterialInterface* ActiveMat = GetEffectiveStockingMaterial();
+	UMaterialInstanceDynamic* DynMat = Cast<UMaterialInstanceDynamic>(ActiveMat);
+	if (!DynMat && ActiveMat && IsValid(ActiveMat))
 	{
-		return;
+		DynMat = UMaterial::CreateDynamicInstance(ActiveMat);
+		if (DynMat)
+		{
+			StockingMaterial = DynMat;
+			SetMaterial(0, DynMat);
+		}
 	}
 
-	if (TearMaskTexture && IsValid(TearMaskTexture))
+	UMaterialInstanceDynamic* SlotDynMat = Cast<UMaterialInstanceDynamic>(GetOverrideMaterial(0));
+	UMaterialInstanceDynamic* Targets[2] = { DynMat, SlotDynMat };
+	for (int32 i = 0; i < 2; ++i)
 	{
-		DynMat->SetTextureParameterValue(FName("TearMaskTex"), TearMaskTexture);
+		UMaterialInstanceDynamic* Target = Targets[i];
+		if (!Target || !IsValid(Target) || (i == 1 && Target == DynMat))
+		{
+			continue;
+		}
+		if (TearMaskTexture && IsValid(TearMaskTexture))
+		{
+			Target->SetTextureParameterValue(FName("TearMaskTex"), TearMaskTexture);
+		}
+		Target->SetScalarParameterValue(FName("TearMaskActive"), TearNodes.IsEmpty() ? 0.0f : 1.0f);
 	}
-	DynMat->SetScalarParameterValue(FName("TearMaskActive"), TearNodes.IsEmpty() ? 0.0f : 1.0f);
 }
 
 void UStockingComponent::RepairAllTears()
@@ -1977,6 +2173,11 @@ void UStockingComponent::RebuildNvClothFromSimMesh()
 {
 	DestroyNvClothResources();
 
+	if (IsInGameWorld(this))
+	{
+		return;
+	}
+
 	const int32 ParticleCount = SimBindPositions.Num();
 	const int32 TriCount = SimTriangleIndices.Num() / 3;
 	if (ParticleCount == 0 || TriCount == 0)
@@ -2056,6 +2257,11 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	TArray<FVector>& OutSimPos,
 	TArray<float>& OutCompression)
 {
+	if (IsInGameWorld(this))
+	{
+		return false;
+	}
+
 	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
 	if (!bUseNvClothSimulation || !ClothSolver || !ClothInstance || !ClothFabric ||
 		WeldedCount == 0 || SkinnedPos.Num() != WeldedCount || SimBindPositions.Num() != WeldedCount)

@@ -15,6 +15,7 @@ class UStockingRegion : public UObject
 public:
 	UStockingRegion() = default;
 	virtual ~UStockingRegion() override = default;
+	virtual void Serialize(FStructuredArchive::FRecord Record) override;
 
 	// 원본 메시 기준 메타데이터 갱신
 	void BindToSourceMesh(const USkeletalMesh& SourceMesh, const FString& InSourceMeshPath, int32 InLODIndex = 0);

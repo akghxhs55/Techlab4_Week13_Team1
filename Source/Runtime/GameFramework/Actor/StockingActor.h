@@ -40,7 +40,7 @@ public:
 	bool bEnableImpactTearing = true;
 
 	UPROPERTY(EditAnywhere)
-	float ImpactTearImpulseThreshold = 6.0f;
+	float ImpactTearImpulseThreshold = 1.5f;
 
 	UPROPERTY(EditAnywhere)
 	float ImpactScrapeSensitivity = 0.35f;

@@ -82,7 +82,7 @@ AStockingActor::AStockingActor()
 	if (StockingInteractionComponent)
 	{
 		StockingInteractionComponent->SetTargetStockingComponent(StockingComponent);
-		StockingInteractionComponent->bUseGameViewportInput = true;
+		StockingInteractionComponent->bUseGameViewportInput = false;
 	}
 
 	ApplyStockingTearingSettings();
@@ -112,8 +112,46 @@ void AStockingActor::BeginPlay()
 		}
 	}
 
-	RebuildStockingFromSourceMesh();
-	ApplyStockingTearingSettings();
+	bool bPreservedConfiguredStocking = false;
+	if (StockingComponent)
+	{
+		if (!StockingComponent->GetSourceSkeletalMeshComponent() && MeshComponent)
+		{
+			StockingComponent->SetSourceSkeletalMeshComponent(MeshComponent);
+		}
+		if (UStockingRegion* CompRegion = StockingComponent->GetStockingRegion();
+			CompRegion && CompRegion->GetSelectedTriangleCount() > 0)
+		{
+			StockingRegion = CompRegion;
+			USkeletalMesh* BuiltMesh = StockingComponent->GetSkeletalMesh();
+			const bool bHasValidBuiltMesh = BuiltMesh && !BuiltMesh->GetRenderData().LODRenderData.IsEmpty();
+			if (bHasValidBuiltMesh)
+			{
+				BuiltSourceMesh = MeshComponent ? MeshComponent->GetSkeletalMesh() : nullptr;
+				StockingComponent->SyncTearMaskBinding();
+				bPreservedConfiguredStocking = true;
+			}
+			else if (MeshComponent && MeshComponent->GetSkeletalMesh())
+			{
+				FString BuildError;
+				if (StockingComponent->RebuildStockingMesh(BuildError))
+				{
+					BuiltSourceMesh = MeshComponent->GetSkeletalMesh();
+					if (StockingInteractionComponent)
+					{
+						StockingInteractionComponent->SetTargetStockingComponent(StockingComponent);
+					}
+					bPreservedConfiguredStocking = true;
+				}
+			}
+		}
+	}
+
+	if (!bPreservedConfiguredStocking)
+	{
+		RebuildStockingFromSourceMesh();
+		ApplyStockingTearingSettings();
+	}
 
 	UWorld* World = GetWorld();
 	if (bRagdollOnBeginPlay && World && World->IsGameWorld())
@@ -169,6 +207,10 @@ void AStockingActor::PostEditChangeProperty(const FProperty& Property)
 	else if (Name == "StockingRegionPath" || Name == "AutoLegMaxRadiusRatio" || Name == "AutoLegMaxHeightRatio")
 	{
 		StockingRegion = nullptr;
+		if (StockingComponent)
+		{
+			StockingComponent->SetStockingRegion(nullptr);
+		}
 		RebuildStockingFromSourceMesh();
 	}
 
@@ -237,6 +279,10 @@ bool AStockingActor::RebuildStockingFromSourceMesh()
 		return false;
 	}
 
+	if (!StockingRegion && StockingComponent->GetStockingRegion())
+	{
+		StockingRegion = StockingComponent->GetStockingRegion();
+	}
 	if (!StockingRegion)
 	{
 		StockingRegion = NewObject<UStockingRegion>(this);
@@ -246,11 +292,15 @@ bool AStockingActor::RebuildStockingFromSourceMesh()
 		return false;
 	}
 
-	StockingRegion->BindToSourceMesh(*SourceMesh, SourceMesh->GetPath(), 0);
-	StockingRegion->SubdivisionIterations = 1;
+	const bool bHasPreloadedRegion = StockingRegionPath.empty() && StockingRegion->GetSelectedTriangleCount() > 0;
+	bool bLoadedRegion = bHasPreloadedRegion;
+	if (!bHasPreloadedRegion)
+	{
+		StockingRegion->BindToSourceMesh(*SourceMesh, SourceMesh->GetPath(), 0);
+		StockingRegion->SubdivisionIterations = 1;
+	}
 
-	bool bLoadedRegion = false;
-	if (!StockingRegionPath.empty())
+	if (!bLoadedRegion && !StockingRegionPath.empty())
 	{
 		FString ResolvedRegionPath = StockingRegionPath;
 		if (!std::filesystem::exists(ResolvedRegionPath))
@@ -298,11 +348,14 @@ bool AStockingActor::RebuildStockingFromSourceMesh()
 		}
 	}
 
-	const float Scale = UStockingRegion::ComputeReferenceScale(*SourceMesh, 0);
 	StockingComponent->SetSourceSkeletalMeshComponent(MeshComponent);
-	StockingComponent->SetStockingRegion(StockingRegion);
-	StockingComponent->CalibrateParametersForScale(Scale);
-	ApplyStockingTearingSettings();
+	if (!bHasPreloadedRegion)
+	{
+		const float Scale = UStockingRegion::ComputeReferenceScale(*SourceMesh, 0);
+		StockingComponent->SetStockingRegion(StockingRegion);
+		StockingComponent->CalibrateParametersForScale(Scale);
+		ApplyStockingTearingSettings();
+	}
 
 	FString BuildError;
 	const bool bBuilt = StockingComponent->RebuildStockingMesh(BuildError);

@@ -10,10 +10,15 @@
 #include "Components/ParticleSystemComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/StockingComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "GameFramework/Actor/StockingActor.h"
 #include "GameFramework/Actor/ZombieActor.h"
 #include "Particles/ParticleEventTypes.h"
 #include "Particles/ParticleSystem.h"
+#include "Physics/BodyInstance.h"
+#include "Physics/BodySetup.h"
+#include "Physics/PhysicsAsset.h"
 #include "Render/Material.h"
 #include "Render/MaterialInstance.h"
 #include "Render/Mesh.h"
@@ -406,6 +411,45 @@ void ASwordCharacter::ReactToHit()
 void ASwordCharacter::OnParticleCollide(UParticleSystemComponent* Comp, const FParticleEventCollisionData& Event)
 {
 	if (IsDead() || !Event.HitComponent) return;
+	if (AStockingActor* StockingActor = Cast<AStockingActor>(Event.HitComponent->GetOwner()))
+	{
+		UStockingComponent* StockingComp = StockingActor->GetStockingComponent();
+		USkeletalMeshComponent* TargetMesh = StockingActor->GetSkeletalMeshComponent();
+		if (StockingComp && TargetMesh)
+		{
+			FVector HitDir = Event.Velocity;
+			if (HitDir.SizeSquared() <= SMALL_NUMBER)
+				HitDir = StockingActor->GetActorLocation() - GetActorLocation();
+			if (HitDir.SizeSquared() <= SMALL_NUMBER)
+				HitDir = -Event.Normal;
+			const FVector SafeDir = HitDir.GetSafeNormal();
+			int32 HitBoneIndex = -1;
+			FString NearestBone;
+			float BestDistSq = FLT_MAX;
+			if (const UPhysicsAsset* Asset = TargetMesh->GetPhysicsAsset())
+			{
+				for (const UBodySetup* Setup : Asset->BodySetups)
+				{
+					const FBodyInstance* Body = Setup ? TargetMesh->GetBodyInstance(Setup->BoneName) : nullptr;
+					if (!Body) continue;
+					const float DistSq = (Body->GetUnrealWorldTransform().Location - Event.Location).SizeSquared();
+					if (DistSq < BestDistSq)
+					{
+						BestDistSq = DistSq;
+						NearestBone = Setup->BoneName;
+						HitBoneIndex = Body->BoneIndex;
+					}
+				}
+			}
+			const float ImpactStrength = std::max(StockingComp->ImpactTearImpulseThreshold * 2.0f, 3.5f);
+			if (StockingComp->ApplyWorldImpactTear(Event.Location, SafeDir * ImpactStrength, SafeDir * 3.0f, HitBoneIndex) &&
+				!NearestBone.empty() && TargetMesh->IsRagdollActive())
+			{
+				TargetMesh->AddImpulseToBone(NearestBone, SafeDir * 3.5f, true);
+			}
+		}
+		return;
+	}
 	AZombieActor* Zombie = Cast<AZombieActor>(Event.HitComponent->GetOwner());
 	if (!Zombie || Zombie->IsDead()) return;
 	if (const float* LastHitTime = ZombieHitCooldowns.Find(Zombie))

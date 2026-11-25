@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "Render/StockingRegion.h"
 #include "Core/Misc/Paths.h"
+#include "Serialization/StructuredArchive.h"
 #include "json.hpp"
 
 #include <algorithm>
@@ -2243,4 +2244,74 @@ bool UStockingRegion::LoadFromFile(const FString& FilePath, FString& OutError)
 	SetTriangles(LoadedTriangles);
 	RegionFilePath = FilePath;
 	return true;
+}
+
+void UStockingRegion::Serialize(FStructuredArchive::FRecord Record)
+{
+	Super::Serialize(Record);
+
+	// 리플렉션 외 메타데이터와 프리셋을 PIE 복제 시 함께 유지한다
+	Record << SA_VALUE("SourceTopologyHash", SourceTopologyHash)
+		<< SA_VALUE("RegionFilePath", RegionFilePath)
+		<< SA_VALUE("bHasSavedMaterialParams", bHasSavedMaterialParams)
+		<< SA_VALUE("bHasSavedPullParams", bHasSavedPullParams)
+		<< SA_VALUE("bHasSavedLegFilter", bHasSavedLegFilter)
+		<< SA_VALUE("bHasSavedClothWrinkleParams", bHasSavedClothWrinkleParams);
+
+	if (bHasSavedMaterialParams)
+	{
+		Record << SA_VALUE("SavedFabricColor", SavedMaterialParams.FabricColor)
+			<< SA_VALUE("SavedHemColor", SavedMaterialParams.HemColor)
+			<< SA_VALUE("SavedBaseOpacity", SavedMaterialParams.BaseOpacity)
+			<< SA_VALUE("SavedFresnelOpacity", SavedMaterialParams.FresnelOpacity)
+			<< SA_VALUE("SavedFresnelPower", SavedMaterialParams.FresnelPower)
+			<< SA_VALUE("SavedStretchSensitivity", SavedMaterialParams.StretchSensitivity)
+			<< SA_VALUE("SavedStretchAlphaDrop", SavedMaterialParams.StretchAlphaDrop)
+			<< SA_VALUE("SavedMinOpacity", SavedMaterialParams.MinOpacity)
+			<< SA_VALUE("SavedWeaveScale", SavedMaterialParams.WeaveScale)
+			<< SA_VALUE("SavedWeaveStrength", SavedMaterialParams.WeaveStrength)
+			<< SA_VALUE("SavedHemFeatherPower", SavedMaterialParams.HemFeatherPower)
+			<< SA_VALUE("SavedHemBandStrength", SavedMaterialParams.HemBandStrength)
+			<< SA_VALUE("SavedSheenStrength", SavedMaterialParams.SheenStrength)
+			<< SA_VALUE("SavedSpecularIntensity", SavedMaterialParams.SpecularIntensity)
+			<< SA_VALUE("SavedSpecularPower", SavedMaterialParams.SpecularPower)
+			<< SA_VALUE("SavedWrinkleShadingStrength", SavedMaterialParams.WrinkleShadingStrength)
+			<< SA_VALUE("SavedTearRimStrength", SavedMaterialParams.TearRimStrength)
+			<< SA_VALUE("SavedTearSkinContactStrength", SavedMaterialParams.TearSkinContactStrength)
+			<< SA_VALUE("SavedTearRungStrength", SavedMaterialParams.TearRungStrength);
+	}
+
+	if (bHasSavedPullParams)
+	{
+		Record << SA_VALUE("SavedPullRadius", SavedPullRadius)
+			<< SA_VALUE("SavedMaxPullDistance", SavedMaxPullDistance)
+			<< SA_VALUE("SavedPullFalloffExponent", SavedPullFalloffExponent)
+			<< SA_VALUE("SavedWrinkleAmplitude", SavedWrinkleAmplitude)
+			<< SA_VALUE("SavedWrinkleFrequency", SavedWrinkleFrequency)
+			<< SA_VALUE("SavedSpringStiffness", SavedSpringStiffness)
+			<< SA_VALUE("SavedSpringDamping", SavedSpringDamping)
+			<< SA_VALUE("SavedBoundsPadding", SavedBoundsPadding);
+	}
+
+	if (bHasSavedLegFilter)
+	{
+		Record << SA_VALUE("SavedLegRadiusRatio", SavedLegRadiusRatio)
+			<< SA_VALUE("SavedLegHeightRatio", SavedLegHeightRatio);
+	}
+
+	if (bHasSavedClothWrinkleParams)
+	{
+		Record << SA_VALUE("SavedUseNvClothSimulation", SavedUseNvClothSimulation)
+			<< SA_VALUE("SavedClothJointWrinkleSlack", SavedClothJointWrinkleSlack)
+			<< SA_VALUE("SavedClothBackstopRadius", SavedClothBackstopRadius)
+			<< SA_VALUE("SavedClothStretchStiffness", SavedClothStretchStiffness)
+			<< SA_VALUE("SavedClothBendStiffness", SavedClothBendStiffness)
+			<< SA_VALUE("SavedClothShearStiffness", SavedClothShearStiffness)
+			<< SA_VALUE("SavedClothCompressionLimit", SavedClothCompressionLimit)
+			<< SA_VALUE("SavedClothStretchLimit", SavedClothStretchLimit)
+			<< SA_VALUE("SavedClothMotionStiffness", SavedClothMotionStiffness)
+			<< SA_VALUE("SavedClothDamping", SavedClothDamping)
+			<< SA_VALUE("SavedClothSelfCollisionDistance", SavedClothSelfCollisionDistance)
+			<< SA_VALUE("SavedClothSelfCollisionStiffness", SavedClothSelfCollisionStiffness);
+	}
 }
