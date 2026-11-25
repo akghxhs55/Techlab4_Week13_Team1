@@ -20,7 +20,7 @@ static_assert(std::is_trivially_copyable_v<FBox>);
 namespace
 {
 	// FStaticMeshData, FVertex, FStaticMeshSection, FStaticMaterialSlot 구조가 바뀌면 올린다
-	constexpr uint32 BakeVersion{ 6 };
+	constexpr uint32 BakeVersion{ 7 };
 
 	struct FBakeHeader
 	{
@@ -133,9 +133,11 @@ TUniquePtr<FStaticMeshData> FStaticMeshBake::ReadBaked(const FString& BinPath)
 	for (uint32 i = 0; i < MaterialSlotsNum; ++i)
 	{
 		FStaticMaterialSlot Slot{};
-		if (!ReadString(In, Slot.Name) || !ReadPod<FVector4>(In, Slot.BaseColor) || !ReadString(In, Slot.DiffuseTexturePath) || !ReadString(In, Slot.NormalTexturePath)) {
+		uint8 AlphaMasked = 0;
+		if (!ReadString(In, Slot.Name) || !ReadPod<FVector4>(In, Slot.BaseColor) || !ReadString(In, Slot.DiffuseTexturePath) || !ReadString(In, Slot.NormalTexturePath) || !ReadPod<uint8>(In, AlphaMasked)) {
 			return nullptr;
 		}
+		Slot.bAlphaMasked = (AlphaMasked != 0);
 		Data->MaterialSlots.Add(std::move(Slot));
 	}
 
@@ -179,6 +181,8 @@ void FStaticMeshBake::WriteBaked(const FString& BinPath, const FStaticMeshData& 
 		WritePod<FVector4>(Out, Slot.BaseColor);
 		WriteString(Out, Slot.DiffuseTexturePath);
 		WriteString(Out, Slot.NormalTexturePath);
+		const uint8 AlphaMasked = Slot.bAlphaMasked ? 1 : 0;
+		WritePod<uint8>(Out, AlphaMasked);
 	}
 
 	// AABB

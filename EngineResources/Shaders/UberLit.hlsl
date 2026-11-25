@@ -54,7 +54,7 @@ cbuffer MaterialParams : register(b2)
 {
     float4 BaseColor;
     float4 Emissive;
-    float4 SurfaceParams; // x: 노멀맵 Y 반전, y: 예약, z: 컬러 텍스처 사용, w: 노멀맵 인코딩
+    float4 SurfaceParams; // x: 노멀맵 Y 반전, y: 알파 마스크(clip), z: 컬러 텍스처 사용, w: 노멀맵 인코딩
     float4 UVTransform; // xy: 이동량, zw: 배율
     float4 SpecularColorShininess; // rgb: 정반사 색상, w: 광택 지수
     float4 WorldUVParams;
@@ -446,6 +446,17 @@ FUberOutput Uber_PS(VS_OUT Input)
         return Output;
     }
 
+    if (SurfaceParams.y > 0.5f)
+    {
+        // 양면 알파 마스크(식생 카드·철망)의 뒷면 법선을 카메라 쪽으로 뒤집고 상향 보정해 교차면 명암 꺾임을 완화한다.
+        const float3 ToCam = CameraPosition.xyz - Input.WorldPosition;
+        if (dot(ShadingNormal, ToCam) < 0.0f)
+        {
+            ShadingNormal = -ShadingNormal;
+        }
+        ShadingNormal = normalize(lerp(ShadingNormal, float3(0.0f, 0.0f, 1.0f), 0.35f));
+    }
+
     float4 ActiveSpecular = SpecularColorShininess;
     float3 ActiveEmissive = Emissive.rgb;
     float AmbientOcclusion = 1.0f;
@@ -501,6 +512,10 @@ FUberOutput Uber_PS(VS_OUT Input)
     if (SurfaceParams.z > 0.5f)
     {
         float4 TextureColor = ColorTexture.Sample(ColorSampler, Input.UV);
+        if (SurfaceParams.y > 0.5f)
+        {
+            clip(TextureColor.a - 0.5f);
+        }
         SurfaceColor = float4(pow(max(TextureColor.rgb, 0.0f), 2.2f), TextureColor.a);
 #if VF_MESH_PARTICLE
         // 텍스처가 있으면 정점 색을 쓰지 않으므로 파티클 색(Color/ColorOverLife 모듈)을 여기서 곱한다

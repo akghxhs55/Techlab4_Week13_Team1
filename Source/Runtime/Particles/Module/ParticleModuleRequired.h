@@ -39,6 +39,7 @@ public:
 	float GetEmitterDelay() const { return EmitterDelay; }
 	bool  IsDelayFirstLoopOnly() const { return bDelayFirstLoopOnly; }
 	bool  IsUseLocalSpace() const { return bUseLocalSpace; }
+	void  SetUseLocalSpace(bool bInUseLocalSpace) { bUseLocalSpace = bInUseLocalSpace; }
 	// 동시에 살아 있을 수 있는 최대 파티클 수. 0이면 제한 없음
 	int32 GetMaxActiveParticles() const { return MaxActiveParticles; }
 

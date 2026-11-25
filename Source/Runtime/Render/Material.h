@@ -228,6 +228,7 @@ public:
 	float Shininess = 32.0f;
 	FVector2 UVScrollSpeed = FVector2(0.0f, 0.0f);
 	bool bFlipNormalY = false;
+	bool bAlphaMasked = false;
 
 	bool bIsInstance = false;
 	const UMaterial* Parent = nullptr;

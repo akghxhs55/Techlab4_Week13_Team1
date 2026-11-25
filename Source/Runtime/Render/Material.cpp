@@ -1504,6 +1504,7 @@ void UMaterial::ApplyImportedProperties(const FImportedMaterialProperties& Prope
 	Shininess = Properties.Shininess;
 	ShadingModel = Properties.ShadingModel;
 	bOverrideShadingModel = Properties.bOverrideShadingModel;
+	bAlphaMasked = Properties.bAlphaMasked;
 }
 
 void UMaterial::GetRenderProxy(FMaterialRenderProxy& OutProxy) const
@@ -1526,6 +1527,7 @@ void UMaterial::GetRenderProxy(FMaterialRenderProxy& OutProxy) const
 	OutProxy.Shininess = Shininess;
 	OutProxy.UVScrollSpeed = UVScrollSpeed;
 	OutProxy.bFlipNormalY = bFlipNormalY;
+	OutProxy.bAlphaMasked = bAlphaMasked;
 	OutProxy.SpecularFactor = SpecularFactor;
 	OutProxy.EmissiveColor = EmissiveColor;
 	OutProxy.EmissiveFactor = EmissiveFactor;
@@ -1631,6 +1633,7 @@ UMaterial* UMaterial::GetOrCreateDissolveParent(UMaterial* SourceMat)
 	ParentMat->WorldUVTileSize = SourceMat->WorldUVTileSize;
 	ParentMat->bWorldUVLocalSpace = SourceMat->bWorldUVLocalSpace;
 	ParentMat->bFlipNormalY = SourceMat->bFlipNormalY;
+	ParentMat->bAlphaMasked = SourceMat->bAlphaMasked;
 	ParentMat->ShadingModel = SourceMat->ShadingModel;
 	ParentMat->bOverrideShadingModel = SourceMat->bOverrideShadingModel;
 
@@ -2013,6 +2016,7 @@ void UMaterial::CopySettingsFrom(const UMaterial& Source)
 	Shininess = Source.Shininess;
 	UVScrollSpeed = Source.UVScrollSpeed;
 	bFlipNormalY = Source.bFlipNormalY;
+	bAlphaMasked = Source.bAlphaMasked;
 	SpecularFactor = Source.SpecularFactor;
 	EmissiveColor = Source.EmissiveColor;
 	EmissiveFactor = Source.EmissiveFactor;
@@ -2058,6 +2062,7 @@ void UMaterial::Serialize(FStructuredArchive::FRecord Record)
 	Record << SA_VALUE("Shininess", Shininess) << SA_VALUE("UVScrollSpeed", UVScrollSpeed);
 	SerializeOptionalField(Record, Ar.IsSaving(), "SpecularColor", SpecularColor);
 	SerializeOptionalField(Record, Ar.IsSaving(), "FlipNormalY", bFlipNormalY);
+	SerializeOptionalField(Record, Ar.IsSaving(), "AlphaMasked", bAlphaMasked);
 	SerializeOptionalField(Record, Ar.IsSaving(), "SpecularFactor", SpecularFactor);
 	SerializeOptionalField(Record, Ar.IsSaving(), "EmissiveColor", EmissiveColor);
 	SerializeOptionalField(Record, Ar.IsSaving(), "EmissiveFactor", EmissiveFactor);

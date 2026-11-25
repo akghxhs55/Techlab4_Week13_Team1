@@ -48,6 +48,9 @@ struct FBodyInstance
 	UPROPERTY(EditAnywhere)
 	ECollisionEnabled CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 
+	UPROPERTY(EditAnywhere)
+	bool bUseTriangleMesh = false;
+
 	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene, physx::PxAggregate* Aggregate = nullptr);
 	void InitStaticTriangleMeshBody(const FStaticMeshData& Mesh, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene);
 	void TermBody();
