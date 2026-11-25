@@ -135,6 +135,9 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 
 	Dynamic->setLinearDamping(LinearDamping);
 	Dynamic->setAngularDamping(AngularDamping);
+	Dynamic->setSolverIterationCounts(
+		static_cast<PxU32>(std::clamp(PositionSolverIterationCount, 1, 255)),
+		static_cast<PxU32>(std::clamp(VelocitySolverIterationCount, 1, 255)));
 	Dynamic->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, !bEnableGravity);
 
 	Dynamic->userData = this;

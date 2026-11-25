@@ -238,8 +238,24 @@ void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
 
 bool USkeletalMeshComponent::SetSimulatePhysicsBelow(int32 RootBoneIndex)
 {
+	TArray<int32> Roots;
+	Roots.Add(RootBoneIndex);
+	return SetSimulatePhysicsBelow(Roots);
+}
+
+bool USkeletalMeshComponent::SetSimulatePhysicsBelow(const TArray<int32>& RootBoneIndices)
+{
 	const TArray<FBoneInfo>& Bones = GetBones();
-	if (RootBoneIndex < 0 || RootBoneIndex >= Bones.Num()) return false;
+	TArray<uint8> IsRoot;
+	IsRoot.Init(0, Bones.Num());
+	bool bAnyRoot = false;
+	for (const int32 Root : RootBoneIndices)
+	{
+		if (Root < 0 || Root >= Bones.Num()) continue;
+		IsRoot[Root] = 1;
+		bAnyRoot = true;
+	}
+	if (!bAnyRoot) return false;
 	bSimulatingBodiesBelow = true;
 
 	bool bAnyDynamic = false;
@@ -250,7 +266,7 @@ bool USkeletalMeshComponent::SetSimulatePhysicsBelow(int32 RootBoneIndex)
 		int32 Bone = Body->BoneIndex;
 		for (int32 Depth = 0; Bone >= 0 && Bone < Bones.Num() && Depth < Bones.Num(); ++Depth)
 		{
-			if (Bone == RootBoneIndex)
+			if (IsRoot[Bone])
 			{
 				bBelowRoot = true;
 				break;

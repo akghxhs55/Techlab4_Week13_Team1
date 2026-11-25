@@ -10,6 +10,7 @@ class UAnimSequence;
 // 드래곤 파워 어택에 맞은 캐릭터가 래그돌로 하늘 높이 날아가는 연출을 진행한다.
 // 씬의 첫 Pawn으로 빙의되어 카메라 시점이 된다. 드래곤·피해자는 씬의 SkeletalMeshActor를 이름으로 찾는다.
 // 흐름: Idle(대기) → PowerAttack → ImpactTime에 피해자 래그돌 전환 + 발사 + 카메라 셰이크 → 카메라가 래그돌 추적.
+// 카메라: 타격 전에는 어깨 너머 3인칭, 타격 순간 스카이림 래그돌 카메라처럼 몸 중심을 화면 정중앙에 고정한 시점으로 전환한다.
 // R 키로 처음부터 다시 재생한다.
 UCLASS()
 class ADragonRagdollDirector : public APawn
@@ -82,6 +83,22 @@ public:
 	UPROPERTY(EditAnywhere)
 	float CameraFOV = 70.0f;
 
+	// 래그돌 카메라. 피격 후 몸 중심(루트를 뺀 본 위치 평균)을 화면 정중앙에 고정하고 일정 거리에서 따라간다
+	// 몸 중심에서 카메라까지 거리 (m)
+	UPROPERTY(EditAnywhere)
+	float RagdollCameraDistance = 3.5f;
+	// 내려다보는 각도 (도). 양수면 위에서 내려다본다
+	UPROPERTY(EditAnywhere)
+	float RagdollCameraPitch = 15.0f;
+	// 어깨 시점 방향에서 옆으로 돌린 각도 (도). 0이면 정면 뒤, 90이면 완전히 측면
+	UPROPERTY(EditAnywhere)
+	float RagdollCameraYaw = 35.0f;
+	// 어깨 시점에서 래그돌 시점으로 넘어가는 시간 (초). 0이면 즉시 컷
+	UPROPERTY(EditAnywhere)
+	float RagdollCameraTransitionTime = 0.0f;
+	UPROPERTY(EditAnywhere)
+	float RagdollCameraFOV = 65.0f;
+
 private:
 	enum class EPhase : uint8
 	{
@@ -96,9 +113,11 @@ private:
 	void Impact();
 	void PlayCameraShake();
 	FVector GetFocusLocation() const;
+	FVector GetBodyCenter() const;
 	FVector GetVictimLocation() const;
 	FVector GetLaunchDirection() const;
 	void UpdateThirdPersonCamera(float DeltaTime, bool bSnap);
+	void GetRagdollCamera(FVector& OutLocation, FVector& OutLookAt) const;
 
 	ASkeletalMeshActor* Dragon = nullptr;
 	ASkeletalMeshActor* Victim = nullptr;

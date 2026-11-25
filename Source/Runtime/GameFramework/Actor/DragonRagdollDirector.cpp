@@ -203,6 +203,26 @@ FVector ADragonRagdollDirector::GetFocusLocation() const
 	return Bone >= 0 ? BoneLocation(Mesh, Bone) : Victim->GetActorLocation();
 }
 
+FVector ADragonRagdollDirector::GetBodyCenter() const
+{
+	if (!Victim)
+	{
+		return GetActorLocation();
+	}
+	// 팔다리가 제각각 휘날려도 몸 전체의 중심을 잡도록 루트를 뺀 모든 본 위치를 평균낸다
+	const USkeletalMeshComponent* Mesh = Victim->GetSkeletalMeshComponent();
+	const TArray<FBoneInfo>& Bones = Mesh->GetBones();
+	FVector Sum = FVector::ZeroVector;
+	int32 Count = 0;
+	for (int32 B = 0; B < Bones.Num(); ++B)
+	{
+		if (Bones[B].ParentIndex < 0) continue;
+		Sum += BoneLocation(Mesh, B);
+		++Count;
+	}
+	return Count > 0 ? Sum * (1.0f / static_cast<float>(Count)) : GetFocusLocation();
+}
+
 void ADragonRagdollDirector::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -274,6 +294,20 @@ void ADragonRagdollDirector::UpdateThirdPersonCamera(float DeltaTime, bool bSnap
 	CameraLookAt = FMath::Lerp(CameraLookAt, DesiredLook, LagAlpha(FollowLookLag, DeltaTime));
 }
 
+void ADragonRagdollDirector::GetRagdollCamera(FVector& OutLocation, FVector& OutLookAt) const
+{
+	// 어깨 시점 방향(드래곤 쪽)에서 RagdollCameraYaw만큼 옆으로 돌아 살짝 측면에서, 위에서 내려다보며 몸 중심을 시선 정중앙에 둔다.
+	// 지연 없이 몸에 붙어 있어 날아가는 동안 몸은 화면 중앙에 고정되고 배경이 흘러간다
+	const FVector Forward = -LaunchDirection;
+	const FVector Right = WorldUp.Cross(Forward);
+	const float Yaw = RagdollCameraYaw * PI / 180.0f;
+	const FVector FlatDir = Forward * std::cos(Yaw) + Right * std::sin(Yaw);
+	const float Pitch = RagdollCameraPitch * PI / 180.0f;
+	const FVector ViewDir = FlatDir * std::cos(Pitch) - WorldUp * std::sin(Pitch);
+	OutLookAt = GetBodyCenter();
+	OutLocation = KeepAboveGround(GetWorld(), OutLookAt - ViewDir * RagdollCameraDistance, 0.5f);
+}
+
 void ADragonRagdollDirector::CalcCamera(float DeltaTime, FMinimalViewInfo& OutPOV)
 {
 	if (!Dragon || !Victim)
@@ -284,9 +318,23 @@ void ADragonRagdollDirector::CalcCamera(float DeltaTime, FMinimalViewInfo& OutPO
 
 	UpdateThirdPersonCamera(DeltaTime, false);
 
+	FVector ViewLocation = CameraLocation;
+	FVector ViewLookAt = CameraLookAt;
+	float ViewFOV = CameraFOV;
+	if (Phase == EPhase::Launched)
+	{
+		FVector RagdollLocation, RagdollLookAt;
+		GetRagdollCamera(RagdollLocation, RagdollLookAt);
+		float Alpha = RagdollCameraTransitionTime > 0.0f ? FMath::Clamp(PhaseTime / RagdollCameraTransitionTime, 0.0f, 1.0f) : 1.0f;
+		Alpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+		ViewLocation = FMath::Lerp(CameraLocation, RagdollLocation, Alpha);
+		ViewLookAt = FMath::Lerp(CameraLookAt, RagdollLookAt, Alpha);
+		ViewFOV = CameraFOV + (RagdollCameraFOV - CameraFOV) * Alpha;
+	}
+
 	FRotator Rotation;
-	Rotation.LookDirection((CameraLookAt - CameraLocation).GetSafeNormal(SMALL_NUMBER, LaunchDirection));
-	OutPOV.Location = CameraLocation;
+	Rotation.LookDirection((ViewLookAt - ViewLocation).GetSafeNormal(SMALL_NUMBER, LaunchDirection));
+	OutPOV.Location = ViewLocation;
 	OutPOV.Rotation = Rotation;
-	OutPOV.FOV = CameraFOV;
+	OutPOV.FOV = ViewFOV;
 }
