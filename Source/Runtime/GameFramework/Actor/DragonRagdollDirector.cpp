@@ -63,6 +63,10 @@ void ADragonRagdollDirector::BeginPlay()
 	AttackAnim = UAssetManager::LoadAnimSequence(PowerAttackAnimationPath);
 	if (!IdleAnim) KRS_LOG(Warning, "[DragonRagdollDirector] idle animation not found: {}", IdleAnimationPath);
 	if (!AttackAnim) KRS_LOG(Warning, "[DragonRagdollDirector] power attack animation not found: {}", PowerAttackAnimationPath);
+	VictimIdleAnim = UAssetManager::LoadAnimSequence(VictimIdleAnimationPath);
+	VictimBraceAnim = UAssetManager::LoadAnimSequence(VictimBraceAnimationPath);
+	if (!VictimIdleAnim) KRS_LOG(Warning, "[DragonRagdollDirector] victim idle animation not found: {}", VictimIdleAnimationPath);
+	if (!VictimBraceAnim) KRS_LOG(Warning, "[DragonRagdollDirector] victim brace animation not found: {}", VictimBraceAnimationPath);
 
 	if (!ResolveActors())
 	{
@@ -107,6 +111,10 @@ void ADragonRagdollDirector::StartSequence()
 	{
 		Dragon->GetSkeletalMeshComponent()->PlayAnimation(IdleAnim, true);
 	}
+	if (VictimIdleAnim)
+	{
+		Victim->GetSkeletalMeshComponent()->PlayAnimation(VictimIdleAnim, true);
+	}
 }
 
 void ADragonRagdollDirector::StartAttack()
@@ -122,6 +130,11 @@ void ADragonRagdollDirector::StartAttack()
 			Instance->SetPlayRate(PowerAttackPlayRate);
 		}
 	}
+	// 용이 몸을 일으키는 순간 놀라 올려다보고, 내려찍기 전에 팔로 얼굴을 막으며 움츠린다
+	if (VictimBraceAnim)
+	{
+		Victim->GetSkeletalMeshComponent()->PlayAnimation(VictimBraceAnim, false);
+	}
 }
 
 void ADragonRagdollDirector::Impact()
@@ -130,6 +143,8 @@ void ADragonRagdollDirector::Impact()
 	PhaseTime = 0.0f;
 
 	USkeletalMeshComponent* Mesh = Victim->GetSkeletalMeshComponent();
+	// 방어 자세 그대로 래그돌이 시작되도록 애니메이션을 그 프레임에서 멈춘다
+	Mesh->Stop();
 	Mesh->SetSimulatePhysics(true);
 
 	const FVector Launch = LaunchDirection * LaunchBackSpeed + WorldUp * LaunchUpSpeed;

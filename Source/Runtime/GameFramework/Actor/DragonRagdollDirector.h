@@ -9,7 +9,7 @@ class UAnimSequence;
 
 // 드래곤 파워 어택에 맞은 캐릭터가 래그돌로 하늘 높이 날아가는 연출을 진행한다.
 // 씬의 첫 Pawn으로 빙의되어 카메라 시점이 된다. 드래곤·피해자는 씬의 SkeletalMeshActor를 이름으로 찾는다.
-// 흐름: Idle(대기) → PowerAttack → ImpactTime에 피해자 래그돌 전환 + 발사 + 카메라 셰이크 → 카메라가 래그돌 추적.
+// 흐름: Idle(대기, 피해자는 전투 자세로 대치) → PowerAttack(피해자는 방어 자세) → ImpactTime에 피해자 래그돌 전환 + 발사 + 카메라 셰이크 → 카메라가 래그돌 추적.
 // 카메라: 타격 전에는 어깨 너머 3인칭, 타격 순간 스카이림 래그돌 카메라처럼 몸 중심을 화면 정중앙에 고정한 시점으로 전환한다.
 // R 키로 처음부터 다시 재생한다.
 UCLASS()
@@ -32,6 +32,11 @@ public:
 	FString IdleAnimationPath = "FBX/FrostDragon/FrostDragon_Dragon_Ancient_Idle.anim.bin";
 	UPROPERTY(EditAnywhere)
 	FString PowerAttackAnimationPath = "FBX/FrostDragon/FrostDragon_Dragon_Ancient_Attack_PowerAttack.anim.bin";
+	// 피해자: 대기 중엔 용과 대치하는 전투 자세(루프), 파워 어택이 시작되면 놀라 팔로 얼굴을 막는다
+	UPROPERTY(EditAnywhere)
+	FString VictimIdleAnimationPath = "FBX/dovahkiin_dragonborn_rigged/dovahkiin_dragonborn_rigged_Rig_Standoff.anim.bin";
+	UPROPERTY(EditAnywhere)
+	FString VictimBraceAnimationPath = "FBX/dovahkiin_dragonborn_rigged/dovahkiin_dragonborn_rigged_Rig_Brace.anim.bin";
 
 	// 시작 후 공격하기 전까지 Idle 시간 (초)
 	UPROPERTY(EditAnywhere)
@@ -123,6 +128,8 @@ private:
 	ASkeletalMeshActor* Victim = nullptr;
 	UAnimSequence* IdleAnim = nullptr;
 	UAnimSequence* AttackAnim = nullptr;
+	UAnimSequence* VictimIdleAnim = nullptr;
+	UAnimSequence* VictimBraceAnim = nullptr;
 
 	EPhase Phase = EPhase::Idle;
 	float PhaseTime = 0.0f;
