@@ -12,4 +12,5 @@ struct FImportedMaterialProperties
 	float Shininess = 32.0f;
 	ELightingModel ShadingModel = ELightingModel::Phong;
 	bool bOverrideShadingModel = false;
+	bool bAlphaMasked = false;
 };

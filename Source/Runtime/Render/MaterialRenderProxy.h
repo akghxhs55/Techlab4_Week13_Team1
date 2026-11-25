@@ -17,6 +17,7 @@ struct FMaterialRenderProxy
 	float Shininess = 32.0f;
 	FVector2 UVScrollSpeed = FVector2(0, 0);
 	bool bFlipNormalY = false;
+	bool bAlphaMasked = false;
 	float SpecularFactor = 1.0f;
 	FVector EmissiveColor = FVector(0, 0, 0);
 	float EmissiveFactor = 1.0f;

@@ -5,6 +5,7 @@
 #include "Render/RenderGraph/RenderGraph.h"
 #include "Render/SceneViewTargets.h"
 #include "Render/RenderResourceManager.h"
+#include "Render/Material.h"
 #include "Engine/World.h"
 #include "Tasks/Tasks.h"
 #include "Core/Stats/LightweightStats.h"
@@ -749,7 +750,8 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			{
 				for (FVisibleMeshDrawCommand& Vis : RenderData.VisibleBasePassCommands)
 				{
-					if (Vis.Command && !Vis.Command->bIsParticle)
+					const UMaterial* BaseMat = (Vis.Command && Vis.Command->Material) ? Vis.Command->Material->GetBaseMaterial() : nullptr;
+					if (Vis.Command && !Vis.Command->bIsParticle && (!BaseMat || !BaseMat->bAlphaMasked))
 					{
 						Vis.bHasDepthStencilOverride = true;
 						Vis.DepthStencilOverride = EDepthStencilState::PrepassReadOnly;

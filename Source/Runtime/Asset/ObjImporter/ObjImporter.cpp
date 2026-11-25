@@ -189,6 +189,16 @@ namespace
 					return false;
 				}
 			}
+			else if (Keyword == "map_d")
+			{
+				FString MapD;
+				if (!(Stream >> MapD))
+				{
+					KRS_LOG(Warning, "[MTL] {}:{}: invalid map_d '{}'", Path, LineNumber, Line);
+					return false;
+				}
+				MtlInfo.bHasAlphaMap = true;
+			}
 		}
 		if (!MtlInfo.Name.empty())
 		{
@@ -399,6 +409,7 @@ bool FObjImporter::Cook(const FObjInfo& Raw, FStaticMeshData& Out)
 		CookedMtl.BaseColor.Set(RawMtl.Kd, RawMtl.D);
 		CookedMtl.DiffuseTexturePath = RawMtl.MapKd;
 		CookedMtl.NormalTexturePath = RawMtl.MapBump;
+		CookedMtl.bAlphaMasked = RawMtl.bHasAlphaMap;
 		Cooked.MaterialSlots.Add(std::move(CookedMtl));
 	}
 
