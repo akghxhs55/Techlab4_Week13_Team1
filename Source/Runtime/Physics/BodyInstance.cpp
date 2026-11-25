@@ -2,12 +2,18 @@
 #include "BodyInstance.h"
 
 #include "BodySetup.h"
+#include "Render/StaticMeshData.h"
 #include "PhysicsCore.h"
 #include "PhysXConversion.h"
 #include "PhysScene.h"
 #include <PxPhysics.h>
 #include <PxRigidDynamic.h>
+#include <PxRigidStatic.h>
 #include <PxScene.h>
+#include <cooking/PxCooking.h>
+#include <cooking/PxTriangleMeshDesc.h>
+#include <geometry/PxTriangleMesh.h>
+#include <geometry/PxTriangleMeshGeometry.h>
 #include <extensions/PxRigidActorExt.h>
 #include <extensions/PxRigidBodyExt.h>
 
@@ -147,6 +153,73 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 	OwnerComponent = Owner;
 	PhysScene = InScene;
 	Scale3D = WorldTransform.Scale;
+}
+
+void FBodyInstance::InitStaticTriangleMeshBody(const FStaticMeshData& Mesh, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene)
+{
+	if (RigidActor)
+	{
+		return;
+	}
+
+	PxPhysics* Physics = FPhysicsCore::GetPhysics();
+	PxScene* Scene = InScene ? InScene->GetPxScene() : nullptr;
+	if (!Physics || !Scene || !Owner || Mesh.Vertices.IsEmpty() || Mesh.Indices.Num() < 3)
+	{
+		return;
+	}
+
+	TArray<PxVec3> Points;
+	Points.Reserve(Mesh.Vertices.Num());
+	for (const FVertex& Vertex : Mesh.Vertices)
+	{
+		Points.Add(K2PVector(Vertex.Position));
+	}
+
+	PxTriangleMeshDesc Desc;
+	Desc.points.count = static_cast<PxU32>(Points.Num());
+	Desc.points.stride = sizeof(PxVec3);
+	Desc.points.data = Points.GetData();
+	Desc.triangles.count = static_cast<PxU32>(Mesh.Indices.Num() / 3);
+	Desc.triangles.stride = 3 * sizeof(uint32);
+	Desc.triangles.data = Mesh.Indices.GetData();
+
+	const PxCookingParams Params(Physics->getTolerancesScale());
+	PxTriangleMeshCookingResult::Enum CookResult = PxTriangleMeshCookingResult::eSUCCESS;
+	PxTriangleMesh* TriMesh = PxCreateTriangleMesh(Params, Desc, Physics->getPhysicsInsertionCallback(), &CookResult);
+	if (!TriMesh)
+	{
+		KRS_LOG(Error, "[PhysX] triangle mesh cooking failed ({})", static_cast<int32>(CookResult));
+		return;
+	}
+
+	PxRigidStatic* Static = Physics->createRigidStatic(PxTransform(
+		K2PVector(WorldTransform.Location), K2PQuat(WorldTransform.Rotation.Normalized())));
+	if (!Static)
+	{
+		TriMesh->release();
+		return;
+	}
+
+	const PxMeshScale MeshScale(K2PVector(WorldTransform.Scale));
+	PxShape* Shape = PxRigidActorExt::createExclusiveShape(*Static, PxTriangleMeshGeometry(TriMesh, MeshScale), *FPhysicsCore::GetDefaultMaterial());
+	TriMesh->release();
+	if (!Shape)
+	{
+		Static->release();
+		return;
+	}
+	ApplyCollisionFlags(Shape, CollisionEnabled);
+
+	Static->userData = this;
+	Scene->addActor(*Static);
+
+	RigidActor = Static;
+	BodySetup = nullptr;
+	OwnerComponent = Owner;
+	PhysScene = InScene;
+	Scale3D = WorldTransform.Scale;
+	bSimulatePhysics = false;
 }
 
 void FBodyInstance::TermBody()

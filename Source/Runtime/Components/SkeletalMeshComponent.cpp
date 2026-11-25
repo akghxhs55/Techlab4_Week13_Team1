@@ -147,6 +147,11 @@ void USkeletalMeshComponent::BeginPlay()
 			}
 		}
 	}
+
+	if (IsPhysicsStateCreated() && Bodies.IsEmpty() && GetWorld())
+	{
+		InitArticulated(GetWorld()->GetPhysicsScene());
+	}
 }
 
 void USkeletalMeshComponent::TickComponent(float DeltaTime)
@@ -258,6 +263,52 @@ bool USkeletalMeshComponent::SetSimulatePhysicsBelow(int32 RootBoneIndex)
 	EndPhysicsTickFunction.SetTickFunctionEnable(bAnyDynamic);
 	bPendingKinematicTeleport = true;
 	return bAnyDynamic;
+}
+
+void USkeletalMeshComponent::AddImpulse(FVector Impulse, FName BoneName, bool bVelChange)
+{
+	FBodyInstance* Body = nullptr;
+	if (BoneName.IsNone())
+	{
+		Body = Bodies.IsEmpty() ? nullptr : Bodies[0].get();
+	}
+	else
+	{
+		const int32 BoneIndex = FindBoneIndex(BoneName.ToString());
+		Body = (BoneIndex >= 0 && BoneIndex < BoneToBody.Num()) ? BoneToBody[BoneIndex] : nullptr;
+	}
+	if (Body)
+	{
+		Body->AddImpulse(Impulse, bVelChange);
+	}
+}
+
+void USkeletalMeshComponent::AddImpulseToAllBodiesBelow(FVector Impulse, FName BoneName, bool bVelChange, bool bIncludeSelf)
+{
+	const TArray<FBoneInfo>& Bones = GetBones();
+	const int32 RootBoneIndex = BoneName.IsNone() ? 0 : FindBoneIndex(BoneName.ToString());
+	if (RootBoneIndex < 0 || RootBoneIndex >= Bones.Num())
+	{
+		return;
+	}
+
+	for (auto& Body : Bodies)
+	{
+		int32 Bone = Body->BoneIndex;
+		if (Bone == RootBoneIndex && !bIncludeSelf)
+		{
+			continue;
+		}
+		for (int32 Depth = 0; Bone >= 0 && Bone < Bones.Num() && Depth < Bones.Num(); ++Depth)
+		{
+			if (Bone == RootBoneIndex)
+			{
+				Body->AddImpulse(Impulse, bVelChange);
+				break;
+			}
+			Bone = Bones[Bone].ParentIndex;
+		}
+	}
 }
 
 void USkeletalMeshComponent::OnTransformDirty(ETeleportType TeleportType)

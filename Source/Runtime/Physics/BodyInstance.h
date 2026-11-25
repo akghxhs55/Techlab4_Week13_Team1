@@ -7,6 +7,7 @@ class FPhysScene;
 class UPrimitiveComponent;
 struct FTransform;
 class UBodySetup;
+struct FStaticMeshData;
 
 namespace physx
 {
@@ -48,6 +49,7 @@ struct FBodyInstance
 	ECollisionEnabled CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 
 	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene, physx::PxAggregate* Aggregate = nullptr);
+	void InitStaticTriangleMeshBody(const FStaticMeshData& Mesh, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene);
 	void TermBody();
 	bool IsValidBodyInstance() const { return RigidActor != nullptr; }
 
