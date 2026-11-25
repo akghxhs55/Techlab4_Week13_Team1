@@ -4,6 +4,10 @@
 #include "SkeletalMeshEditorTab.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Render/SkeletalMesh.h"
+#include "Render/SkeletalMeshObject.h"
+#include "Render/StockingRegion.h"
+#include "Render/LineBatcher.h"
+#include "Collision/Ray.h"
 #include "Asset/AssetManager.h"
 #include "Asset/AssetUtils.h"
 #include "Physics/PhysicsAsset.h"
@@ -19,11 +23,30 @@ bool FSkeletalMeshEditor::InitializeResources()
 	if (!BoneGizmoTarget) return false;
 	BoneGizmoTarget->DetachFromParent();
 	ResetBonePoseHistory();
+
+	EditingStockingRegion = NewObject<UStockingRegion>();
+	if (EditingStockingRegion && Mesh)
+	{
+		EditingStockingRegion->BindToSourceMesh(*Mesh, GetAssetPath(), 0);
+		const FString RegionFile = ResolveDefaultRegionFilePath();
+		if (!RegionFile.empty() && std::filesystem::exists(RegionFile))
+		{
+			FString StatusMsg;
+			LoadStockingRegion(StatusMsg);
+		}
+		else
+		{
+			StockingRegionStatus = "No saved stocking region. Select triangles to define one.";
+			bStockingRegionValid = false;
+		}
+	}
 	return true;
 }
 
 void FSkeletalMeshEditor::ShutdownResources()
 {
+	EditingStockingRegion = nullptr;
+	bRegionSelectMode = false;
 	PoseUndoStack.Empty();
 	PoseRedoStack.Empty();
 	CommittedBonePose.Empty();
@@ -36,6 +59,13 @@ void FSkeletalMeshEditor::ShutdownResources()
 
 void FSkeletalMeshEditor::TickAfterWorld(float DeltaTime)
 {
+	if (bRegionSelectMode)
+	{
+		BoneGizmo.EndDrag();
+		UpdateRegionTrianglePicking();
+		return;
+	}
+
 	// 기즈모가 입력을 쓰지 않았을 때만 본을 피킹하고, 마지막에 기즈모를 선택한 본 위치로 맞춘다
 	if (!UpdateBoneGizmo())
 		UpdateBonePicking();
@@ -66,6 +96,276 @@ void FSkeletalMeshEditor::OpenAnimationAsset(const FString& InAssetPath)
 	if (!InAssetPath.empty())
 	{
 		EditorManager.OpenEditor(InAssetPath);
+	}
+}
+
+void FSkeletalMeshEditor::OpenInClothingEditor()
+{
+	if (!GetAssetPath().empty())
+	{
+		EditorManager.OpenClothingEditor(GetAssetPath());
+	}
+}
+
+void FSkeletalMeshEditor::SetRegionSelectMode(bool bEnable)
+{
+	bRegionSelectMode = bEnable;
+	if (bEnable)
+	{
+		BoneGizmo.EndDrag();
+		BoneGizmo.SetTarget(nullptr);
+	}
+	else
+	{
+		SyncBoneGizmo();
+	}
+}
+
+FString FSkeletalMeshEditor::ResolveDefaultRegionFilePath() const
+{
+	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(GetAssetPath());
+	return MeshFile.empty() ? FString() : (MeshFile + ".stockingregion");
+}
+
+void FSkeletalMeshEditor::SelectRegionBySelectedBone(float MinWeightThreshold)
+{
+	if (!EditingStockingRegion || !Mesh || SelectedBoneIndex < 0)
+	{
+		return;
+	}
+	TArray<int32> Bones;
+	Bones.Add(SelectedBoneIndex);
+	EditingStockingRegion->SelectTrianglesByBones(*Mesh, Bones, MinWeightThreshold);
+	FString Status;
+	ValidateStockingRegion(Status);
+}
+
+void FSkeletalMeshEditor::GrowStockingRegion()
+{
+	if (!EditingStockingRegion || !Mesh)
+	{
+		return;
+	}
+	EditingStockingRegion->GrowSelection(*Mesh);
+	FString Status;
+	ValidateStockingRegion(Status);
+}
+
+void FSkeletalMeshEditor::ShrinkStockingRegion()
+{
+	if (!EditingStockingRegion || !Mesh)
+	{
+		return;
+	}
+	EditingStockingRegion->ShrinkSelection(*Mesh);
+	FString Status;
+	ValidateStockingRegion(Status);
+}
+
+void FSkeletalMeshEditor::ClearStockingRegion()
+{
+	if (!EditingStockingRegion)
+	{
+		return;
+	}
+	EditingStockingRegion->ClearTriangles();
+	bStockingRegionValid = false;
+	StockingRegionStatus = "Region selection cleared.";
+}
+
+bool FSkeletalMeshEditor::SaveStockingRegion(FString& OutMessage)
+{
+	OutMessage.clear();
+	if (!EditingStockingRegion || !Mesh)
+	{
+		OutMessage = "No stocking region or mesh available.";
+		StockingRegionStatus = OutMessage;
+		return false;
+	}
+
+	EditingStockingRegion->BindToSourceMesh(*Mesh, GetAssetPath(), 0);
+	const FString FilePath = ResolveDefaultRegionFilePath();
+	if (FilePath.empty() || !EditingStockingRegion->SaveToFile(FilePath))
+	{
+		OutMessage = "Failed to save stocking region file.";
+		StockingRegionStatus = OutMessage;
+		return false;
+	}
+
+	EditingStockingRegion->SetRegionFilePath(FilePath);
+	FString ValidMsg;
+	ValidateStockingRegion(ValidMsg);
+	OutMessage = "Saved region (" + std::to_string(EditingStockingRegion->GetSelectedTriangleCount()) + " tris).";
+	StockingRegionStatus = OutMessage;
+	return true;
+}
+
+bool FSkeletalMeshEditor::LoadStockingRegion(FString& OutMessage)
+{
+	OutMessage.clear();
+	if (!EditingStockingRegion || !Mesh)
+	{
+		OutMessage = "No stocking region or mesh available.";
+		StockingRegionStatus = OutMessage;
+		return false;
+	}
+
+	const FString FilePath = ResolveDefaultRegionFilePath();
+	FString Error;
+	if (!EditingStockingRegion->LoadFromFile(FilePath, Error))
+	{
+		OutMessage = Error;
+		StockingRegionStatus = Error;
+		bStockingRegionValid = false;
+		return false;
+	}
+
+	return ValidateStockingRegion(OutMessage);
+}
+
+bool FSkeletalMeshEditor::ValidateStockingRegion(FString& OutMessage)
+{
+	OutMessage.clear();
+	if (!EditingStockingRegion || !Mesh)
+	{
+		bStockingRegionValid = false;
+		OutMessage = "Mesh or region is missing.";
+		StockingRegionStatus = OutMessage;
+		return false;
+	}
+
+	FString Error;
+	bStockingRegionValid = EditingStockingRegion->ValidateAgainstMesh(*Mesh, Error);
+	if (bStockingRegionValid)
+	{
+		OutMessage = "Valid region (" + std::to_string(EditingStockingRegion->GetSelectedTriangleCount()) + " triangles).";
+	}
+	else
+	{
+		OutMessage = Error;
+	}
+	StockingRegionStatus = OutMessage;
+	return bStockingRegionValid;
+}
+
+void FSkeletalMeshEditor::UpdateRegionTrianglePicking()
+{
+	if (!CanProcessViewportInput() || !EditingStockingRegion || !Mesh || !MeshComponent ||
+		!PointerInput.bHovered || !PointerInput.bMouseDown || CameraInput.bCaptured ||
+		ViewportWidth == 0 || ViewportHeight == 0)
+	{
+		return;
+	}
+
+	FSkeletalMeshObject* MeshObject = MeshComponent->GetMeshObject();
+	const TArray<FVertex>* Vertices = MeshObject ? MeshObject->GetCPUSkinnedVertices() : nullptr;
+	if (!Vertices || Mesh->GetRenderData().LODRenderData.IsEmpty())
+	{
+		return;
+	}
+
+	const FVector2 MousePosition(PointerInput.MouseUV.X * ViewportWidth, PointerInput.MouseUV.Y * ViewportHeight);
+	const FRay WorldRay = ViewportClient->DeprojectScreenToWorld(MousePosition);
+	const FRay LocalRay = ToLocalRay(WorldRay, MeshComponent->GetWorldMatrix());
+	const TArray<uint32>& Indices = Mesh->GetRenderData().LODRenderData[0].Indices;
+	const int32 TriCount = Indices.Num() / 3;
+
+	float BestT = FLT_MAX;
+	int32 HitTri = -1;
+	for (int32 t = 0; t < TriCount; ++t)
+	{
+		float HitT = FLT_MAX;
+		const FVector& P0 = (*Vertices)[Indices[t * 3]].Position;
+		const FVector& P1 = (*Vertices)[Indices[t * 3 + 1]].Position;
+		const FVector& P2 = (*Vertices)[Indices[t * 3 + 2]].Position;
+		if (RayIntersectsTriangle(LocalRay, P0, P1, P2, HitT) && HitT < BestT)
+		{
+			BestT = HitT;
+			HitTri = t;
+		}
+	}
+
+	if (HitTri < 0)
+	{
+		return;
+	}
+
+	const FVector HitLocal = LocalRay.PointAt(BestT);
+	const float RadiusSq = RegionBrushRadius * RegionBrushRadius;
+	for (int32 t = 0; t < TriCount; ++t)
+	{
+		bool bMatch = (t == HitTri);
+		if (!bMatch && RadiusSq > 1e-8f)
+		{
+			const FVector Center = (
+				(*Vertices)[Indices[t * 3]].Position +
+				(*Vertices)[Indices[t * 3 + 1]].Position +
+				(*Vertices)[Indices[t * 3 + 2]].Position) * (1.0f / 3.0f);
+			bMatch = (Center - HitLocal).SizeSquared() <= RadiusSq;
+		}
+		if (bMatch)
+		{
+			if (bRegionEraseMode)
+			{
+				EditingStockingRegion->RemoveTriangle(static_cast<uint32>(t));
+			}
+			else
+			{
+				EditingStockingRegion->AddTriangle(static_cast<uint32>(t));
+			}
+		}
+	}
+
+	FString Status;
+	ValidateStockingRegion(Status);
+}
+
+void FSkeletalMeshEditor::OnRenderLine(FLineBatcher& LineBatcher)
+{
+	FSkeletalPreviewEditor::OnRenderLine(LineBatcher);
+	RenderSelectedRegionTriangles(LineBatcher);
+}
+
+void FSkeletalMeshEditor::RenderSelectedRegionTriangles(FLineBatcher& LineBatcher) const
+{
+	if (!EditingStockingRegion || !Mesh || !MeshComponent || EditingStockingRegion->GetSelectedTriangleCount() == 0)
+	{
+		return;
+	}
+
+	FSkeletalMeshObject* MeshObject = MeshComponent->GetMeshObject();
+	const TArray<FVertex>* Vertices = MeshObject ? MeshObject->GetCPUSkinnedVertices() : nullptr;
+	if (!Vertices || Mesh->GetRenderData().LODRenderData.IsEmpty())
+	{
+		return;
+	}
+
+	const TArray<uint32>& Indices = Mesh->GetRenderData().LODRenderData[0].Indices;
+	const int32 TriCount = Indices.Num() / 3;
+	const FMatrix WorldMat = MeshComponent->GetWorldMatrix();
+	const FVector4 LineColor = bRegionSelectMode
+		? FVector4(0.15f, 0.95f, 0.85f, 1.0f)
+		: FVector4(0.85f, 0.35f, 0.95f, 0.8f);
+
+	const TArray<uint32>& SelectedTris = EditingStockingRegion->GetTriangleIndices();
+	for (int32 i = 0; i < SelectedTris.Num(); ++i)
+	{
+		const uint32 Tri = SelectedTris[i];
+		if (static_cast<int32>(Tri) >= TriCount)
+		{
+			continue;
+		}
+		const FVertex& V0 = (*Vertices)[Indices[Tri * 3]];
+		const FVertex& V1 = (*Vertices)[Indices[Tri * 3 + 1]];
+		const FVertex& V2 = (*Vertices)[Indices[Tri * 3 + 2]];
+
+		const FVector P0 = WorldMat.TransformPosition(V0.Position + V0.Normal * 0.002f);
+		const FVector P1 = WorldMat.TransformPosition(V1.Position + V1.Normal * 0.002f);
+		const FVector P2 = WorldMat.TransformPosition(V2.Position + V2.Normal * 0.002f);
+
+		LineBatcher.AddLine(P0, P1, LineColor);
+		LineBatcher.AddLine(P1, P2, LineColor);
+		LineBatcher.AddLine(P2, P0, LineColor);
 	}
 }
 

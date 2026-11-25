@@ -7,6 +7,7 @@
 #include "PhysScene.h"
 #include "Render/Mesh.h"
 #include "Components/ShapeComponent.h"
+#include <algorithm>
 #include <PxPhysics.h>
 #include <PxRigidDynamic.h>
 #include <PxScene.h>
@@ -18,11 +19,17 @@ using namespace physx;
 UBodySetup::~UBodySetup()
 {
 	// 전역 오브젝트 정리 순회 시 소유자 포인터 해제
-	if (UStaticMesh* OwnerMesh = Cast<UStaticMesh>(GetOuter()))
+	UObject* OuterObj = GetOuter();
+	if (!OuterObj || std::find(GUObjectArray.begin(), GUObjectArray.end(), OuterObj) == GUObjectArray.end())
+	{
+		return;
+	}
+
+	if (UStaticMesh* OwnerMesh = Cast<UStaticMesh>(OuterObj))
 	{
 		OwnerMesh->ClearBodySetup(this);
 	}
-	else if (UShapeComponent* OwnerShape = Cast<UShapeComponent>(GetOuter()))
+	else if (UShapeComponent* OwnerShape = Cast<UShapeComponent>(OuterObj))
 	{
 		OwnerShape->ClearShapeBodySetup(this);
 	}

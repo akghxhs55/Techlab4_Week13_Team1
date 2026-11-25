@@ -25,10 +25,15 @@ namespace
 		Data.FocalLengthMM = FocalLength;
 		Data.SensorHeightMM = SensorHeight;
 		Data.ApertureFStop = std::max(Settings.ApertureFStop, 1.0f);
+		// 월드 단위에 맞춰 거리 기준 변환
 		Data.DepthBlurHalfDistanceCM = Settings.DepthBlurKmFor50Percent > 0.0f
-			? Settings.DepthBlurKmFor50Percent * 100000.0f : 0.0f;
+			? Settings.DepthBlurKmFor50Percent * 100000.0f * CmToWorld : 0.0f;
 		Data.DepthBlurRadiusPixels = std::max(Settings.DepthBlurRadius, 0.0f) * Height / 1080.0f;
-		Data.MaxRadiusPixels = 20.0f * Height / 1080.0f;
+		Data.NearBlurScale = std::max(Settings.NearBlurScale, 0.0f);
+		Data.FarBlurScale = std::max(Settings.FarBlurScale, 0.0f);
+		Data.NearMaxRadiusPixels = std::max(Settings.NearMaxBlurRadius, 0.0f) * Height / 1080.0f;
+		Data.FarMaxRadiusPixels = std::max(Settings.FarMaxBlurRadius, 0.0f) * Height / 1080.0f;
+		Data.MaxRadiusPixels = std::max(Data.NearMaxRadiusPixels, Data.FarMaxRadiusPixels);
 		Data.MinimumFStop = std::max(Settings.MinimumFStop, 0.0f);
 		Data.DiaphragmBladeCount = static_cast<float>(FMath::Clamp(Settings.DiaphragmBladeCount, 4, 16));
 		Data.SkyDepthCM = std::max(View.FarClip, 1.0f);

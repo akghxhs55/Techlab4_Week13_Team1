@@ -171,7 +171,7 @@ void FAssetEditorViewportClient::Draw(FRenderer* Renderer)
 {
 	EngineShowFlags.LightingModel = (ViewportMode == EViewportMode::Unlit)
 		? ELightingModel::Unlit
-		: ELightingModel::Gouraud;
+		: ELightingModel::Phong;
 	EngineShowFlags.bShowWorldNormal = IsWorldNormal();
 	EngineShowFlags.bUsePreviewSkybox = AssetEditor.UsesPreviewSkybox();
 	FEditorViewportClient::Draw(Renderer);

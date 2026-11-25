@@ -63,6 +63,10 @@ void FMinimalViewInfo::BlendViewInfo(const FMinimalViewInfo& Other, float Alpha)
 	DepthOfField.ApertureFStop = FMath::Lerp(DepthOfField.ApertureFStop, Other.DepthOfField.ApertureFStop, Alpha);
 	DepthOfField.DepthBlurKmFor50Percent = FMath::Lerp(DepthOfField.DepthBlurKmFor50Percent, Other.DepthOfField.DepthBlurKmFor50Percent, Alpha);
 	DepthOfField.DepthBlurRadius = FMath::Lerp(DepthOfField.DepthBlurRadius, Other.DepthOfField.DepthBlurRadius, Alpha);
+	DepthOfField.NearBlurScale = FMath::Lerp(DepthOfField.NearBlurScale, Other.DepthOfField.NearBlurScale, Alpha);
+	DepthOfField.FarBlurScale = FMath::Lerp(DepthOfField.FarBlurScale, Other.DepthOfField.FarBlurScale, Alpha);
+	DepthOfField.NearMaxBlurRadius = FMath::Lerp(DepthOfField.NearMaxBlurRadius, Other.DepthOfField.NearMaxBlurRadius, Alpha);
+	DepthOfField.FarMaxBlurRadius = FMath::Lerp(DepthOfField.FarMaxBlurRadius, Other.DepthOfField.FarMaxBlurRadius, Alpha);
 	if (Alpha >= 0.5f)
 	{
 		DepthOfField.bEnabled = Other.DepthOfField.bEnabled;

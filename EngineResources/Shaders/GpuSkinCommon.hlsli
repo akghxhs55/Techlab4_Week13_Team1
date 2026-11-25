@@ -44,6 +44,25 @@ void GpuSkinVertex(uint4 BlendIndices, float4 BlendWeights, inout float3 Positio
     Tangent.xyz = GpuSkinSafeNormalize(mul(float4(Tangent.xyz, 0.0f), M).xyz);
 }
 
+struct FGpuSkinDeformDelta
+{
+	float3 PositionOffset;
+	float StretchDelta;
+	float3 NormalOffset;
+	float CreaseDelta;
+};
+
+StructuredBuffer<FGpuSkinDeformDelta> GpuSkinDeformDeltas : register(t15);
+
+void GpuSkinApplyDeform(uint VertexId, inout float3 Position, inout float3 Normal, inout float4 Color)
+{
+	const FGpuSkinDeformDelta Delta = GpuSkinDeformDeltas[VertexId];
+	Position += Delta.PositionOffset;
+	Normal = GpuSkinSafeNormalize(Normal + Delta.NormalOffset);
+	Color.b = saturate(Color.b + Delta.CreaseDelta);
+	Color.a = max(0.0f, Color.a + Delta.StretchDelta);
+}
+
 // 4개 영향 중 Bone에 해당하는 가중치의 합. 같은 본이 두 칸에 들어 있어도 맞게 더한다
 float GpuSkinWeightForBone(uint4 BlendIndices, float4 BlendWeights, uint Bone)
 {

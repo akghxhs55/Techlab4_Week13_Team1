@@ -14,7 +14,11 @@ cbuffer DepthOfFieldConstants : register(b0)
     float MinimumFStop;
     float DiaphragmBladeCount;
     float SkyDepthCM;
-    float2 Padding;
+	float NearBlurScale;
+	float FarBlurScale;
+	float NearMaxRadiusPixels;
+	float FarMaxRadiusPixels;
+	float2 Padding;
 };
 
 struct DOFVSOutput
@@ -48,8 +52,12 @@ float DOFSignedCoC(float Z)
     }
     float DistanceRadius = DepthBlurHalfDistanceCM > 0.0f
         ? DepthBlurRadiusPixels * Z / (Z + DepthBlurHalfDistanceCM) : 0.0f;
-    float Radius = min(max(LensRadius, DistanceRadius), MaxRadiusPixels);
-    return FocusDistanceMM > 0.0f && Z * 10.0f < FocusDistanceMM ? -Radius : Radius;
+	// 근경과 원경에 서로 다른 배율과 최대 반경 적용
+	bool bNear = FocusDistanceMM > 0.0f && Z * 10.0f < FocusDistanceMM;
+	float Scale = bNear ? NearBlurScale : FarBlurScale;
+	float MaxRadius = bNear ? NearMaxRadiusPixels : FarMaxRadiusPixels;
+	float Radius = min(max(LensRadius, DistanceRadius) * max(Scale, 0.0f), MaxRadius);
+	return Radius <= 0.0f ? 0.0f : (bNear ? -Radius : Radius);
 }
 
 float DOFBladeScale(float Angle)

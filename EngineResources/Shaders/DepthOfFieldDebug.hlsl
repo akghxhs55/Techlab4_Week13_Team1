@@ -13,7 +13,8 @@ float4 mainPS(DOFVSOutput Input) : SV_Target
     float Radius = abs(CoC);
     if (Radius <= 0.5f) return float4(0.0f, 0.0f, 0.0f, 1.0f);
 
-    float Strength = saturate((Radius - 0.5f) / max(MaxRadiusPixels - 0.5f, 0.001f));
+	float MaxRadius = CoC < 0.0f ? NearMaxRadiusPixels : FarMaxRadiusPixels;
+	float Strength = saturate((Radius - 0.5f) / max(MaxRadius - 0.5f, 0.001f));
     float Brightness = 0.25f + 0.75f * Strength;
     float3 Color = CoC < 0.0f ? float3(0.0f, Brightness, 0.0f) : float3(0.0f, 0.0f, Brightness);
     return float4(Color, 1.0f);

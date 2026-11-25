@@ -34,7 +34,7 @@ struct FEditorSettings
 	bool bDecalBVHCulling = true;
 	bool bDecalOBBTree = true;
 	ELightCullingMode LightCullingMode = ELightCullingMode::Tiled;
-	ELightingModel LightingModel = ELightingModel::Gouraud;
+	ELightingModel LightingModel = ELightingModel::Phong;
 
 	// Values
 	float SceneDepthMaxRange = 50.0f;

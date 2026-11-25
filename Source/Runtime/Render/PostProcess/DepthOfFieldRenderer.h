@@ -22,9 +22,13 @@ struct alignas(16) FDepthOfFieldData
 	float MinimumFStop;
 	float DiaphragmBladeCount;
 	float SkyDepthCM;
+	float NearBlurScale;
+	float FarBlurScale;
+	float NearMaxRadiusPixels;
+	float FarMaxRadiusPixels;
 	float Padding[2];
 };
-static_assert(sizeof(FDepthOfFieldData) == 64);
+static_assert(sizeof(FDepthOfFieldData) == 80);
 
 class FDepthOfFieldRenderer
 {

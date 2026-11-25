@@ -31,8 +31,10 @@ float4 mainPS(DOFVSOutput Input) : SV_Target
             NearbyMaximum = max(NearbyMaximum, TileRanges.Load(int3(Neighbor, 0)));
         }
     }
-    float NearSearchRadius = min(NearbyMaximum.x, MaxRadiusPixels);
-    float FarSearchRadius = min(NearbyMaximum.y, MaxRadiusPixels);
+	float NearSearchRadius = min(NearbyMaximum.x, NearMaxRadiusPixels);
+	float FarSearchRadius = min(NearbyMaximum.y, FarMaxRadiusPixels);
+	// 큰 블러 반경에서 링 무늬 완화
+	float AngleJitter = frac(sin(dot(Input.Position.xy, float2(12.9898f, 78.233f))) * 43758.5453f);
 
     float3 NearSum = CenterCoC < -0.5f ? CenterColor.rgb : float3(0.0f, 0.0f, 0.0f);
     float3 FarSum = CenterCoC > 0.5f ? CenterColor.rgb : float3(0.0f, 0.0f, 0.0f);
@@ -45,7 +47,7 @@ float4 mainPS(DOFVSOutput Input) : SV_Target
         {
             [unroll] for (int Sample = 0; Sample < 12; ++Sample)
             {
-                float Angle = 6.2831853f * (Sample + 0.5f * (Ring & 1)) / 12.0f;
+				float Angle = 6.2831853f * (Sample + 0.5f * (Ring & 1) + AngleJitter) / 12.0f;
                 float2 Offset = float2(cos(Angle), sin(Angle)) * NearSearchRadius * sqrt((Ring - 0.5f) / 4.0f) * DOFBladeScale(Angle);
                 float Distance = length(Offset);
                 float KernelWeight = saturate(NearSearchRadius - Distance + 0.5f);
@@ -74,7 +76,7 @@ float4 mainPS(DOFVSOutput Input) : SV_Target
         {
             [unroll] for (int Sample = 0; Sample < 12; ++Sample)
             {
-                float Angle = 6.2831853f * (Sample + 0.5f * (Ring & 1)) / 12.0f;
+				float Angle = 6.2831853f * (Sample + 0.5f * (Ring & 1) + AngleJitter) / 12.0f;
                 float2 Offset = float2(cos(Angle), sin(Angle)) * FarSearchRadius * (Ring / 4.0f) * DOFBladeScale(Angle);
                 float2 SampleUV = saturate(UV + Offset * float2(InvWidth, InvHeight));
                 int2 SamplePixel = clamp(int2(SampleUV * ImageSize), int2(0, 0), ImageSize - 1);

@@ -103,6 +103,15 @@ public:
 	float DepthBlurKmFor50Percent = 1.0f;
 	UPROPERTY(EditAnywhere)
 	float DepthBlurRadius = 0.0f;
+	// 근경과 원경 블러 개별 제어
+	UPROPERTY(EditAnywhere)
+	float NearBlurScale = 1.0f;
+	UPROPERTY(EditAnywhere)
+	float FarBlurScale = 1.0f;
+	UPROPERTY(EditAnywhere)
+	float NearMaxBlurRadius = 20.0f;
+	UPROPERTY(EditAnywhere)
+	float FarMaxBlurRadius = 20.0f;
 
 	// UE와 같이 소유 Pawn의 Controller ControlRotation을 뷰 회전으로 쓴다 (부모/스프링 암 회전보다 우선)
 	UPROPERTY(EditAnywhere)

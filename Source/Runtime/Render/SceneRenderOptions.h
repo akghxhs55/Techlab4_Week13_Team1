@@ -36,5 +36,5 @@ struct FSceneRenderOptions
 	bool bShowParticles = true;
 	bool bUsePreviewSkybox = false;
 
-	ELightingModel LightingModel = ELightingModel::Gouraud;
+	ELightingModel LightingModel = ELightingModel::Phong;
 };

@@ -282,6 +282,9 @@ void ClothBridge_ApplyParams(FClothInstanceHandle Cloth, FClothFabricHandle Fabr
 	NvCloth->setTetherConstraintScale(Params->TetherScale);
 	NvCloth->setTetherConstraintStiffness(Params->TetherStiffness);
 	NvCloth->setFriction(Params->Friction);
+	NvCloth->setMotionConstraintStiffness(Params->MotionConstraintStiffness);
+	NvCloth->setSelfCollisionDistance(Params->SelfCollisionDistance);
+	NvCloth->setSelfCollisionStiffness(Params->SelfCollisionStiffness);
 	NvCloth->enableContinuousCollision(Params->bEnableContinuousCollision);
 
 	if (Fabric)
@@ -294,6 +297,9 @@ void ClothBridge_ApplyParams(FClothInstanceHandle Cloth, FClothFabricHandle Fabr
 			for (uint32_t i = 0; i < NumPhases; ++i)
 			{
 				Phases[i] = nv::cloth::PhaseConfig(static_cast<uint16_t>(i));
+				Phases[i].mCompressionLimit = Params->CompressionLimit;
+				Phases[i].mStretchLimit = Params->StretchLimit;
+				Phases[i].mStiffnessMultiplier = Params->StiffnessMultiplier;
 				const int32_t PhaseType = (i < Bundle->PhaseTypes.size()) ? Bundle->PhaseTypes[i] : nv::cloth::ClothFabricPhaseType::eINVALID;
 				switch (PhaseType)
 				{
@@ -486,6 +492,32 @@ void ClothBridge_WriteParticles(FClothInstanceHandle Cloth, const FClothBridgeVe
 	}
 }
 
+void ClothBridge_WriteParticlesWithPrevious(
+	FClothInstanceHandle Cloth,
+	const FClothBridgeVec4* CurrentParticles,
+	const FClothBridgeVec4* PreviousParticles,
+	uint32_t Count)
+{
+	if (!Cloth || !CurrentParticles || Count == 0)
+	{
+		return;
+	}
+	nv::cloth::Cloth* NvCloth = static_cast<nv::cloth::Cloth*>(Cloth);
+	nv::cloth::MappedRange<physx::PxVec4> CurRange = NvCloth->getCurrentParticles();
+	nv::cloth::MappedRange<physx::PxVec4> PrevRange = NvCloth->getPreviousParticles();
+	const uint32_t RangeCount = static_cast<uint32_t>(CurRange.size());
+	const uint32_t CopyCount = (Count < RangeCount) ? Count : RangeCount;
+	for (uint32_t i = 0; i < CopyCount; ++i)
+	{
+		CurRange[i] = physx::PxVec4(CurrentParticles[i].X, CurrentParticles[i].Y, CurrentParticles[i].Z, CurrentParticles[i].W);
+		if (i < PrevRange.size())
+		{
+			const FClothBridgeVec4& PrevVal = PreviousParticles ? PreviousParticles[i] : CurrentParticles[i];
+			PrevRange[i] = physx::PxVec4(PrevVal.X, PrevVal.Y, PrevVal.Z, PrevVal.W);
+		}
+	}
+}
+
 void ClothBridge_UpdatePinnedParticles(FClothInstanceHandle Cloth, const uint32_t* Indices, const FClothBridgeVec3* LocalPositions, uint32_t Count)
 {
 	if (!Cloth || !Indices || !LocalPositions || Count == 0)
@@ -513,6 +545,25 @@ void ClothBridge_ReadParticles(FClothInstanceHandle Cloth, FClothBridgeVec4* Out
 	}
 	const nv::cloth::Cloth* NvCloth = static_cast<const nv::cloth::Cloth*>(Cloth);
 	nv::cloth::MappedRange<const physx::PxVec4> Range = nv::cloth::readCurrentParticles(*NvCloth);
+	const uint32_t RangeCount = static_cast<uint32_t>(Range.size());
+	const uint32_t CopyCount = (Count < RangeCount) ? Count : RangeCount;
+	for (uint32_t i = 0; i < CopyCount; ++i)
+	{
+		OutParticles[i].X = Range[i].x;
+		OutParticles[i].Y = Range[i].y;
+		OutParticles[i].Z = Range[i].z;
+		OutParticles[i].W = Range[i].w;
+	}
+}
+
+void ClothBridge_ReadPreviousParticles(FClothInstanceHandle Cloth, FClothBridgeVec4* OutParticles, uint32_t Count)
+{
+	if (!Cloth || !OutParticles || Count == 0)
+	{
+		return;
+	}
+	const nv::cloth::Cloth* NvCloth = static_cast<const nv::cloth::Cloth*>(Cloth);
+	nv::cloth::MappedRange<const physx::PxVec4> Range = nv::cloth::readPreviousParticles(*NvCloth);
 	const uint32_t RangeCount = static_cast<uint32_t>(Range.size());
 	const uint32_t CopyCount = (Count < RangeCount) ? Count : RangeCount;
 	for (uint32_t i = 0; i < CopyCount; ++i)

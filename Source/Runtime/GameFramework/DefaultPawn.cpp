@@ -26,6 +26,10 @@ ADefaultPawn::ADefaultPawn()
 	CameraComponent->SensorWidthMM = 36.0f;
 	CameraComponent->DepthBlurKmFor50Percent = 1.0f;
 	CameraComponent->DepthBlurRadius = 0.0f;
+	CameraComponent->NearBlurScale = 1.0f;
+	CameraComponent->FarBlurScale = 1.0f;
+	CameraComponent->NearMaxBlurRadius = 20.0f;
+	CameraComponent->FarMaxBlurRadius = 20.0f;
 	CameraComponent->bUsePawnControlRotation = false;
 }
 

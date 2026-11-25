@@ -161,6 +161,7 @@ void USkinnedMeshComponent::RecreateMeshObject()
 	const bool bValid = SkeletalMesh && !SkeletalMesh->GetRenderData().LODRenderData.IsEmpty();
 	MeshObject = bValid ? MakeMeshObject(SkeletalMesh) : nullptr;
 	if (MeshObject) MeshObject->SetDebugWeightBone(DebugWeightBone);
+	OnMeshObjectCreated();
 	ComponentSpaceTransforms.Reset();
 	OnSkeletalMeshChanged();
 	
@@ -174,6 +175,7 @@ void USkinnedMeshComponent::RefreshSkinningMode()
 	if (!MeshObject) return;
 	MeshObject = MakeMeshObject(SkeletalMesh);
 	if (MeshObject) MeshObject->SetDebugWeightBone(DebugWeightBone);
+	OnMeshObjectCreated();
 	UpdateBoneTransformsNow();   // 포즈는 그대로 두고 새 MeshObject에 다시 올린다
 }
 

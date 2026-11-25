@@ -1,0 +1,1976 @@
+#include "EnginePCH.h"
+#include "Components/StockingComponent.h"
+#include "Engine/StockingSceneProxy.h"
+#include "Physics/ClothCore.h"
+#include "Render/SkeletalMeshObject.h"
+#include "Render/MaterialInstance.h"
+#include "Render/Texture2D.h"
+#include "UObject/UObjectGlobals.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <cstring>
+#include <functional>
+#include <queue>
+#include <unordered_map>
+
+namespace
+{
+	uint64 MixStockingHash(uint64 Hash, uint64 Value)
+	{
+		Hash ^= Value;
+		Hash *= 1099511628211ull;
+		return Hash;
+	}
+
+	uint64 MakeStockingPositionKey(const FVector& Pos, float QuantScale)
+	{
+		const int64 QX = static_cast<int64>(std::llround(Pos.X * QuantScale));
+		const int64 QY = static_cast<int64>(std::llround(Pos.Y * QuantScale));
+		const int64 QZ = static_cast<int64>(std::llround(Pos.Z * QuantScale));
+		uint64 Hash = 14695981039346656037ull;
+		Hash = MixStockingHash(Hash, static_cast<uint64>(QX));
+		Hash = MixStockingHash(Hash, static_cast<uint64>(QY));
+		Hash = MixStockingHash(Hash, static_cast<uint64>(QZ));
+		return Hash;
+	}
+
+	bool AreVectorsClose(const FVector& A, const FVector& B, float Tolerance)
+	{
+		return std::fabs(A.X - B.X) <= Tolerance &&
+			std::fabs(A.Y - B.Y) <= Tolerance &&
+			std::fabs(A.Z - B.Z) <= Tolerance;
+	}
+
+	bool AreQuatsClose(const FQuat& A, const FQuat& B, float Tolerance)
+	{
+		const float Dot = std::fabs(A.X * B.X + A.Y * B.Y + A.Z * B.Z + A.W * B.W);
+		return (1.0f - std::min(Dot, 1.0f)) <= Tolerance;
+	}
+
+	bool AreMatricesClose(const FMatrix& A, const FMatrix& B, float Tolerance)
+	{
+		for (int32 r = 0; r < 4; ++r)
+		{
+			for (int32 c = 0; c < 4; ++c)
+			{
+				if (std::fabs(A.M[r][c] - B.M[r][c]) > Tolerance)
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+}
+
+UStockingComponent::UStockingComponent()
+{
+	PrimaryComponentTick.bCanEverTick = true;
+	// 원본 애니메이션과 본 갱신 이후 스타킹 스키닝 실행 보장
+	PrimaryComponentTick.TickGroup = ETickingGroup::PostUpdateWork;
+	bCastShadow = true;
+	bReceiveShadow = true;
+}
+
+UStockingComponent::~UStockingComponent()
+{
+	DestroyNvClothResources();
+}
+
+void UStockingComponent::TickComponent(float DeltaTime)
+{
+	if (DeltaTime > 0.0f && std::isfinite(DeltaTime))
+	{
+		PendingClothDeltaTime = std::clamp(DeltaTime, 1.0f / 120.0f, 1.0f / 30.0f);
+		TearMaskUploadCooldown = std::max(0.0f, TearMaskUploadCooldown - DeltaTime);
+		PullTearCooldown = std::max(0.0f, PullTearCooldown - DeltaTime);
+	}
+	bClothSteppedThisFrame = false;
+
+	if (bTearMaskDirty && TearMaskUploadCooldown <= 0.0f)
+	{
+		RebuildTearMaskTexture();
+	}
+
+	StepPullState(DeltaTime);
+
+	if (SourceSkeletalMeshComponent)
+	{
+		// 원본 본 변환이 아직 비어 있으면 먼저 갱신
+		if (SourceSkeletalMeshComponent->GetComponentSpaceTransform().IsEmpty())
+		{
+			SourceSkeletalMeshComponent->UpdateBoneTransformsNow();
+		}
+
+		if (bSyncTransformWithSource)
+		{
+			const FMatrix SourceWorld = SourceSkeletalMeshComponent->GetWorldMatrix();
+			const FMatrix SelfWorld = GetWorldMatrix();
+			if (!AreMatricesClose(SourceWorld, SelfWorld, 1e-4f))
+			{
+				SetWorldTransform(SourceWorld, false);
+			}
+		}
+
+		MarkBoneTransformsDirty();
+	}
+
+	Super::TickComponent(DeltaTime);
+
+	const float NeededExpansion = SurfaceOffset + MaxAppliedDisplacement + BoundsPadding;
+	const float ExpandStep = 0.005f * ReferenceScale;
+	const float ShrinkStep = 0.04f * ReferenceScale;
+	if (NeededExpansion > CachedBoundsExpansion + ExpandStep ||
+		(NeededExpansion < CachedBoundsExpansion - ShrinkStep && !bIsPulling))
+	{
+		CachedBoundsExpansion = NeededExpansion;
+		OnTransformDirty();
+	}
+}
+
+FPrimitiveSceneProxy* UStockingComponent::CreateSceneProxy()
+{
+	return new FStockingSceneProxy(this);
+}
+
+FBox UStockingComponent::CalcLocalBounds() const
+{
+	FBox BaseBounds = Super::CalcLocalBounds();
+	const float Expand = std::max(0.0f, SurfaceOffset + MaxAppliedDisplacement + BoundsPadding);
+	const FVector Margin(Expand, Expand, Expand);
+	BaseBounds.Min -= Margin;
+	BaseBounds.Max += Margin;
+	return BaseBounds;
+}
+
+void UStockingComponent::PostEditChangeProperty(const FProperty& Property)
+{
+	Super::PostEditChangeProperty(Property);
+
+	const FString& Name = Property.Name;
+	if (Name == "SourceSkeletalMeshComponent" || Name == "StockingRegion")
+	{
+		FString Error;
+		RebuildStockingMesh(Error);
+	}
+	else if (Name == "StockingMaterial")
+	{
+		SetMaterial(0, GetEffectiveStockingMaterial());
+		MarkRenderStateDirty();
+	}
+	else if (Name == "SurfaceOffset" || Name == "BoundsPadding" || Name == "MaxPullDistance")
+	{
+		MarkBoneTransformsDirty();
+		OnTransformDirty();
+	}
+}
+
+void UStockingComponent::SetSourceSkeletalMeshComponent(USkeletalMeshComponent* InSourceComponent)
+{
+	SourceSkeletalMeshComponent = InSourceComponent;
+	MarkBoneTransformsDirty();
+}
+
+void UStockingComponent::CalibrateParametersForScale(float InScale)
+{
+	ReferenceScale = std::max(InScale, 0.05f);
+	SurfaceOffset = 0.003f * ReferenceScale;
+	PullRadius = 0.14f * ReferenceScale;
+	MaxPullDistance = 0.22f * ReferenceScale;
+	WrinkleAmplitude = 0.0085f * ReferenceScale;
+	BoundsPadding = 0.04f * ReferenceScale;
+	ClothJointWrinkleSlack = 0.0035f * ReferenceScale;
+	ClothBackstopRadius = 0.025f * ReferenceScale;
+	ClothSelfCollisionDistance = 0.0f;
+	bNvClothParamsDirty = true;
+	if (StockingRegion)
+	{
+		StockingRegion->SurfaceOffset = SurfaceOffset;
+		StockingRegion->BoundaryFeatherDistance = 0.045f * ReferenceScale;
+	}
+	MarkBoneTransformsDirty();
+	OnTransformDirty();
+}
+
+void UStockingComponent::ResetClothSimulation()
+{
+	bNeedsClothTeleport = true;
+	bClothSteppedThisFrame = false;
+	bHasActiveClothWrinkles = false;
+	MarkBoneTransformsDirty();
+}
+
+void UStockingComponent::ApplyNvClothParams()
+{
+	bNvClothParamsDirty = true;
+	if (!ClothInstance || !ClothFabric)
+	{
+		return;
+	}
+
+	FClothBridgeParams Params{};
+	Params.Gravity = { 0.0f, 0.0f, 0.0f };
+	Params.Damping = { ClothDamping, ClothDamping, ClothDamping };
+	Params.LinearDrag = { 0.3f, 0.3f, 0.3f };
+	Params.AngularDrag = { 0.3f, 0.3f, 0.3f };
+	Params.LinearInertia = { 0.15f, 0.15f, 0.15f };
+	Params.AngularInertia = { 0.1f, 0.1f, 0.1f };
+	Params.CentrifugalInertia = { 0.05f, 0.05f, 0.05f };
+	Params.SolverFrequency = 60.0f;
+	Params.StiffnessFrequency = 60.0f;
+	Params.StretchStiffness = std::clamp(ClothStretchStiffness, 0.05f, 1.0f);
+	Params.BendStiffness = std::clamp(ClothBendStiffness, 0.0f, 1.0f);
+	Params.ShearStiffness = std::clamp(ClothShearStiffness, 0.0f, 1.0f);
+	Params.CompressionLimit = std::clamp(ClothCompressionLimit, 0.5f, 1.0f);
+	Params.StretchLimit = std::clamp(ClothStretchLimit, 1.0f, 1.6f);
+	Params.StiffnessMultiplier = 0.65f;
+	Params.MotionConstraintStiffness = std::clamp(ClothMotionStiffness, 0.05f, 1.0f);
+	Params.SelfCollisionDistance = std::max(ClothSelfCollisionDistance, 0.0f);
+	Params.SelfCollisionStiffness = std::clamp(ClothSelfCollisionStiffness, 0.0f, 1.0f);
+	Params.TetherScale = 1.0f;
+	Params.TetherStiffness = 0.0f;
+	Params.Friction = 0.25f;
+	Params.bEnableContinuousCollision = false;
+
+	ClothBridge_ApplyParams(ClothInstance, ClothFabric, &Params);
+	bNvClothParamsDirty = false;
+}
+
+void UStockingComponent::SetStockingRegion(UStockingRegion* InRegion)
+{
+	StockingRegion = InRegion;
+	if (StockingRegion)
+	{
+		SurfaceOffset = StockingRegion->SurfaceOffset;
+		if (StockingRegion->bHasSavedPullParams)
+		{
+			PullRadius = StockingRegion->SavedPullRadius;
+			MaxPullDistance = StockingRegion->SavedMaxPullDistance;
+			PullFalloffExponent = StockingRegion->SavedPullFalloffExponent;
+			WrinkleAmplitude = StockingRegion->SavedWrinkleAmplitude;
+			WrinkleFrequency = StockingRegion->SavedWrinkleFrequency;
+			SpringStiffness = StockingRegion->SavedSpringStiffness;
+			SpringDamping = StockingRegion->SavedSpringDamping;
+			BoundsPadding = StockingRegion->SavedBoundsPadding;
+		}
+		if (StockingRegion->bHasSavedClothWrinkleParams)
+		{
+			bUseNvClothSimulation = StockingRegion->SavedUseNvClothSimulation;
+			ClothJointWrinkleSlack = StockingRegion->SavedClothJointWrinkleSlack;
+			ClothBackstopRadius = StockingRegion->SavedClothBackstopRadius;
+			ClothStretchStiffness = StockingRegion->SavedClothStretchStiffness;
+			ClothBendStiffness = StockingRegion->SavedClothBendStiffness;
+			ClothShearStiffness = StockingRegion->SavedClothShearStiffness;
+			ClothCompressionLimit = StockingRegion->SavedClothCompressionLimit;
+			ClothStretchLimit = StockingRegion->SavedClothStretchLimit;
+			ClothMotionStiffness = StockingRegion->SavedClothMotionStiffness;
+			ClothDamping = StockingRegion->SavedClothDamping;
+			ClothSelfCollisionDistance = StockingRegion->SavedClothSelfCollisionDistance;
+			ClothSelfCollisionStiffness = StockingRegion->SavedClothSelfCollisionStiffness;
+			bNvClothParamsDirty = true;
+		}
+		if (StockingRegion->bHasSavedMaterialParams && DefaultStockingMaterial && IsValid(DefaultStockingMaterial))
+		{
+			FStockingMaterialLibrary::ApplyParameters(DefaultStockingMaterial, StockingRegion->SavedMaterialParams);
+		}
+	}
+}
+
+void UStockingComponent::SetStockingMaterial(UMaterialInterface* InMaterial)
+{
+	StockingMaterial = InMaterial;
+	SetMaterial(0, GetEffectiveStockingMaterial());
+	SyncTearMaskBinding();
+	MarkRenderStateDirty();
+}
+
+UMaterialInstanceDynamic* UStockingComponent::GetDefaultStockingMaterialInstance()
+{
+	if (!DefaultStockingMaterial || !IsValid(DefaultStockingMaterial))
+	{
+		DefaultStockingMaterial = FStockingMaterialLibrary::CreateStockingMaterialInstance();
+	}
+	return DefaultStockingMaterial;
+}
+
+UMaterialInterface* UStockingComponent::GetEffectiveStockingMaterial()
+{
+	if (StockingMaterial && IsValid(StockingMaterial))
+	{
+		return StockingMaterial;
+	}
+	return GetDefaultStockingMaterialInstance();
+}
+
+bool UStockingComponent::ValidateSkeletonCompatibility(const USkeletalMesh& SourceMesh, const USkeletalMesh& StockingMesh, FString& OutError)
+{
+	OutError.clear();
+
+	const TArray<FBoneInfo>& SourceBones = SourceMesh.GetRefSkeleton();
+	const TArray<FBoneInfo>& StockingBones = StockingMesh.GetRefSkeleton();
+
+	if (SourceBones.IsEmpty() || StockingBones.IsEmpty())
+	{
+		OutError = "Skeleton validation failed: skeleton is empty.";
+		return false;
+	}
+
+	if (SourceBones.Num() != StockingBones.Num())
+	{
+		OutError = "Skeleton validation failed: bone count mismatch between source and stocking mesh.";
+		return false;
+	}
+
+	for (int32 i = 0; i < SourceBones.Num(); ++i)
+	{
+		const FBoneInfo& Src = SourceBones[i];
+		const FBoneInfo& Dst = StockingBones[i];
+
+		if (Src.Name != Dst.Name || Src.ParentIndex != Dst.ParentIndex)
+		{
+			OutError = "Skeleton validation failed: bone order or hierarchy mismatch at bone '" + Src.Name + "'.";
+			return false;
+		}
+
+		if (!AreVectorsClose(Src.LocalBindPose.Location, Dst.LocalBindPose.Location, 1e-3f) ||
+			!AreQuatsClose(Src.LocalBindPose.Rotation, Dst.LocalBindPose.Rotation, 1e-3f) ||
+			!AreVectorsClose(Src.LocalBindPose.Scale, Dst.LocalBindPose.Scale, 1e-3f) ||
+			!AreMatricesClose(Src.InverseBindPose, Dst.InverseBindPose, 1e-2f))
+		{
+			OutError = "Skeleton validation failed: reference bind pose mismatch at bone '" + Src.Name + "'.";
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool UStockingComponent::ValidateAgainstSourceMesh(FString& OutError) const
+{
+	OutError.clear();
+	if (!SourceSkeletalMeshComponent || !SourceSkeletalMeshComponent->GetSkeletalMesh())
+	{
+		OutError = "StockingComponent: source SkeletalMeshComponent or SkeletalMesh is missing.";
+		return false;
+	}
+
+	if (!StockingRegion)
+	{
+		OutError = "StockingComponent: StockingRegion is not assigned.";
+		return false;
+	}
+
+	const USkeletalMesh& SourceMesh = *SourceSkeletalMeshComponent->GetSkeletalMesh();
+	if (!StockingRegion->ValidateAgainstMesh(SourceMesh, OutError))
+	{
+		return false;
+	}
+
+	if (GetSkeletalMesh())
+	{
+		if (!ValidateSkeletonCompatibility(SourceMesh, *GetSkeletalMesh(), OutError))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool UStockingComponent::RebuildStockingMesh(FString& OutError)
+{
+	OutError.clear();
+	LastErrorMessage.clear();
+	ResetPullImmediately();
+
+	if (!SourceSkeletalMeshComponent || !SourceSkeletalMeshComponent->GetSkeletalMesh())
+	{
+		OutError = "StockingComponent: source SkeletalMeshComponent has no SkeletalMesh.";
+		LastErrorMessage = OutError;
+		KRS_LOG(Warning, "{}", OutError);
+		SetSkeletalMesh(nullptr);
+		return false;
+	}
+
+	if (!StockingRegion)
+	{
+		OutError = "StockingComponent: StockingRegion is null.";
+		LastErrorMessage = OutError;
+		KRS_LOG(Warning, "{}", OutError);
+		SetSkeletalMesh(nullptr);
+		return false;
+	}
+
+	const USkeletalMesh& SourceMesh = *SourceSkeletalMeshComponent->GetSkeletalMesh();
+	USkeletalMesh* NewStockingMesh = NewObject<USkeletalMesh>(this);
+	if (!NewStockingMesh)
+	{
+		OutError = "StockingComponent: failed to allocate stocking mesh.";
+		LastErrorMessage = OutError;
+		return false;
+	}
+
+	if (!StockingRegion->BuildStockingMesh(SourceMesh, *NewStockingMesh, OutError))
+	{
+		LastErrorMessage = OutError;
+		KRS_LOG(Warning, "{}", OutError);
+		SetSkeletalMesh(nullptr);
+		return false;
+	}
+
+	if (!ValidateSkeletonCompatibility(SourceMesh, *NewStockingMesh, OutError))
+	{
+		LastErrorMessage = OutError;
+		KRS_LOG(Warning, "{}", OutError);
+		SetSkeletalMesh(nullptr);
+		return false;
+	}
+
+	GeneratedStockingMesh = NewStockingMesh;
+	BuildRestAdjacency(*GeneratedStockingMesh);
+	SetSkeletalMesh(GeneratedStockingMesh);
+	SetMaterial(0, GetEffectiveStockingMaterial());
+	RepairAllTears();
+	BindDeformationCallback();
+	MarkRenderStateDirty();
+	UpdateBoneTransformsNow();
+	OnTransformDirty();
+	return true;
+}
+
+void UStockingComponent::BeginPull(uint32 TriangleIndex, const FVector& Barycentric, const FVector& TargetWorldPosition)
+{
+	USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || Mesh->GetRenderData().LODRenderData.IsEmpty())
+	{
+		return;
+	}
+
+	const uint32 TriCount = static_cast<uint32>(Mesh->GetRenderData().LODRenderData[0].Indices.Num() / 3);
+	if (TriangleIndex >= TriCount)
+	{
+		return;
+	}
+
+	GrabbedTriangleIndex = TriangleIndex;
+	GrabBarycentric = Barycentric;
+	PullTargetWorld = TargetWorldPosition;
+	PullVelocityLocal = FVector::ZeroVector;
+	bHasGrabAnchor = true;
+	bIsPulling = true;
+	ComputeGrabGeodesicDistances();
+	MarkBoneTransformsDirty();
+}
+
+void UStockingComponent::UpdatePull(const FVector& TargetWorldPosition)
+{
+	if (!bIsPulling)
+	{
+		return;
+	}
+	PullTargetWorld = TargetWorldPosition;
+	MarkBoneTransformsDirty();
+}
+
+void UStockingComponent::EndPull()
+{
+	bIsPulling = false;
+	MarkBoneTransformsDirty();
+}
+
+void UStockingComponent::ResetPullImmediately()
+{
+	bIsPulling = false;
+	bHasGrabAnchor = false;
+	CurrentPullOffsetLocal = FVector::ZeroVector;
+	PullVelocityLocal = FVector::ZeroVector;
+	MaxAppliedDisplacement = 0.0f;
+	MaxCurrentStretchRatio = 1.0f;
+	MarkBoneTransformsDirty();
+}
+
+bool UStockingComponent::HasActiveDeformation() const
+{
+	return bIsPulling || CurrentPullOffsetLocal.SizeSquared() > 1e-8f || PullVelocityLocal.SizeSquared() > 1e-8f;
+}
+
+FVector UStockingComponent::GetAnchorWorldPosition() const
+{
+	return GetWorldMatrix().TransformPosition(LastAnchorLocal);
+}
+
+void UStockingComponent::RefreshBoneTransforms()
+{
+	if (!SourceSkeletalMeshComponent || !GetSkeletalMesh())
+	{
+		Super::RefreshBoneTransforms();
+		return;
+	}
+
+	const USkeletalMesh* SourceMesh = SourceSkeletalMeshComponent->GetSkeletalMesh();
+	if (!SourceMesh)
+	{
+		Super::RefreshBoneTransforms();
+		return;
+	}
+
+	const TArray<FMatrix>& SourceTransforms = SourceSkeletalMeshComponent->GetComponentSpaceTransform();
+	if (SourceTransforms.Num() != GetSkeletalMesh()->GetNumBones())
+	{
+		FString Error;
+		if (!ValidateSkeletonCompatibility(*SourceMesh, *GetSkeletalMesh(), Error))
+		{
+			LastErrorMessage = Error;
+		}
+		Super::RefreshBoneTransforms();
+		return;
+	}
+
+	ComponentSpaceTransforms = SourceTransforms;
+}
+
+void UStockingComponent::OnMeshObjectCreated()
+{
+	BindDeformationCallback();
+}
+
+void UStockingComponent::BindDeformationCallback()
+{
+	FSkeletalMeshObject* Object = GetMeshObject();
+	if (!Object)
+	{
+		return;
+	}
+	Object->SetPostSkinDeformCallback([this](TArray<FVertex>& InOutVertices, FBox& InOutBounds)
+	{
+		ApplyStockingDeformation(InOutVertices, InOutBounds);
+	});
+}
+
+void UStockingComponent::BuildRestAdjacency(const USkeletalMesh& Mesh)
+{
+	WeldedVertexIds.Reset();
+	WeldedVertexCount = 0;
+	SimBindPositions.Reset();
+	SimTriangleIndices.Reset();
+	WeldedEdgeMasks.Reset();
+	WeldedPrimaryUV.Reset();
+	WeldedTileMinU.Reset();
+	WeldedTileWidthU.Reset();
+	WeldedTearFactor.Reset();
+	WeldedAdjacency.Reset();
+	GrabGeodesicDistances.Reset();
+
+	if (Mesh.GetRenderData().LODRenderData.IsEmpty())
+	{
+		DestroyNvClothResources();
+		return;
+	}
+
+	const FSkeletalMeshLODRenderData& LOD = Mesh.GetRenderData().LODRenderData[0];
+	const int32 VertexCount = LOD.BindVertices.Num();
+	WeldedVertexIds.SetNum(VertexCount);
+
+	// 동일 좌표로 쪼개진 심 정점을 하나의 용접 정점으로 그룹화
+	const float MeshScale = UStockingRegion::ComputeReferenceScale(Mesh, 0);
+	const float QuantScale = 10000.0f / std::max(MeshScale, 0.05f);
+	std::unordered_map<uint64, uint32> PosToWelded;
+	PosToWelded.reserve(static_cast<size_t>(VertexCount));
+	for (int32 v = 0; v < VertexCount; ++v)
+	{
+		const uint64 Key = MakeStockingPositionKey(LOD.BindVertices[v].Position, QuantScale);
+		const std::unordered_map<uint64, uint32>::const_iterator Found = PosToWelded.find(Key);
+		if (Found != PosToWelded.end())
+		{
+			const uint32 Wid = Found->second;
+			WeldedVertexIds[v] = Wid;
+			WeldedEdgeMasks[static_cast<int32>(Wid)] = std::min(
+				WeldedEdgeMasks[static_cast<int32>(Wid)],
+				LOD.BindVertices[v].Color.X);
+			if (LOD.BindVertices[v].UV.X < WeldedPrimaryUV[static_cast<int32>(Wid)].X)
+			{
+				WeldedPrimaryUV[static_cast<int32>(Wid)] = LOD.BindVertices[v].UV;
+			}
+		}
+		else
+		{
+			const uint32 NewId = WeldedVertexCount++;
+			PosToWelded.emplace(Key, NewId);
+			WeldedVertexIds[v] = NewId;
+			SimBindPositions.Add(LOD.BindVertices[v].Position);
+			WeldedEdgeMasks.Add(LOD.BindVertices[v].Color.X);
+			WeldedPrimaryUV.Add(LOD.BindVertices[v].UV);
+		}
+	}
+
+	WeldedAdjacency.SetNum(static_cast<int32>(WeldedVertexCount));
+
+	const std::function<void(uint32, uint32)> AddNeighbor = [&](uint32 A, uint32 B)
+	{
+		if (A == B || A >= WeldedVertexCount || B >= WeldedVertexCount)
+		{
+			return;
+		}
+		TArray<FNeighborEdge>& List = WeldedAdjacency[static_cast<int32>(A)];
+		for (int32 i = 0; i < List.Num(); ++i)
+		{
+			if (List[i].NeighborVertex == B)
+			{
+				return;
+			}
+		}
+		const float Dist = (SimBindPositions[static_cast<int32>(A)] - SimBindPositions[static_cast<int32>(B)]).Size();
+		if (Dist > 1e-6f)
+		{
+			List.Add({ B, Dist });
+		}
+	};
+
+	SimTriangleIndices.Reserve(LOD.Indices.Num());
+	for (int32 i = 0; i + 2 < LOD.Indices.Num(); i += 3)
+	{
+		const uint32 W0 = WeldedVertexIds[LOD.Indices[i]];
+		const uint32 W1 = WeldedVertexIds[LOD.Indices[i + 1]];
+		const uint32 W2 = WeldedVertexIds[LOD.Indices[i + 2]];
+		AddNeighbor(W0, W1); AddNeighbor(W1, W0);
+		AddNeighbor(W1, W2); AddNeighbor(W2, W1);
+		AddNeighbor(W2, W0); AddNeighbor(W0, W2);
+		if (W0 != W1 && W1 != W2 && W2 != W0)
+		{
+			SimTriangleIndices.Add(W0);
+			SimTriangleIndices.Add(W1);
+			SimTriangleIndices.Add(W2);
+		}
+	}
+
+	ComputeComponentUVTiles(Mesh);
+	RebuildNvClothFromSimMesh();
+}
+
+void UStockingComponent::ComputeComponentUVTiles(const USkeletalMesh& Mesh)
+{
+	(void)Mesh;
+	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
+	WeldedTileMinU.SetNum(WeldedCount);
+	WeldedTileWidthU.SetNum(WeldedCount);
+	WeldedTearFactor.SetNum(WeldedCount);
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		WeldedTileMinU[w] = 0.0f;
+		WeldedTileWidthU[w] = 1.0f;
+		WeldedTearFactor[w] = 0.0f;
+	}
+
+	if (WeldedCount == 0 || WeldedPrimaryUV.Num() != WeldedCount)
+	{
+		return;
+	}
+
+	// 연결된 의상 조각별 타일 범위를 측정해 원통 심 경계에서도 찢김을 매끄럽게 감쌈
+	TArray<int32> CompId;
+	CompId.SetNum(WeldedCount);
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		CompId[w] = -1;
+	}
+
+	TArray<uint32> Queue;
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		if (CompId[w] >= 0)
+		{
+			continue;
+		}
+		Queue.Reset();
+		CompId[w] = w;
+		Queue.Add(static_cast<uint32>(w));
+		float MinU = WeldedPrimaryUV[w].X;
+		float MaxU = WeldedPrimaryUV[w].X;
+
+		for (int32 Head = 0; Head < Queue.Num(); ++Head)
+		{
+			const int32 Cur = static_cast<int32>(Queue[Head]);
+			const TArray<FNeighborEdge>& Edges = WeldedAdjacency[Cur];
+			for (int32 e = 0; e < Edges.Num(); ++e)
+			{
+				const int32 Next = static_cast<int32>(Edges[e].NeighborVertex);
+				if (CompId[Next] < 0)
+				{
+					CompId[Next] = w;
+					Queue.Add(static_cast<uint32>(Next));
+					MinU = std::min(MinU, WeldedPrimaryUV[Next].X);
+					MaxU = std::max(MaxU, WeldedPrimaryUV[Next].X);
+				}
+			}
+		}
+
+		const float SpanU = std::max(MaxU - MinU, 0.05f);
+		for (int32 q = 0; q < Queue.Num(); ++q)
+		{
+			const int32 Idx = static_cast<int32>(Queue[q]);
+			WeldedTileMinU[Idx] = MinU;
+			WeldedTileWidthU[Idx] = SpanU;
+		}
+	}
+}
+
+void UStockingComponent::EnsureTearMaskTexture()
+{
+	constexpr uint32 TearMaskSize = 512u;
+	if (TearMaskTexture && IsValid(TearMaskTexture) && TearMaskTexture->GetResource())
+	{
+		return;
+	}
+
+	TearMaskPixels.SetNum(static_cast<int32>(TearMaskSize * TearMaskSize * 4u));
+	std::memset(TearMaskPixels.GetData(), 0, static_cast<size_t>(TearMaskPixels.Num()));
+	TearMaskTexture = UTexture2D::CreateDynamicTexture(TearMaskSize, TearMaskSize, TearMaskPixels.GetData());
+	SyncTearMaskBinding();
+	MarkRenderStateDirty();
+}
+
+void UStockingComponent::SyncTearMaskBinding()
+{
+	UMaterialInstanceDynamic* DynMat = Cast<UMaterialInstanceDynamic>(GetEffectiveStockingMaterial());
+	if (!DynMat || !IsValid(DynMat))
+	{
+		return;
+	}
+
+	if (TearMaskTexture && IsValid(TearMaskTexture))
+	{
+		DynMat->SetTextureParameterValue(FName("TearMaskTex"), TearMaskTexture);
+	}
+	DynMat->SetScalarParameterValue(FName("TearMaskActive"), TearNodes.IsEmpty() ? 0.0f : 1.0f);
+}
+
+void UStockingComponent::RepairAllTears()
+{
+	const bool bHadTears = !TearNodes.IsEmpty();
+	TearNodes.Reset();
+	bTearMaskDirty = false;
+	TearMaskUploadCooldown = 0.0f;
+	PullTearCooldown = 0.0f;
+
+	for (int32 w = 0; w < WeldedTearFactor.Num(); ++w)
+	{
+		WeldedTearFactor[w] = 0.0f;
+	}
+
+	EnsureTearMaskTexture();
+	if (TearMaskTexture && IsValid(TearMaskTexture) && !TearMaskPixels.IsEmpty())
+	{
+		std::memset(TearMaskPixels.GetData(), 0, static_cast<size_t>(TearMaskPixels.Num()));
+		TearMaskTexture->UpdateDynamicPixels(TearMaskPixels.GetData(), TearMaskTexture->GetWidth() * 4u);
+	}
+
+	SyncTearMaskBinding();
+	if (bHadTears)
+	{
+		MarkRenderStateDirty();
+		MarkBoneTransformsDirty();
+	}
+}
+
+float UStockingComponent::ComputeWrappedDeltaU(float U, float CenterU, float TileMinU, float TileWidthU) const
+{
+	const float SafeW = std::max(TileWidthU, 0.05f);
+	float LocalU = U - TileMinU;
+	float LocalC = CenterU - TileMinU;
+	while (LocalU >= SafeW)
+	{
+		LocalU -= SafeW;
+	}
+	while (LocalU < 0.0f)
+	{
+		LocalU += SafeW;
+	}
+	while (LocalC >= SafeW)
+	{
+		LocalC -= SafeW;
+	}
+	while (LocalC < 0.0f)
+	{
+		LocalC += SafeW;
+	}
+
+	float Delta = LocalU - LocalC;
+	if (Delta > SafeW * 0.5f)
+	{
+		Delta -= SafeW;
+	}
+	else if (Delta < -SafeW * 0.5f)
+	{
+		Delta += SafeW;
+	}
+	return Delta;
+}
+
+bool UStockingComponent::ComputeTriangleHitUV(
+	uint32 TriangleIndex,
+	const FVector& Barycentric,
+	FVector2& OutUV,
+	float& OutTileMinU,
+	float& OutTileWidthU) const
+{
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || Mesh->GetRenderData().LODRenderData.IsEmpty())
+	{
+		return false;
+	}
+
+	const FSkeletalMeshLODRenderData& LOD = Mesh->GetRenderData().LODRenderData[0];
+	const int32 TriCount = LOD.Indices.Num() / 3;
+	if (static_cast<int32>(TriangleIndex) >= TriCount)
+	{
+		return false;
+	}
+
+	const uint32 I0 = LOD.Indices[TriangleIndex * 3];
+	const uint32 I1 = LOD.Indices[TriangleIndex * 3 + 1];
+	const uint32 I2 = LOD.Indices[TriangleIndex * 3 + 2];
+
+	OutUV =
+		LOD.BindVertices[I0].UV * Barycentric.X +
+		LOD.BindVertices[I1].UV * Barycentric.Y +
+		LOD.BindVertices[I2].UV * Barycentric.Z;
+
+	const int32 W0 = static_cast<int32>(WeldedVertexIds[I0]);
+	if (W0 >= 0 && W0 < WeldedTileMinU.Num())
+	{
+		OutTileMinU = WeldedTileMinU[W0];
+		OutTileWidthU = WeldedTileWidthU[W0];
+		const float SafeW = std::max(OutTileWidthU, 0.05f);
+		float RelU = OutUV.X - OutTileMinU;
+		while (RelU >= SafeW)
+		{
+			RelU -= SafeW;
+		}
+		while (RelU < 0.0f)
+		{
+			RelU += SafeW;
+		}
+		OutUV.X = OutTileMinU + RelU;
+	}
+	else
+	{
+		OutTileMinU = 0.0f;
+		OutTileWidthU = 1.0f;
+	}
+	return true;
+}
+
+int32 UStockingComponent::FindNearestTearIndex(
+	const FVector2& UV,
+	float TileMinU,
+	float TileWidthU,
+	float MaxNormalizedDist) const
+{
+	int32 BestIdx = -1;
+	float BestDist = MaxNormalizedDist;
+	for (int32 i = 0; i < TearNodes.Num(); ++i)
+	{
+		const FStockingTearNode& Node = TearNodes[i];
+		if (std::fabs(Node.TileMinU - TileMinU) > 0.04f)
+		{
+			continue;
+		}
+		const float DU = ComputeWrappedDeltaU(UV.X, Node.CenterUV.X, TileMinU, TileWidthU);
+		const float DV = UV.Y - Node.CenterUV.Y;
+		const float ScaleU = std::max(Node.RadiusU, 0.015f);
+		const float ScaleV = std::max(Node.RadiusV, 0.032f);
+		const float NormDist = std::sqrt((DU / ScaleU) * (DU / ScaleU) + (DV / ScaleV) * (DV / ScaleV));
+		if (NormDist < BestDist)
+		{
+			BestDist = NormDist;
+			BestIdx = i;
+		}
+	}
+	return BestIdx;
+}
+
+void UStockingComponent::AddOrExpandTearAtUV(
+	const FVector2& UV,
+	float TileMinU,
+	float TileWidthU,
+	const FVector2& PullDirUV,
+	float SpreadAmount,
+	bool bAllowNewNode)
+{
+	constexpr int32 MaxTearNodes = 28;
+	const float SafeSpread = std::clamp(SpreadAmount, 0.05f, 3.0f);
+	const float SafeMaxRun = std::clamp(TearRunLength, 0.04f, 0.75f);
+	const float SafeW = std::max(TileWidthU, 0.05f);
+	const bool bWasEmpty = TearNodes.IsEmpty();
+
+	const int32 NearestIdx = FindNearestTearIndex(UV, TileMinU, TileWidthU, 2.35f);
+	if (NearestIdx >= 0)
+	{
+		FStockingTearNode& Node = TearNodes[NearestIdx];
+		const float DirWeightU = 0.65f + 0.55f * std::fabs(PullDirUV.X);
+		const float DirWeightV = 0.75f + 0.55f * std::fabs(PullDirUV.Y);
+		Node.RadiusU = std::min(Node.RadiusU + SafeSpread * 0.011f * DirWeightU, SafeW * 0.17f);
+		Node.RadiusV = std::min(Node.RadiusV + SafeSpread * 0.025f * DirWeightV, 0.14f);
+		Node.OpenStrength = std::min(Node.OpenStrength + SafeSpread * 0.24f, 1.32f);
+
+		// 가장자리 당김 방향으로 구멍 중심을 미세하게 이동해 찢어짐 전파 표현
+		const float DeltaU = ComputeWrappedDeltaU(UV.X, Node.CenterUV.X, TileMinU, TileWidthU);
+		const float DeltaV = UV.Y - Node.CenterUV.Y;
+		float NextRelU = (Node.CenterUV.X - TileMinU) + DeltaU * (0.12f * SafeSpread) + PullDirUV.X * (0.004f * SafeSpread);
+		while (NextRelU >= SafeW)
+		{
+			NextRelU -= SafeW;
+		}
+		while (NextRelU < 0.0f)
+		{
+			NextRelU += SafeW;
+		}
+		Node.CenterUV.X = TileMinU + NextRelU;
+		Node.CenterUV.Y = std::clamp(Node.CenterUV.Y + DeltaV * (0.14f * SafeSpread) + PullDirUV.Y * (0.008f * SafeSpread), 0.03f, 0.97f);
+
+		Node.RunUpV = std::min(Node.RunUpV + SafeSpread * 0.075f, SafeMaxRun);
+		Node.RunDownV = std::min(Node.RunDownV + SafeSpread * 0.075f, SafeMaxRun);
+		Node.RunWidthU = std::max(Node.RunWidthU, Node.RadiusU * 0.95f);
+
+		// 세로 올 풀림 줄기가 충분히 길어지면 위아래에 보조 타원 구멍을 연쇄 생성
+		if (!Node.bSpawnedUpperSubTear && Node.RunUpV > 0.11f && TearNodes.Num() < MaxTearNodes)
+		{
+			Node.bSpawnedUpperSubTear = true;
+			FStockingTearNode Sub{};
+			Sub.CenterUV = FVector2(
+				Node.CenterUV.X,
+				std::clamp(Node.CenterUV.Y + Node.RunUpV * 0.56f, 0.04f, 0.96f));
+			Sub.RadiusU = std::max(Node.RadiusU * 0.46f, 0.005f);
+			Sub.RadiusV = std::max(Node.RadiusV * 0.62f, 0.014f);
+			Sub.RunUpV = SafeMaxRun * 0.35f;
+			Sub.RunDownV = SafeMaxRun * 0.25f;
+			Sub.RunWidthU = Sub.RadiusU * 1.15f;
+			Sub.OpenStrength = 0.64f;
+			Sub.Seed = Node.Seed + 2.39996f;
+			Sub.TileMinU = TileMinU;
+			Sub.TileWidthU = SafeW;
+			Sub.bSpawnedLowerSubTear = true;
+			TearNodes.Add(Sub);
+		}
+		if (!Node.bSpawnedLowerSubTear && Node.RunDownV > 0.11f && TearNodes.Num() < MaxTearNodes)
+		{
+			Node.bSpawnedLowerSubTear = true;
+			FStockingTearNode Sub{};
+			Sub.CenterUV = FVector2(
+				Node.CenterUV.X,
+				std::clamp(Node.CenterUV.Y - Node.RunDownV * 0.56f, 0.04f, 0.96f));
+			Sub.RadiusU = std::max(Node.RadiusU * 0.46f, 0.005f);
+			Sub.RadiusV = std::max(Node.RadiusV * 0.62f, 0.014f);
+			Sub.RunUpV = SafeMaxRun * 0.25f;
+			Sub.RunDownV = SafeMaxRun * 0.35f;
+			Sub.RunWidthU = Sub.RadiusU * 1.15f;
+			Sub.OpenStrength = 0.64f;
+			Sub.Seed = Node.Seed + 4.79992f;
+			Sub.TileMinU = TileMinU;
+			Sub.TileWidthU = SafeW;
+			Sub.bSpawnedUpperSubTear = true;
+			TearNodes.Add(Sub);
+		}
+
+		bTearMaskDirty = true;
+	}
+	else if (bAllowNewNode && TearNodes.Num() < MaxTearNodes)
+	{
+		FStockingTearNode NewNode{};
+		NewNode.CenterUV = FVector2(UV.X, std::clamp(UV.Y, 0.03f, 0.97f));
+		const float InitRu = std::clamp(TearBrushRadiusUV * 0.52f * SafeSpread, 0.0055f, SafeW * 0.075f);
+		NewNode.RadiusU = InitRu;
+		NewNode.RadiusV = std::min(InitRu * 2.35f, 0.065f);
+		NewNode.RunUpV = SafeMaxRun * 0.30f;
+		NewNode.RunDownV = SafeMaxRun * 0.30f;
+		NewNode.RunWidthU = InitRu * 1.25f;
+		NewNode.OpenStrength = 0.66f;
+		NewNode.Seed = 1.7f + static_cast<float>(TearNodes.Num()) * 2.39996f;
+		NewNode.TileMinU = TileMinU;
+		NewNode.TileWidthU = SafeW;
+		TearNodes.Add(NewNode);
+		bTearMaskDirty = true;
+	}
+
+	if (bWasEmpty && !TearNodes.IsEmpty())
+	{
+		EnsureTearMaskTexture();
+		SyncTearMaskBinding();
+		MarkRenderStateDirty();
+	}
+}
+
+void UStockingComponent::ApplyTearAtSurfaceHit(
+	uint32 TriangleIndex,
+	const FVector& Barycentric,
+	const FVector& DragDirLocal,
+	float Intensity)
+{
+	if (!bEnableTearing)
+	{
+		return;
+	}
+
+	FVector2 HitUV;
+	float TileMinU = 0.0f;
+	float TileWidthU = 1.0f;
+	if (!ComputeTriangleHitUV(TriangleIndex, Barycentric, HitUV, TileMinU, TileWidthU))
+	{
+		return;
+	}
+
+	const FVector2 DirUV(
+		std::clamp(DragDirLocal.X, -1.0f, 1.0f),
+		std::clamp(DragDirLocal.Z, -1.0f, 1.0f));
+	AddOrExpandTearAtUV(HitUV, TileMinU, TileWidthU, DirUV, std::max(Intensity, 0.25f) * TearSpreadSpeed, true);
+	if (bTearMaskDirty && TearMaskUploadCooldown <= 0.0f)
+	{
+		RebuildTearMaskTexture();
+	}
+	MarkBoneTransformsDirty();
+}
+
+void UStockingComponent::UpdatePullTearing(
+	const FSkeletalMeshLODRenderData& LOD,
+	const TArray<FVector>& DeformedWeldedPos,
+	const TArray<float>& WeldedStretch)
+{
+	if (!bEnableTearing || !bIsPulling || !bHasGrabAnchor)
+	{
+		return;
+	}
+
+	const int32 TriCount = LOD.Indices.Num() / 3;
+	if (static_cast<int32>(GrabbedTriangleIndex) >= TriCount)
+	{
+		return;
+	}
+
+	const uint32 I0 = LOD.Indices[GrabbedTriangleIndex * 3];
+	const uint32 I1 = LOD.Indices[GrabbedTriangleIndex * 3 + 1];
+	const uint32 I2 = LOD.Indices[GrabbedTriangleIndex * 3 + 2];
+	const int32 W0 = static_cast<int32>(WeldedVertexIds[I0]);
+	const int32 W1 = static_cast<int32>(WeldedVertexIds[I1]);
+	const int32 W2 = static_cast<int32>(WeldedVertexIds[I2]);
+
+	const float LocalStretch = std::max(
+		MaxCurrentStretchRatio * 0.92f,
+		std::max(WeldedStretch[W0], std::max(WeldedStretch[W1], WeldedStretch[W2])));
+
+	FVector2 AnchorUV;
+	float TileMinU = 0.0f;
+	float TileWidthU = 1.0f;
+	if (!ComputeTriangleHitUV(GrabbedTriangleIndex, GrabBarycentric, AnchorUV, TileMinU, TileWidthU))
+	{
+		return;
+	}
+
+	const int32 NearTear = FindNearestTearIndex(AnchorUV, TileMinU, TileWidthU, 2.35f);
+	const float EffectiveThreshold = (NearTear >= 0)
+		? std::max(1.06f, TearStretchThreshold * 0.80f)
+		: std::max(1.08f, TearStretchThreshold);
+
+	if (LocalStretch <= EffectiveThreshold)
+	{
+		return;
+	}
+
+	// 잡은 삼각형의 접선 방향으로 당김 벡터를 투영해 찢김 전파 방향 계산
+	const FVector Edge1 = DeformedWeldedPos[W1] - DeformedWeldedPos[W0];
+	const FVector Edge2 = DeformedWeldedPos[W2] - DeformedWeldedPos[W0];
+	const FVector2 DUV1 = LOD.BindVertices[I1].UV - LOD.BindVertices[I0].UV;
+	const FVector2 DUV2 = LOD.BindVertices[I2].UV - LOD.BindVertices[I0].UV;
+	FVector2 PullUVDir(0.0f, 1.0f);
+	if (CurrentPullOffsetLocal.SizeSquared() > 1e-8f)
+	{
+		const FVector PullNorm = CurrentPullOffsetLocal.Normalized();
+		const float Proj1 = Edge1.SizeSquared() > 1e-10f ? PullNorm.Dot(Edge1.Normalized()) : 0.0f;
+		const float Proj2 = Edge2.SizeSquared() > 1e-10f ? PullNorm.Dot(Edge2.Normalized()) : 0.0f;
+		const FVector2 RawDir = DUV1 * Proj1 + DUV2 * Proj2;
+		const float RawLen = std::sqrt(RawDir.X * RawDir.X + RawDir.Y * RawDir.Y);
+		if (RawLen > 1e-5f)
+		{
+			PullUVDir = FVector2(RawDir.X / RawLen, RawDir.Y / RawLen);
+		}
+	}
+
+	const float Excess = LocalStretch - EffectiveThreshold;
+	const float SpreadStep = std::clamp(Excess * 1.85f * TearSpreadSpeed * PendingClothDeltaTime * 6.0f, 0.05f, 0.65f);
+	const bool bCanCreateNew = (PullTearCooldown <= 0.0f);
+
+	AddOrExpandTearAtUV(AnchorUV, TileMinU, TileWidthU, PullUVDir, SpreadStep, bCanCreateNew);
+	if (NearTear < 0 && bCanCreateNew)
+	{
+		PullTearCooldown = 0.22f;
+	}
+}
+
+void UStockingComponent::RebuildTearMaskTexture()
+{
+	EnsureTearMaskTexture();
+	if (!TearMaskTexture || !IsValid(TearMaskTexture))
+	{
+		bTearMaskDirty = false;
+		return;
+	}
+
+	const int32 Size = static_cast<int32>(TearMaskTexture->GetWidth());
+	if (Size <= 0 || TearMaskPixels.Num() != Size * Size * 4)
+	{
+		bTearMaskDirty = false;
+		return;
+	}
+
+	std::memset(TearMaskPixels.GetData(), 0, static_cast<size_t>(TearMaskPixels.Num()));
+
+	const float InvSize = 1.0f / static_cast<float>(Size);
+	for (int32 n = 0; n < TearNodes.Num(); ++n)
+	{
+		const FStockingTearNode& Node = TearNodes[n];
+		const float SafeW = std::max(Node.TileWidthU, 0.05f);
+		const float Ru = std::max(Node.RadiusU, 0.003f);
+		const float Rv = std::max(Node.RadiusV, 0.006f);
+		const float RunW = std::max(Node.RunWidthU, Ru * 0.85f);
+		const float BoundU = std::max(Ru * 1.75f, RunW * 1.4f);
+
+		const float MinV = std::clamp(Node.CenterUV.Y - std::max(Rv * 1.65f, Node.RunDownV), 0.0f, 1.0f);
+		const float MaxV = std::clamp(Node.CenterUV.Y + std::max(Rv * 1.65f, Node.RunUpV), 0.0f, 1.0f);
+		const int32 Y0 = std::clamp(static_cast<int32>(std::floor(MinV * static_cast<float>(Size))), 0, Size - 1);
+		const int32 Y1 = std::clamp(static_cast<int32>(std::ceil(MaxV * static_cast<float>(Size))), 0, Size - 1);
+
+		// 심 경계 래핑을 포함해 타일 전체 가로 범위 안에서 영향 픽셀만 래스터라이즈
+		const int32 TileX0 = std::clamp(static_cast<int32>(std::floor(Node.TileMinU * static_cast<float>(Size))), 0, Size - 1);
+		const int32 TileX1 = std::clamp(static_cast<int32>(std::ceil((Node.TileMinU + SafeW * 1.12f) * static_cast<float>(Size))), 0, Size - 1);
+
+		const float OpenProg = std::clamp((Node.OpenStrength - 0.52f) / 0.65f, 0.0f, 1.0f);
+
+		for (int32 y = Y0; y <= Y1; ++y)
+		{
+			const float V = (static_cast<float>(y) + 0.5f) * InvSize;
+			const float DV = V - Node.CenterUV.Y;
+			const bool bInRunV = (DV >= -Node.RunDownV && DV <= Node.RunUpV);
+			const float RunFracV = (DV >= 0.0f)
+				? (Node.RunUpV > 1e-4f ? (DV / Node.RunUpV) : 1.0f)
+				: (Node.RunDownV > 1e-4f ? (-DV / Node.RunDownV) : 1.0f);
+			const float RunTaper = bInRunV ? std::clamp(1.0f - RunFracV * 0.42f, 0.25f, 1.0f) : 0.0f;
+			const float CurRunW = RunW * RunTaper;
+
+			for (int32 x = TileX0; x <= TileX1; ++x)
+			{
+				const float U = (static_cast<float>(x) + 0.5f) * InvSize;
+				const float DU = ComputeWrappedDeltaU(U, Node.CenterUV.X, Node.TileMinU, SafeW);
+				if (std::fabs(DU) > BoundU)
+				{
+					continue;
+				}
+
+				const float NormU = DU / Ru;
+				const float NormV = DV / Rv;
+				const float BaseDist = std::sqrt(NormU * NormU + NormV * NormV);
+				const float Angle = std::atan2(NormV, NormU);
+				const float Wobble = 0.075f * std::sin(Angle * 3.0f + Node.Seed)
+					+ 0.045f * std::cos(DV * 42.0f + Node.Seed * 1.9f);
+				const float EDist = BaseDist + Wobble;
+
+				float HoleVal = 0.0f;
+				float InnerRimVal = 0.0f;
+				if (EDist < 1.55f)
+				{
+					HoleVal = std::clamp((1.36f - EDist) / 0.86f, 0.0f, 1.0f) * std::clamp(Node.OpenStrength, 0.55f, 1.35f);
+					HoleVal = std::clamp(HoleVal, 0.0f, 1.0f);
+
+					// 구멍 바로 안쪽 테두리에 피부 볼록 접촉 음영 띠 생성
+					if (EDist >= 0.52f && EDist <= 1.04f)
+					{
+						const float PeakDist = std::fabs(EDist - 0.86f) / 0.22f;
+						InnerRimVal = std::clamp(1.0f - PeakDist, 0.0f, 1.0f);
+						InnerRimVal = InnerRimVal * InnerRimVal;
+					}
+				}
+
+				float RunVal = 0.0f;
+				if (bInRunV && std::fabs(DU) < CurRunW)
+				{
+					const float LatMask = std::clamp(1.0f - std::fabs(DU) / std::max(CurRunW, 1e-4f), 0.0f, 1.0f);
+					const float EndFade = std::clamp(1.0f - RunFracV * RunFracV, 0.0f, 1.0f);
+					const float WaleStreak = 0.52f + 0.48f * std::sin(U * 460.0f + Node.Seed);
+					RunVal = std::clamp(LatMask * EndFade * WaleStreak * 1.15f, 0.0f, 1.0f);
+				}
+
+				if (HoleVal <= 0.002f && RunVal <= 0.002f && InnerRimVal <= 0.002f)
+				{
+					continue;
+				}
+
+				const int32 PixIdx = (y * Size + x) * 4;
+				const float PrevHole = static_cast<float>(TearMaskPixels[PixIdx]) / 255.0f;
+				const float PrevRun = static_cast<float>(TearMaskPixels[PixIdx + 1]) / 255.0f;
+				const float PrevInner = static_cast<float>(TearMaskPixels[PixIdx + 2]) / 255.0f;
+				const float PrevProg = static_cast<float>(TearMaskPixels[PixIdx + 3]) / 255.0f;
+
+				// 인접 타원 구멍이 닿을 때 부드럽게 합쳐지도록 소프트 유니온 합성
+				const float MergedHole = std::clamp(std::max(PrevHole, HoleVal) + std::min(PrevHole, HoleVal) * 0.24f, 0.0f, 1.0f);
+				const float MergedRun = std::max(PrevRun, RunVal);
+				const float MergedInner = (MergedHole > 0.82f)
+					? std::min(PrevInner, InnerRimVal)
+					: std::max(PrevInner, InnerRimVal);
+				const float MergedProg = (HoleVal > 0.35f) ? std::max(PrevProg, OpenProg) : PrevProg;
+
+				TearMaskPixels[PixIdx] = static_cast<uint8>(std::clamp(MergedHole * 255.0f, 0.0f, 255.0f));
+				TearMaskPixels[PixIdx + 1] = static_cast<uint8>(std::clamp(MergedRun * 255.0f, 0.0f, 255.0f));
+				TearMaskPixels[PixIdx + 2] = static_cast<uint8>(std::clamp(MergedInner * 255.0f, 0.0f, 255.0f));
+				TearMaskPixels[PixIdx + 3] = static_cast<uint8>(std::clamp(MergedProg * 255.0f, 0.0f, 255.0f));
+			}
+		}
+	}
+
+	TearMaskTexture->UpdateDynamicPixels(TearMaskPixels.GetData(), static_cast<uint32>(Size * 4));
+	SyncTearMaskBinding();
+
+	// 찢김 주변 용접 정점의 물리 여유 가중치 갱신
+	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
+	if (WeldedTearFactor.Num() == WeldedCount && WeldedPrimaryUV.Num() == WeldedCount)
+	{
+		for (int32 w = 0; w < WeldedCount; ++w)
+		{
+			float Factor = 0.0f;
+			const FVector2& UV = WeldedPrimaryUV[w];
+			for (int32 n = 0; n < TearNodes.Num(); ++n)
+			{
+				const FStockingTearNode& Node = TearNodes[n];
+				if (std::fabs(Node.TileMinU - WeldedTileMinU[w]) > 0.04f)
+				{
+					continue;
+				}
+				const float DU = ComputeWrappedDeltaU(UV.X, Node.CenterUV.X, Node.TileMinU, Node.TileWidthU) / std::max(Node.RadiusU * 2.2f, 0.02f);
+				const float DV = (UV.Y - Node.CenterUV.Y) / std::max(Node.RadiusV * 2.2f, 0.04f);
+				const float DistSq = DU * DU + DV * DV;
+				if (DistSq < 1.0f)
+				{
+					Factor = std::max(Factor, 1.0f - std::sqrt(DistSq));
+				}
+			}
+			WeldedTearFactor[w] = Factor;
+		}
+	}
+
+	bTearMaskDirty = false;
+	TearMaskUploadCooldown = 0.033f;
+}
+
+void UStockingComponent::DestroyNvClothResources()
+{
+	if (!FClothCore::IsInitialized())
+	{
+		ClothInstance = nullptr;
+		ClothFabric = nullptr;
+		ClothSolver = nullptr;
+		return;
+	}
+
+	if (ClothSolver && ClothInstance)
+	{
+		ClothBridge_RemoveClothFromSolver(ClothSolver, ClothInstance);
+	}
+	if (ClothInstance)
+	{
+		ClothBridge_DestroyCloth(ClothInstance);
+		ClothInstance = nullptr;
+	}
+	if (ClothFabric)
+	{
+		ClothBridge_DestroyFabric(ClothFabric);
+		ClothFabric = nullptr;
+	}
+	if (ClothSolver)
+	{
+		ClothBridge_DestroySolver(ClothSolver);
+		ClothSolver = nullptr;
+	}
+}
+
+void UStockingComponent::RebuildNvClothFromSimMesh()
+{
+	DestroyNvClothResources();
+
+	const int32 ParticleCount = SimBindPositions.Num();
+	const int32 TriCount = SimTriangleIndices.Num() / 3;
+	if (ParticleCount == 0 || TriCount == 0)
+	{
+		return;
+	}
+
+	if (!FClothCore::IsInitialized() && !FClothCore::Init())
+	{
+		return;
+	}
+
+	FClothFactoryHandle Factory = FClothCore::GetFactory();
+	if (!Factory)
+	{
+		return;
+	}
+
+	TArray<float> InvMasses;
+	InvMasses.SetNum(ParticleCount);
+	ClothParticlesBuffer.SetNum(ParticleCount);
+	ClothPrevParticlesBuffer.SetNum(ParticleCount);
+	ClothMotionConstraintsBuffer.SetNum(ParticleCount);
+	ClothSeparationConstraintsBuffer.SetNum(ParticleCount);
+
+	for (int32 i = 0; i < ParticleCount; ++i)
+	{
+		InvMasses[i] = 1.0f;
+		ClothParticlesBuffer[i] = { SimBindPositions[i].X, SimBindPositions[i].Y, SimBindPositions[i].Z, 1.0f };
+		ClothPrevParticlesBuffer[i] = ClothParticlesBuffer[i];
+	}
+
+	FClothBridgeMeshDesc MeshDesc{};
+	MeshDesc.Positions = &SimBindPositions[0].X;
+	MeshDesc.PositionStride = sizeof(FVector);
+	MeshDesc.VertexCount = static_cast<uint32_t>(ParticleCount);
+	MeshDesc.InvMasses = InvMasses.GetData();
+	MeshDesc.InvMassStride = sizeof(float);
+	MeshDesc.Indices = SimTriangleIndices.GetData();
+	MeshDesc.TriangleCount = static_cast<uint32_t>(TriCount);
+	MeshDesc.CookGravity = { 0.0f, 0.0f, -1.0f };
+	MeshDesc.bUseGeodesicTether = false;
+
+	ClothFabric = ClothBridge_CookFabric(Factory, &MeshDesc);
+	if (!ClothFabric)
+	{
+		return;
+	}
+
+	ClothInstance = ClothBridge_CreateCloth(Factory, ClothFabric, ClothParticlesBuffer.GetData(), static_cast<uint32_t>(ParticleCount));
+	if (!ClothInstance)
+	{
+		DestroyNvClothResources();
+		return;
+	}
+
+	ClothSolver = ClothBridge_CreateSolver(Factory);
+	if (!ClothSolver)
+	{
+		DestroyNvClothResources();
+		return;
+	}
+
+	ClothBridge_AddClothToSolver(ClothSolver, ClothInstance);
+	const FClothBridgeVec3 ZeroPos{ 0.0f, 0.0f, 0.0f };
+	const FClothBridgeQuat IdentityRot{ 0.0f, 0.0f, 0.0f, 1.0f };
+	ClothBridge_SetTransform(ClothInstance, &ZeroPos, &IdentityRot, true);
+
+	ApplyNvClothParams();
+	bNeedsClothTeleport = true;
+}
+
+bool UStockingComponent::StepNvClothJointWrinkles(
+	const TArray<FVector>& SkinnedPos,
+	const TArray<FVector>& SkinnedNormal,
+	TArray<FVector>& OutSimPos,
+	TArray<float>& OutCompression)
+{
+	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
+	if (!bUseNvClothSimulation || !ClothSolver || !ClothInstance || !ClothFabric ||
+		WeldedCount == 0 || SkinnedPos.Num() != WeldedCount || SimBindPositions.Num() != WeldedCount)
+	{
+		return false;
+	}
+
+	// 동일 프레임 중복 호출 시 직전 솔브 결과를 즉시 재사용
+	if (bClothSteppedThisFrame && CachedClothSimPos.Num() == WeldedCount && CachedClothCompression.Num() == WeldedCount)
+	{
+		OutSimPos = CachedClothSimPos;
+		OutCompression = CachedClothCompression;
+		return bHasActiveClothWrinkles;
+	}
+
+	if (bNvClothParamsDirty)
+	{
+		ApplyNvClothParams();
+	}
+
+	// 관절 굽힘에 따른 방향성 및 평균 에지 압축률을 계산
+	TArray<float> RawComp;
+	RawComp.SetNum(WeldedCount);
+	float PeakComp = 0.0f;
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		float CompSum = 0.0f;
+		float MaxComp = 0.0f;
+		const TArray<FNeighborEdge>& Edges = WeldedAdjacency[w];
+		for (int32 e = 0; e < Edges.Num(); ++e)
+		{
+			const float CurLen = (SkinnedPos[w] - SkinnedPos[static_cast<int32>(Edges[e].NeighborVertex)]).Size();
+			const float Ratio = CurLen / Edges[e].RestLength;
+			if (Ratio < 1.0f)
+			{
+				const float Comp = 1.0f - Ratio;
+				CompSum += Comp;
+				MaxComp = std::max(MaxComp, Comp);
+			}
+		}
+		const float AvgComp = Edges.IsEmpty() ? 0.0f : (CompSum / static_cast<float>(Edges.Num()));
+		RawComp[w] = 0.40f * AvgComp + 0.60f * MaxComp;
+		PeakComp = std::max(PeakComp, RawComp[w]);
+	}
+
+	// 관절이 펴진 상태이고 활성 주름이 없으면 솔버 스텝을 생략해 프레임 확보
+	if (!bNeedsClothTeleport && PeakComp < 0.015f && !bHasActiveClothWrinkles)
+	{
+		bClothSteppedThisFrame = true;
+		return false;
+	}
+
+	// 압축 영역 경계를 인접 정점으로 한 차례 부드럽게 확산
+	OutCompression.SetNum(WeldedCount);
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		float Sum = RawComp[w] * 2.0f;
+		float Weight = 2.0f;
+		const TArray<FNeighborEdge>& Edges = WeldedAdjacency[w];
+		for (int32 e = 0; e < Edges.Num(); ++e)
+		{
+			Sum += RawComp[static_cast<int32>(Edges[e].NeighborVertex)];
+			Weight += 1.0f;
+		}
+		OutCompression[w] = Sum / Weight;
+	}
+
+	const float BackstopR = std::max(ClothBackstopRadius, 0.008f * ReferenceScale);
+	const float BaseSlack = 0.0002f * ReferenceScale;
+	const float SafeSlack = std::max(ClothJointWrinkleSlack, 0.0f);
+	const float SafeScale = std::max(ReferenceScale, 0.05f);
+	const float FoldFreqZ = 140.0f / SafeScale;
+	const float FoldCurveX = 18.0f / SafeScale;
+	const float FoldCurveY = 14.0f / SafeScale;
+	const float MaxTangentDrift = 0.0012f * SafeScale;
+
+	bool bAnyCompressed = false;
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		const FVector& P = SkinnedPos[w];
+		const FVector& N = SkinnedNormal[w];
+
+		float CompFactor = 0.0f;
+		float CreaseLift = 0.0f;
+		float RidgeTargetH = 0.0f;
+		float AllowedRadius = 0.0f;
+
+		if (WeldedEdgeMasks[w] >= 0.22f)
+		{
+			CompFactor = FMath::Clamp((OutCompression[w] - 0.015f) / 0.18f, 0.0f, 1.0f);
+			if (CompFactor > 0.01f)
+			{
+				bAnyCompressed = true;
+				// 오목 관절 접힘부에서 곡면 피부가 뚫리지 않도록 미세한 기본 띄움과 타이트한 아코디언 능선 계산
+				CreaseLift = CompFactor * (0.0022f * SafeScale);
+				const FVector& BindP = SimBindPositions[w];
+				const float CurvedZ = BindP.Z + (0.006f * SafeScale) * std::sin(BindP.X * FoldCurveX + BindP.Y * FoldCurveY);
+				const float PrimaryFold = 0.5f + 0.5f * std::sin(CurvedZ * FoldFreqZ);
+				const float SecondaryFold = 0.5f + 0.5f * std::sin(CurvedZ * FoldFreqZ * 1.9f + 1.2f);
+				const float FoldProfile = std::pow(PrimaryFold, 1.2f) * 0.75f + SecondaryFold * 0.25f;
+				RidgeTargetH = CompFactor * SafeSlack * FoldProfile;
+			}
+			AllowedRadius = BaseSlack + CompFactor * SafeSlack * 0.35f;
+		}
+
+		const FVector SkinTarget = P + N * (SurfaceOffset + CreaseLift);
+
+		// 피부 밀착 백스톱 구와 타이트한 모션 제약 구로 붕뜸과 관통을 동시에 방지
+		const FVector BackstopCenter = P - N * BackstopR;
+		const float BackstopClearance = BackstopR + SurfaceOffset + CreaseLift + RidgeTargetH * 0.65f;
+		ClothSeparationConstraintsBuffer[w] = { BackstopCenter.X, BackstopCenter.Y, BackstopCenter.Z, BackstopClearance };
+
+		const FVector MotionCenter = SkinTarget + N * RidgeTargetH;
+		ClothMotionConstraintsBuffer[w] = { MotionCenter.X, MotionCenter.Y, MotionCenter.Z, AllowedRadius };
+	}
+
+	ClothBridge_SetSeparationConstraints(ClothInstance, ClothSeparationConstraintsBuffer.GetData(), static_cast<uint32_t>(WeldedCount));
+	ClothBridge_SetMotionConstraints(ClothInstance, ClothMotionConstraintsBuffer.GetData(), static_cast<uint32_t>(WeldedCount));
+
+	if (bNeedsClothTeleport)
+	{
+		for (int32 w = 0; w < WeldedCount; ++w)
+		{
+			const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * SurfaceOffset;
+			ClothParticlesBuffer[w] = { SkinTarget.X, SkinTarget.Y, SkinTarget.Z, 1.0f };
+		}
+		ClothBridge_WriteParticles(ClothInstance, ClothParticlesBuffer.GetData(), static_cast<uint32_t>(WeldedCount));
+		ClothBridge_ClearInterpolation(ClothInstance);
+		bNeedsClothTeleport = false;
+	}
+
+	const float StepDt = std::clamp(PendingClothDeltaTime, 1.0f / 120.0f, 1.0f / 30.0f);
+	ClothBridge_StepSolver(ClothSolver, StepDt);
+	ClothBridge_ReadParticles(ClothInstance, ClothParticlesBuffer.GetData(), static_cast<uint32_t>(WeldedCount));
+
+	OutSimPos.SetNum(WeldedCount);
+	float MaxOutwardOffset = 0.0f;
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		const float CompFactor = (WeldedEdgeMasks[w] >= 0.22f)
+			? FMath::Clamp((OutCompression[w] - 0.015f) / 0.18f, 0.0f, 1.0f)
+			: 0.0f;
+		const float CreaseLift = CompFactor * (0.0022f * SafeScale);
+		const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * (SurfaceOffset + CreaseLift);
+		const FVector& N = SkinnedNormal[w];
+		FVector SimP(ClothParticlesBuffer[w].X, ClothParticlesBuffer[w].Y, ClothParticlesBuffer[w].Z);
+		if (!std::isfinite(SimP.X) || !std::isfinite(SimP.Y) || !std::isfinite(SimP.Z))
+		{
+			SimP = SkinTarget;
+		}
+		else
+		{
+			// 법선 바깥 여유와 접선 미끄러짐 한계를 동시에 제한해 오목 관절 피부 노출 차단
+			const FVector Rel = SimP - SkinTarget;
+			const float RawNormalDist = Rel.Dot(N);
+			const float MaxOutH = BaseSlack + CompFactor * SafeSlack * 1.15f;
+			const float ClampedNormalDist = std::clamp(RawNormalDist, 0.0f, MaxOutH);
+			FVector TangentRel = Rel - N * RawNormalDist;
+			const float TanLenSq = TangentRel.SizeSquared();
+			const float LocalTanLimit = (WeldedEdgeMasks[w] >= 0.22f) ? (MaxTangentDrift * (0.25f + 0.75f * CompFactor)) : 0.0f;
+			if (TanLenSq > LocalTanLimit * LocalTanLimit && TanLenSq > 1e-12f)
+			{
+				TangentRel = TangentRel * (LocalTanLimit / std::sqrt(TanLenSq));
+			}
+			SimP = SkinTarget + N * ClampedNormalDist + TangentRel;
+			MaxOutwardOffset = std::max(MaxOutwardOffset, ClampedNormalDist + CreaseLift);
+		}
+		OutSimPos[w] = SimP;
+	}
+
+	bHasActiveClothWrinkles = bAnyCompressed || (MaxOutwardOffset > 0.001f * SafeScale);
+	CachedClothSimPos = OutSimPos;
+	CachedClothCompression = OutCompression;
+	bClothSteppedThisFrame = true;
+	return true;
+}
+
+void UStockingComponent::ComputeGrabGeodesicDistances()
+{
+	GrabGeodesicDistances.SetNum(static_cast<int32>(WeldedVertexCount));
+	for (uint32 i = 0; i < WeldedVertexCount; ++i)
+	{
+		GrabGeodesicDistances[static_cast<int32>(i)] = FLT_MAX;
+	}
+
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || Mesh->GetRenderData().LODRenderData.IsEmpty() || WeldedVertexCount == 0)
+	{
+		return;
+	}
+
+	const FSkeletalMeshLODRenderData& LOD = Mesh->GetRenderData().LODRenderData[0];
+	const int32 TriCount = LOD.Indices.Num() / 3;
+	if (static_cast<int32>(GrabbedTriangleIndex) >= TriCount)
+	{
+		return;
+	}
+
+	const uint32 I0 = LOD.Indices[GrabbedTriangleIndex * 3];
+	const uint32 I1 = LOD.Indices[GrabbedTriangleIndex * 3 + 1];
+	const uint32 I2 = LOD.Indices[GrabbedTriangleIndex * 3 + 2];
+
+	const FVector AnchorBindPos =
+		LOD.BindVertices[I0].Position * GrabBarycentric.X +
+		LOD.BindVertices[I1].Position * GrabBarycentric.Y +
+		LOD.BindVertices[I2].Position * GrabBarycentric.Z;
+
+	using FDistNode = std::pair<float, uint32>;
+	std::priority_queue<FDistNode, std::vector<FDistNode>, std::greater<FDistNode>> Queue;
+
+	const uint32 SeedVerts[3] = { I0, I1, I2 };
+	for (int32 s = 0; s < 3; ++s)
+	{
+		const uint32 Wid = WeldedVertexIds[SeedVerts[s]];
+		const float InitDist = (LOD.BindVertices[SeedVerts[s]].Position - AnchorBindPos).Size();
+		if (InitDist < GrabGeodesicDistances[static_cast<int32>(Wid)])
+		{
+			GrabGeodesicDistances[static_cast<int32>(Wid)] = InitDist;
+			Queue.push({ InitDist, Wid });
+		}
+	}
+
+	// 잡은 삼각형에서 메시 표면을 따라 최단 거리 전파
+	while (!Queue.empty())
+	{
+		const FDistNode Top = Queue.top();
+		Queue.pop();
+
+		const float CurDist = Top.first;
+		const uint32 CurW = Top.second;
+		if (CurDist > GrabGeodesicDistances[static_cast<int32>(CurW)])
+		{
+			continue;
+		}
+
+		const TArray<FNeighborEdge>& Edges = WeldedAdjacency[static_cast<int32>(CurW)];
+		for (int32 e = 0; e < Edges.Num(); ++e)
+		{
+			const uint32 NextW = Edges[e].NeighborVertex;
+			const float NextDist = CurDist + Edges[e].RestLength;
+			if (NextDist < GrabGeodesicDistances[static_cast<int32>(NextW)])
+			{
+				GrabGeodesicDistances[static_cast<int32>(NextW)] = NextDist;
+				Queue.push({ NextDist, NextW });
+			}
+		}
+	}
+}
+
+void UStockingComponent::StepPullState(float DeltaTime)
+{
+	if (DeltaTime <= 0.0f || !std::isfinite(DeltaTime))
+	{
+		return;
+	}
+
+	if (!bIsPulling && (CurrentPullOffsetLocal.SizeSquared() > 1e-10f || PullVelocityLocal.SizeSquared() > 1e-10f))
+	{
+		// 감쇠 탄성 스프링으로 놓았을 때 피부에 착 붙는 스냅백 복원
+		const float SafeDt = std::min(DeltaTime, 1.0f / 30.0f);
+		const float Stiffness = std::max(SpringStiffness, 10.0f);
+		const float Damping = std::max(SpringDamping, 1.0f);
+
+		const FVector Accel = CurrentPullOffsetLocal * (-Stiffness) - PullVelocityLocal * Damping;
+		PullVelocityLocal += Accel * SafeDt;
+		CurrentPullOffsetLocal += PullVelocityLocal * SafeDt;
+
+		// 피부 안쪽으로 과도하게 파고드는 음의 반동 억제
+		const float ScaleSq = ReferenceScale * ReferenceScale;
+		if (CurrentPullOffsetLocal.SizeSquared() <= 1e-7f * ScaleSq && PullVelocityLocal.SizeSquared() <= 1e-5f * ScaleSq)
+		{
+			CurrentPullOffsetLocal = FVector::ZeroVector;
+			PullVelocityLocal = FVector::ZeroVector;
+			bHasGrabAnchor = false;
+		}
+		MarkBoneTransformsDirty();
+	}
+}
+
+void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices, FBox& InOutBounds)
+{
+	USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || Mesh->GetRenderData().LODRenderData.IsEmpty() || InOutVertices.IsEmpty() || WeldedVertexCount == 0)
+	{
+		return;
+	}
+
+	const FSkeletalMeshLODRenderData& LOD = Mesh->GetRenderData().LODRenderData[0];
+	const int32 VertexCount = InOutVertices.Num();
+	const int32 TriCount = LOD.Indices.Num() / 3;
+	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
+
+	// 심 정점이 같은 위치와 노멀을 공유하도록 용접 정점 기준 평균 위치와 노멀 계산
+	TArray<FVector> WeldedPos;
+	TArray<FVector> WeldedNormal;
+	TArray<int32> WeldedCounts;
+	WeldedPos.SetNum(WeldedCount);
+	WeldedNormal.SetNum(WeldedCount);
+	WeldedCounts.SetNum(WeldedCount);
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		WeldedPos[w] = FVector::ZeroVector;
+		WeldedNormal[w] = FVector::ZeroVector;
+		WeldedCounts[w] = 0;
+	}
+
+	for (int32 v = 0; v < VertexCount; ++v)
+	{
+		const int32 W = static_cast<int32>(WeldedVertexIds[v]);
+		WeldedPos[W] += InOutVertices[v].Position;
+		WeldedNormal[W] += InOutVertices[v].Normal;
+		WeldedCounts[W] += 1;
+	}
+
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		if (WeldedCounts[w] > 0)
+		{
+			WeldedPos[w] = WeldedPos[w] / static_cast<float>(WeldedCounts[w]);
+		}
+		if (WeldedNormal[w].SizeSquared() > 1e-10f)
+		{
+			WeldedNormal[w] = WeldedNormal[w].Normalized();
+		}
+		else
+		{
+			WeldedNormal[w] = FVector(0.0f, 0.0f, 1.0f);
+		}
+	}
+
+	// 잡은 삼각형의 현재 스키닝 위치 기준으로 앵커와 당김 오프셋 계산
+	FVector AnchorNormal(0.0f, 0.0f, 1.0f);
+	if (bHasGrabAnchor && static_cast<int32>(GrabbedTriangleIndex) < TriCount)
+	{
+		const int32 W0 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3]]);
+		const int32 W1 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3 + 1]]);
+		const int32 W2 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3 + 2]]);
+
+		LastAnchorLocal =
+			WeldedPos[W0] * GrabBarycentric.X +
+			WeldedPos[W1] * GrabBarycentric.Y +
+			WeldedPos[W2] * GrabBarycentric.Z;
+
+		AnchorNormal =
+			WeldedNormal[W0] * GrabBarycentric.X +
+			WeldedNormal[W1] * GrabBarycentric.Y +
+			WeldedNormal[W2] * GrabBarycentric.Z;
+		if (AnchorNormal.SizeSquared() > 1e-10f)
+		{
+			AnchorNormal = AnchorNormal.Normalized();
+		}
+
+		if (bIsPulling)
+		{
+			const FVector TargetLocal = GetWorldMatrix().Inverse().TransformPosition(PullTargetWorld);
+			FVector DesiredOffset = TargetLocal - LastAnchorLocal;
+
+			// 피부 안쪽으로 깊게 파고드는 성분 제거
+			const float InwardDot = DesiredOffset.Dot(AnchorNormal);
+			if (InwardDot < 0.0f)
+			{
+				DesiredOffset -= AnchorNormal * InwardDot;
+			}
+
+			const float Len = DesiredOffset.Size();
+			const float SafeMaxPull = std::max(MaxPullDistance, 0.001f);
+			if (Len > SafeMaxPull)
+			{
+				DesiredOffset = DesiredOffset * (SafeMaxPull / Len);
+			}
+			CurrentPullOffsetLocal = DesiredOffset;
+		}
+	}
+
+	const float PullMagSq = CurrentPullOffsetLocal.SizeSquared();
+	const bool bApplyPull = bHasGrabAnchor && PullMagSq > 1e-10f && GrabGeodesicDistances.Num() == WeldedCount;
+	const float PullMag = bApplyPull ? std::sqrt(PullMagSq) : 0.0f;
+	const FVector PullDir = bApplyPull ? (CurrentPullOffsetLocal / PullMag) : FVector::ZeroVector;
+	const float SafeRadius = std::max(PullRadius, 0.005f);
+	const float SafeExponent = std::max(PullFalloffExponent, 0.25f);
+	const float PullStrength = bApplyPull ? std::clamp(PullMag / std::max(MaxPullDistance, 0.01f), 0.0f, 1.0f) : 0.0f;
+	MaxAppliedDisplacement = 0.0f;
+
+	// 방사형 장력 주름 계산용 앵커 접평면 기저 생성
+	const FVector RefUp = (std::fabs(AnchorNormal.Z) < 0.9f) ? FVector(0.0f, 0.0f, 1.0f) : FVector(1.0f, 0.0f, 0.0f);
+	const FVector AnchorTangentU = FVector::Cross(RefUp, AnchorNormal).Normalized();
+	const FVector AnchorTangentV = FVector::Cross(AnchorNormal, AnchorTangentU).Normalized();
+
+	// 관절 접힘부 물리 주름을 NvCloth 백스톱과 모션 제약으로 시뮬레이션
+	TArray<FVector> NvSimPos;
+	TArray<float> NvCompression;
+	const bool bUsedNvCloth = StepNvClothJointWrinkles(WeldedPos, WeldedNormal, NvSimPos, NvCompression);
+
+	TArray<FVector> DeformedWeldedPos;
+	TArray<float> WeldedCrease;
+	TArray<float> OutwardBulge;
+	DeformedWeldedPos.SetNum(WeldedCount);
+	WeldedCrease.SetNum(WeldedCount);
+	OutwardBulge.SetNum(WeldedCount);
+
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		const FVector& BasePos = WeldedPos[w];
+		const FVector& SmoothN = WeldedNormal[w];
+		const FVector SkinSurfacePos = BasePos + SmoothN * SurfaceOffset;
+		FVector NewPos = bUsedNvCloth ? NvSimPos[w] : SkinSurfacePos;
+		OutwardBulge[w] = bUsedNvCloth ? (NewPos - SkinSurfacePos).Dot(SmoothN) : 0.0f;
+		if (bUsedNvCloth)
+		{
+			MaxAppliedDisplacement = FMath::Max(MaxAppliedDisplacement, (NewPos - SkinSurfacePos).Size());
+		}
+		float CreaseSignal = 0.0f;
+
+		if (bApplyPull)
+		{
+			const float SurfaceDist = GrabGeodesicDistances[w];
+			if (SurfaceDist < SafeRadius)
+			{
+				const float NormR = SurfaceDist / SafeRadius;
+				const float InvR = 1.0f - NormR;
+				// 오목한 텐트형 핀치 프로파일로 손끝은 뾰족하게 주변은 부드럽게 당김
+				const float ConcaveProfile = std::pow(InvR, SafeExponent) * (0.65f + 0.35f * InvR * InvR);
+
+				// 당김 방향이 피부 바깥쪽을 향하는 면만 변형해 측면 관통 방지
+				const float RawOutward = std::clamp(SmoothN.Dot(PullDir), 0.0f, 1.0f);
+				const float OutwardMask = std::sqrt(RawOutward);
+				const float AnchorFacing = std::clamp((SmoothN.Dot(AnchorNormal) + 0.1f) / 1.1f, 0.0f, 1.0f);
+				const float TearYieldBoost = (w < WeldedTearFactor.Num()) ? (1.0f + 0.18f * WeldedTearFactor[w]) : 1.0f;
+				const float Weight = std::min(ConcaveProfile * OutwardMask * AnchorFacing * TearYieldBoost, 1.0f);
+
+				if (Weight > 1e-5f)
+				{
+					FVector VertexDelta = CurrentPullOffsetLocal * Weight;
+
+					// 잡은 지점에서 방사형으로 퍼지는 장력 주름 능선과 골 생성
+					if (WrinkleAmplitude > 1e-5f && NormR > 0.03f)
+					{
+						const FVector Rel = BasePos - LastAnchorLocal;
+						const float U = Rel.Dot(AnchorTangentU);
+						const float V = Rel.Dot(AnchorTangentV);
+						const float Angle = std::atan2(V, U);
+						const float RingEnvelope = std::sin(NormR * 3.14159265f) * InvR;
+						const float PrimaryWave = std::sin(Angle * WrinkleFrequency + NormR * 2.2f);
+						const float SecondaryWave = 0.45f * std::sin(Angle * WrinkleFrequency * 2.0f - NormR * 3.5f + 1.1f);
+						const float Wave = std::clamp((PrimaryWave + SecondaryWave) / 1.45f, -1.0f, 1.0f);
+						const float WrinkleScale = PullStrength * RingEnvelope * OutwardMask * AnchorFacing;
+
+						// 능선은 바깥으로 솟고 골은 피부선 위까지만 낮춰 관통 방지
+						const float RippleMag = std::max(-VertexDelta.Dot(SmoothN) * 0.45f, Wave * WrinkleAmplitude * WrinkleScale);
+						VertexDelta += SmoothN * RippleMag;
+						CreaseSignal = Wave * WrinkleScale;
+					}
+
+					NewPos += VertexDelta;
+					MaxAppliedDisplacement = FMath::Max(MaxAppliedDisplacement, VertexDelta.Size());
+				}
+			}
+		}
+
+		DeformedWeldedPos[w] = NewPos;
+		WeldedCrease[w] = CreaseSignal;
+	}
+
+	// 용접 정점 위치를 원본 정점에 일괄 반영해 심 갈라짐 방지
+	for (int32 v = 0; v < VertexCount; ++v)
+	{
+		InOutVertices[v].Position = DeformedWeldedPos[static_cast<int32>(WeldedVertexIds[v])];
+	}
+
+	if (bUsedNvCloth || bApplyPull)
+	{
+		RecomputeDeformedNormals(InOutVertices);
+	}
+
+	// 인접 용접 정점 간 원래 길이 대비 늘어난 비율과 물리 주름 곡률을 정점 컬러에 기록
+	TArray<float> WeldedStretch;
+	WeldedStretch.SetNum(WeldedCount);
+	MaxCurrentStretchRatio = 1.0f;
+	const float CurvatureNorm = std::max(ClothJointWrinkleSlack * 0.20f, 0.002f * ReferenceScale);
+
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		float RawRatio = 1.0f;
+		float NeighborAvgBulge = OutwardBulge[w];
+		if (!WeldedAdjacency[w].IsEmpty())
+		{
+			const TArray<FNeighborEdge>& Edges = WeldedAdjacency[w];
+			float RatioSum = 0.0f;
+			float BulgeSum = 0.0f;
+			for (int32 e = 0; e < Edges.Num(); ++e)
+			{
+				const FNeighborEdge& Edge = Edges[e];
+				const int32 Nw = static_cast<int32>(Edge.NeighborVertex);
+				const float CurrentLen = (DeformedWeldedPos[w] - DeformedWeldedPos[Nw]).Size();
+				RatioSum += CurrentLen / Edge.RestLength;
+				BulgeSum += OutwardBulge[Nw];
+			}
+			const float InvCount = 1.0f / static_cast<float>(Edges.Num());
+			RawRatio = RatioSum * InvCount;
+			NeighborAvgBulge = BulgeSum * InvCount;
+		}
+
+		const float StretchRatio = std::clamp(RawRatio, 1.0f, 3.5f);
+		// NvCloth 물리 곡률과 실제 포즈 압축률을 합성해 매크로 주름과 픽셀 미세 주름 신호 전달
+		const float ClothCurvature = bUsedNvCloth
+			? std::clamp((OutwardBulge[w] - NeighborAvgBulge) / CurvatureNorm, -1.0f, 1.0f)
+			: 0.0f;
+		const float PoseComp = bUsedNvCloth
+			? std::clamp((NvCompression[w] - 0.012f) * 4.5f, 0.0f, 1.0f)
+			: std::clamp((1.0f - RawRatio) * 3.5f, 0.0f, 1.0f);
+		// 압축 관절에서는 음수 압축 신호를 유지해 픽셀 미세 주름이 곡률에 상쇄되지 않게 보존
+		const float JointSignal = (PoseComp > 0.05f)
+			? (-PoseComp * 0.95f)
+			: (ClothCurvature * 0.35f);
+		const float CombinedSignal = std::clamp(WeldedCrease[w] + JointSignal, -1.0f, 1.0f);
+		WeldedCrease[w] = std::clamp(0.5f + 0.5f * CombinedSignal, 0.0f, 1.0f);
+
+		WeldedStretch[w] = StretchRatio;
+		MaxCurrentStretchRatio = FMath::Max(MaxCurrentStretchRatio, StretchRatio);
+	}
+
+	UpdatePullTearing(LOD, DeformedWeldedPos, WeldedStretch);
+	if (bTearMaskDirty && TearMaskUploadCooldown <= 0.0f)
+	{
+		RebuildTearMaskTexture();
+	}
+
+	FVector MinP(FLT_MAX, FLT_MAX, FLT_MAX);
+	FVector MaxP(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+	for (int32 v = 0; v < VertexCount; ++v)
+	{
+		if (GetDebugWeightBone() < 0)
+		{
+			const int32 W = static_cast<int32>(WeldedVertexIds[v]);
+			InOutVertices[v].Color.Z = WeldedCrease[W];
+			InOutVertices[v].Color.W = WeldedStretch[W];
+		}
+
+		const FVector& P = InOutVertices[v].Position;
+		MinP.X = FMath::Min(MinP.X, P.X);
+		MinP.Y = FMath::Min(MinP.Y, P.Y);
+		MinP.Z = FMath::Min(MinP.Z, P.Z);
+		MaxP.X = FMath::Max(MaxP.X, P.X);
+		MaxP.Y = FMath::Max(MaxP.Y, P.Y);
+		MaxP.Z = FMath::Max(MaxP.Z, P.Z);
+	}
+
+	const FVector Pad(BoundsPadding, BoundsPadding, BoundsPadding);
+	InOutBounds = FBox(MinP - Pad, MaxP + Pad);
+}
+
+void UStockingComponent::RecomputeDeformedNormals(TArray<FVertex>& InOutVertices) const
+{
+	const USkeletalMesh* Mesh = GetSkeletalMesh();
+	if (!Mesh || Mesh->GetRenderData().LODRenderData.IsEmpty() || WeldedVertexCount == 0)
+	{
+		return;
+	}
+
+	const TArray<uint32>& Indices = Mesh->GetRenderData().LODRenderData[0].Indices;
+	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
+
+	TArray<FVector> AccumNormals;
+	AccumNormals.SetNum(WeldedCount);
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		AccumNormals[w] = FVector::ZeroVector;
+	}
+
+	for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
+	{
+		const uint32 I0 = Indices[i];
+		const uint32 I1 = Indices[i + 1];
+		const uint32 I2 = Indices[i + 2];
+
+		const FVector FaceNormal = FVector::Cross(
+			InOutVertices[I1].Position - InOutVertices[I0].Position,
+			InOutVertices[I2].Position - InOutVertices[I0].Position);
+		AccumNormals[static_cast<int32>(WeldedVertexIds[I0])] += FaceNormal;
+		AccumNormals[static_cast<int32>(WeldedVertexIds[I1])] += FaceNormal;
+		AccumNormals[static_cast<int32>(WeldedVertexIds[I2])] += FaceNormal;
+	}
+
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		if (AccumNormals[w].SizeSquared() > 1e-12f)
+		{
+			AccumNormals[w] = AccumNormals[w].Normalized();
+		}
+	}
+
+	const int32 VertexCount = InOutVertices.Num();
+	for (int32 v = 0; v < VertexCount; ++v)
+	{
+		const FVector& N = AccumNormals[static_cast<int32>(WeldedVertexIds[v])];
+		if (N.SizeSquared() > 1e-12f)
+		{
+			InOutVertices[v].Normal = N;
+		}
+	}
+}

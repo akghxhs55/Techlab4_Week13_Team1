@@ -38,6 +38,10 @@ public:
 	uint32 GetWidth()  const { return Texture ? Texture->GetWidth() : 0; }
 	uint32 GetHeight() const { return Texture ? Texture->GetHeight() : 0; }
 
+	// 런타임 프로시저럴 마스크 텍스처 생성과 픽셀 갱신
+	static UTexture2D* CreateDynamicTexture(uint32 InWidth, uint32 InHeight, const void* InitialData = nullptr);
+	void UpdateDynamicPixels(const void* PixelData, uint32 RowPitch);
+
 	FTexture2D* GetResource() const { return Texture.get(); }
 private:
 	void SetResource(TUniquePtr<FTexture2D> InResource) { Texture = std::move(InResource); }

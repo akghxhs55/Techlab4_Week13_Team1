@@ -125,6 +125,8 @@ private:
 		uint32 Channel = 0;                     // ScreenShadowMask 채널
 	};
 	TArray<FShadowedLight> ShadowedLights;
+	// 렌더 그래프 실행 시점까지 수명을 유지하기 위해 멤버로 보관
+	TArray<FProjectedDecalRenderData> ProjectedDecals;
 
 	bool RenderHeightFog(FRenderer* Renderer, FTexture2D* DepthTarget, FTexture2D* ColorTarget);
 	void RenderSceneText(FRenderer* Renderer);

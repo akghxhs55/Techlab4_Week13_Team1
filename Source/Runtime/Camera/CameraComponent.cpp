@@ -212,5 +212,9 @@ FDepthOfFieldSettings UCameraComponent::GetDepthOfFieldSettings() const
 	Settings.SensorWidthMM = SensorWidthMM;
 	Settings.DepthBlurKmFor50Percent = DepthBlurKmFor50Percent;
 	Settings.DepthBlurRadius = DepthBlurRadius;
+	Settings.NearBlurScale = NearBlurScale;
+	Settings.FarBlurScale = FarBlurScale;
+	Settings.NearMaxBlurRadius = NearMaxBlurRadius;
+	Settings.FarMaxBlurRadius = FarMaxBlurRadius;
 	return Settings;
 }

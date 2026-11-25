@@ -442,7 +442,7 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			})) return false;
 	}
 
-	TArray<FProjectedDecalRenderData> ProjectedDecals;
+	ProjectedDecals.Reset();
 	{ // Opaque forward rendering
 		RenderData.VisibleBasePassCommands.Reset();
 		if (Options.bDrawPrimitives)
@@ -704,7 +704,7 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 				{ DBufferLit, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } },
 				{ DBufferNormal, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } }
 			};
-			if (!Graph.AddRasterPass(std::move(DBufferLitPass), [this, Renderer, Width, Height, &ProjectedDecals, bHasLitProjectedDecal]
+			if (!Graph.AddRasterPass(std::move(DBufferLitPass), [this, Renderer, Width, Height, bHasLitProjectedDecal]
 			{
 				if (bHasLitProjectedDecal && Renderer->GetProjectedDecal())
 				{
@@ -719,7 +719,7 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			DBufferUnlitPass.ColorAttachments = {
 				{ DBufferUnlit, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } }
 			};
-			if (!Graph.AddRasterPass(std::move(DBufferUnlitPass), [this, Renderer, Width, Height, &ProjectedDecals, bHasUnlitProjectedDecal]
+			if (!Graph.AddRasterPass(std::move(DBufferUnlitPass), [this, Renderer, Width, Height, bHasUnlitProjectedDecal]
 			{
 				if (bHasUnlitProjectedDecal && Renderer->GetProjectedDecal())
 				{

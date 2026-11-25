@@ -62,6 +62,12 @@ struct FClothBridgeParams
 	float StretchStiffness = 1.0f;
 	float BendStiffness = 0.5f;
 	float ShearStiffness = 0.8f;
+	float CompressionLimit = 1.0f;
+	float StretchLimit = 1.0f;
+	float StiffnessMultiplier = 1.0f;
+	float MotionConstraintStiffness = 1.0f;
+	float SelfCollisionDistance = 0.0f;
+	float SelfCollisionStiffness = 0.5f;
 	float TetherScale = 1.0f;
 	float TetherStiffness = 1.0f;
 	float Friction = 0.2f;
@@ -106,6 +112,8 @@ extern "C"
 	CLOTH_BRIDGE_API void ClothBridge_SetSeparationConstraints(FClothInstanceHandle Cloth, const FClothBridgeVec4* Constraints, uint32_t Count);
 	CLOTH_BRIDGE_API void ClothBridge_ClearInterpolation(FClothInstanceHandle Cloth);
 	CLOTH_BRIDGE_API void ClothBridge_WriteParticles(FClothInstanceHandle Cloth, const FClothBridgeVec4* Particles, uint32_t Count);
+	CLOTH_BRIDGE_API void ClothBridge_WriteParticlesWithPrevious(FClothInstanceHandle Cloth, const FClothBridgeVec4* CurrentParticles, const FClothBridgeVec4* PreviousParticles, uint32_t Count);
 	CLOTH_BRIDGE_API void ClothBridge_UpdatePinnedParticles(FClothInstanceHandle Cloth, const uint32_t* Indices, const FClothBridgeVec3* LocalPositions, uint32_t Count);
 	CLOTH_BRIDGE_API void ClothBridge_ReadParticles(FClothInstanceHandle Cloth, FClothBridgeVec4* OutParticles, uint32_t Count);
+	CLOTH_BRIDGE_API void ClothBridge_ReadPreviousParticles(FClothInstanceHandle Cloth, FClothBridgeVec4* OutParticles, uint32_t Count);
 }
