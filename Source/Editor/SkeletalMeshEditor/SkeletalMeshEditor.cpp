@@ -10,9 +10,11 @@
 #include "Collision/Ray.h"
 #include "Asset/AssetManager.h"
 #include "Asset/AssetUtils.h"
+#include "Physics/BodySetup.h"
 #include "Physics/PhysicsAsset.h"
 #include "Physics/PhysicsAssetFile.h"
 #include "PhysicsAssetUtils.h"
+#include "Serialization/JsonArchive.h"
 #include "UObject/UObjectGlobals.h"
 #include <filesystem>
 
@@ -383,7 +385,7 @@ bool FSkeletalMeshEditor::CreatePhysicsAsset(const FPhysAssetCreateParams& Param
 		OutError = "Cannot resolve the skeletal mesh file";
 		return false;
 	}
-	const std::filesystem::path AssetFile = std::filesystem::path(MeshFile + ".physicsasset");
+	const std::filesystem::path AssetFile = std::filesystem::path(MeshFile + ".physics.json");
 	const bool bExists = std::filesystem::exists(AssetFile);
 	std::filesystem::path OutputFile = AssetFile;
 	if (bExists)
@@ -395,13 +397,28 @@ bool FSkeletalMeshEditor::CreatePhysicsAsset(const FPhysAssetCreateParams& Param
 			++Suffix;
 		} while (std::filesystem::exists(OutputFile));
 	}
-	auto* Asset = NewObject<UPhysicsAsset>();
+	UPhysicsAsset* Asset = NewObject<UPhysicsAsset>();
+	Asset->PreviewMeshPath = FAssetUtils::GetAssetKey(MeshFile);
 	const bool bGenerated = FPhysicsAssetUtils::CreateFromSkeletalMesh(*Mesh, *Asset, Params, OutError);
-	const bool bSaved = bGenerated && PhysicsAssetFile::Write(OutputFile, *Asset, OutError);
+	TArray<uint8> Bytes;
+	bool bSaved = bGenerated && FJsonArchive::SaveObjectToBytes(Asset, Bytes);
+	if (bSaved)
+	{
+		std::ofstream OutStream(OutputFile, std::ios::binary | std::ios::trunc);
+		bSaved = static_cast<bool>(OutStream) &&
+			static_cast<bool>(OutStream.write(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<std::streamsize>(Bytes.Num())));
+		if (!bSaved)
+		{
+			OutError = "Could not write Physics Asset file: " + OutputFile.string();
+		}
+	}
+	else if (bGenerated)
+	{
+		OutError = "Could not serialize the generated Physics Asset";
+	}
 	auto DiscardAsset = [&]
 	{
-		for (USkeletalBodySetup* Setup : Asset->SkeletalBodySetups) delete Setup;
-		for (UPhysicsConstraintTemplate* Template : Asset->ConstraintSetup) delete Template;
+		for (UBodySetup* Setup : Asset->BodySetups) delete Setup;
 		delete Asset;
 	};
 	if (!bSaved) { DiscardAsset(); return false; }
@@ -432,12 +449,12 @@ bool FSkeletalMeshEditor::CreatePhysicsAsset(const FPhysAssetCreateParams& Param
 			OutError = "Could not replace Physics Asset; backup saved at " + BackupFile.string();
 			return false;
 		}
-		UAssetManager::RegisterPhysicsAsset(MeshFile + ".physicsasset", Asset);
+		UAssetManager::RegisterPhysicsAsset(AssetFile.string(), Asset);
 		Mesh->SetPhysicsAsset(Asset);
 		OutError = "Physics Asset regenerated. Backup: " + BackupFile.string();
 		return true;
 	}
-	UAssetManager::RegisterPhysicsAsset(MeshFile + ".physicsasset", Asset);
+	UAssetManager::RegisterPhysicsAsset(AssetFile.string(), Asset);
 	Mesh->SetPhysicsAsset(Asset);
 	return true;
 }

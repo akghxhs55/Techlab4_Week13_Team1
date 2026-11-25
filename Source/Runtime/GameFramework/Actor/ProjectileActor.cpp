@@ -9,6 +9,7 @@
 #include "Components/PointLightComponent.h"
 #include "Components/ParticleSystemComponent.h"
 #include "Components/ProjectileMovementComponent.h"
+#include "Physics/BodySetup.h"
 #include "Physics/PhysicsAsset.h"
 #include "Particles/ParticleSystem.h"
 #include "Asset/AssetManager.h"
@@ -214,8 +215,8 @@ void AProjectileActor::HandleProjectileImpact(AActor* OtherActor, const FHitResu
 				{
 					float NearestDistanceSquared = FLT_MAX;
 					if (const UPhysicsAsset* Asset = Mesh->GetPhysicsAsset())
-						for (const USkeletalBodySetup* Setup : Asset->SkeletalBodySetups)
-							if (const FBodyInstance* Body = Mesh->GetBodyInstance(Setup->BoneName); Body && Body->IsDynamic())
+						for (const UBodySetup* Setup : Asset->BodySetups)
+							if (const FBodyInstance* Body = Setup ? Mesh->GetBodyInstance(Setup->BoneName) : nullptr; Body && Body->IsDynamic())
 							{
 								const float DistanceSquared = (Body->GetUnrealWorldTransform().Location - Hit.ImpactPoint).SizeSquared();
 								if (DistanceSquared < NearestDistanceSquared)

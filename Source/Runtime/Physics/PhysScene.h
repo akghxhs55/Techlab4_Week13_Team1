@@ -3,10 +3,14 @@
 #include <memory>
 #include "Core/Types.h"
 #include "Containers/Array.h"
+#include "ClothBridge.h"
 
 struct FPhysicsSettings;
 class UWorld;
 class UPrimitiveComponent;
+class USkeletalMeshComponent;
+class UClothComponent;
+struct FBodyInstance;
 
 namespace physx {
 	class PxScene;
@@ -25,6 +29,17 @@ struct FPendingTriggerEvent
 	UPrimitiveComponent* TriggerComp = nullptr;
 	UPrimitiveComponent* OtherComp = nullptr;
 	bool bIsBegin = true; // true: BeginOverlap, false: EndOverlap
+};
+
+struct FPhysicsContactImpact
+{
+	USkeletalMeshComponent* TargetComponent = nullptr;
+	const FBodyInstance* HitBody = nullptr;
+	FVector WorldLocation = FVector::ZeroVector;
+	FVector WorldNormal = FVector(0.0f, 0.0f, 1.0f);
+	FVector WorldImpulse = FVector::ZeroVector;
+	FVector WorldSlideVelocity = FVector::ZeroVector;
+	float ImpulseMagnitude = 0.0f;
 };
 
 // 월드별 마지막 완료 프레임. 카운터는 마지막 서브스텝, 시간은 모든 서브스텝의 합이다.
@@ -104,6 +119,9 @@ public:
 
 	void AddPendingHit(UPrimitiveComponent* A, UPrimitiveComponent* B);
 	void AddPendingTrigger(UPrimitiveComponent* TriggerComp, UPrimitiveComponent* OtherComp, bool bIsBegin);
+	void QueueContactImpact(const FPhysicsContactImpact& Impact);
+	void RegisterClothComponent(UClothComponent* Component);
+	void UnregisterClothComponent(UClothComponent* Component);
 
 private:
 	void SyncComponentsToBodies();
@@ -111,6 +129,7 @@ private:
 
 	UWorld* Owner = nullptr;
 	physx::PxScene* Scene = nullptr;
+	FClothSolverHandle ClothSolver = nullptr;
 	float FrameDeltaTime = 0.0f;
 	float SubstepDeltaTime = 0.0f;
 	int32 NumSubsteps = 0;
@@ -121,6 +140,8 @@ private:
 	// PhysX 콜백 수신기 (PIMPL로 헤더 의존성 최소화)
 	std::unique_ptr<physx::PxSimulationEventCallback> SimEventCallback;
 
+	TArray<UClothComponent*> ClothComponents;
 	TArray<FPendingHitEvent> PendingHitEvents;
 	TArray<FPendingTriggerEvent> PendingTriggerEvents;
+	TArray<FPhysicsContactImpact> PendingContactImpacts;
 };

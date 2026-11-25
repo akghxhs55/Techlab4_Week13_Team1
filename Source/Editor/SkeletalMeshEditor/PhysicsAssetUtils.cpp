@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "PhysicsAssetUtils.h"
 
+#include "Physics/BodySetup.h"
 #include "Physics/PhysicsAsset.h"
 #include "Render/SkeletalMesh.h"
 #include "UObject/UObjectGlobals.h"
@@ -19,7 +20,7 @@ bool FPhysicsAssetUtils::CreateFromSkeletalMesh(const USkeletalMesh& Mesh, UPhys
 	}
 	const TArray<FBoneInfo>& Bones = Mesh.GetRefSkeleton();
 	const auto& LODs = Mesh.GetRenderData().LODRenderData;
-	if (Bones.IsEmpty() || LODs.IsEmpty() || !Asset.SkeletalBodySetups.IsEmpty() || !Asset.ConstraintSetup.IsEmpty())
+	if (Bones.IsEmpty() || LODs.IsEmpty() || !Asset.BodySetups.IsEmpty() || !Asset.Constraints.IsEmpty())
 	{
 		OutError = "Physics Asset generation requires a mesh and an empty asset";
 		return false;
@@ -175,9 +176,8 @@ bool FPhysicsAssetUtils::CreateFromSkeletalMesh(const USkeletalMesh& Mesh, UPhys
 		}
 		const FVector Size = Bounds.Max - Bounds.Min;
 		const FVector Center = BodyOrientations[Index].RotateVector((Bounds.Min + Bounds.Max) * 0.5f);
-		auto* Setup = NewObject<USkeletalBodySetup>(&Asset);
+		UBodySetup* Setup = NewObject<UBodySetup>(&Asset);
 		Setup->BoneName = Bones[Index].Name;
-		float Volume = 0.0f;
 		if (Params.GeomType == EPhysAssetFitGeomType::Capsule)
 		{
 			FCapsuleElem Capsule;
@@ -186,8 +186,6 @@ bool FPhysicsAssetUtils::CreateFromSkeletalMesh(const USkeletalMesh& Mesh, UPhys
 			Capsule.Radius = std::max(std::max(Size.X, Size.Y) * 0.5f, 0.02f);
 			Capsule.Length = std::max(Size.Z - 2.0f * Capsule.Radius, 0.0f);
 			Setup->AggGeom.CapsuleElems.Add(Capsule);
-			Volume = PI * Capsule.Radius * Capsule.Radius *
-				(Capsule.Length + 4.0f * Capsule.Radius / 3.0f);
 		}
 		else
 		{
@@ -198,13 +196,10 @@ bool FPhysicsAssetUtils::CreateFromSkeletalMesh(const USkeletalMesh& Mesh, UPhys
 			Box.Y = std::max(Size.Y, 0.04f);
 			Box.Z = std::max(Size.Z, 0.04f);
 			Setup->AggGeom.BoxElems.Add(Box);
-			Volume = Box.X * Box.Y * Box.Z;
 		}
-		Setup->DefaultInstance.CollisionEnabled = ECollisionEnabled::QueryOnly;
-		Setup->DefaultInstance.MassInKgOverride = std::clamp(Volume * 1000.0f, 0.5f, 15.0f);
-		Asset.SkeletalBodySetups.Add(Setup);
+		Asset.BodySetups.Add(Setup);
 	}
-	if (Asset.SkeletalBodySetups.IsEmpty())
+	if (Asset.BodySetups.IsEmpty())
 	{
 		OutError = "No bones have enough skinned vertices to create physics bodies";
 		return false;
@@ -215,15 +210,15 @@ bool FPhysicsAssetUtils::CreateFromSkeletalMesh(const USkeletalMesh& Mesh, UPhys
 		int32 Parent = Bones[Index].ParentIndex;
 		while (Parent >= 0 && !HasBody[Parent]) Parent = Bones[Parent].ParentIndex;
 		if (Parent < 0) continue;
-		auto* Template = NewObject<UPhysicsConstraintTemplate>(&Asset);
-		Template->DefaultInstance.ConstraintBone1 = Bones[Index].Name;
-		Template->DefaultInstance.ConstraintBone2 = Bones[Parent].Name;
-		const EConstraintAngularMotion Motion = Params.AngularMode == EPhysAssetAngularMode::Locked
-			? EConstraintAngularMotion::Locked : Params.AngularMode == EPhysAssetAngularMode::Free
-			? EConstraintAngularMotion::Free : EConstraintAngularMotion::Limited;
-		Template->DefaultInstance.TwistMotion = Motion;
-		Template->DefaultInstance.Swing1Motion = Motion;
-		Template->DefaultInstance.Swing2Motion = Motion;
+		FPhysicsAssetConstraint Constraint;
+		Constraint.ChildBone = Bones[Index].Name;
+		Constraint.ParentBone = Bones[Parent].Name;
+		const EConstraintMotion Motion = Params.AngularMode == EPhysAssetAngularMode::Locked
+			? EConstraintMotion::Locked : Params.AngularMode == EPhysAssetAngularMode::Free
+			? EConstraintMotion::Free : EConstraintMotion::Limited;
+		Constraint.TwistMotion = Motion;
+		Constraint.Swing1Motion = Motion;
+		Constraint.Swing2Motion = Motion;
 		if (Params.AngularMode == EPhysAssetAngularMode::Limited)
 		{
 			FString ChildName = Bones[Index].Name;
@@ -236,15 +231,14 @@ bool FPhysicsAssetUtils::CreateFromSkeletalMesh(const USkeletalMesh& Mesh, UPhys
 				ChildName.find("lowerleg") != FString::npos) &&
 				(ParentName.find("thigh") != FString::npos || ParentName.find("upperleg") != FString::npos))
 			{
-				FConstraintInstance& Knee = Template->DefaultInstance;
-				Knee.JointFrameRotation = FRotator(-90.0f, 0.0f, 0.0f);
-				Knee.TwistLowerRadians = FMath::DegreesToRadians(-5.0f);
-				Knee.TwistUpperRadians = FMath::DegreesToRadians(110.0f);
-				Knee.Swing1Motion = EConstraintAngularMotion::Locked;
-				Knee.Swing2Motion = EConstraintAngularMotion::Locked;
+				Constraint.FrameOffset = FRotator(-90.0f, 0.0f, 0.0f);
+				Constraint.TwistMinDeg = -5.0f;
+				Constraint.TwistMaxDeg = 110.0f;
+				Constraint.Swing1Motion = EConstraintMotion::Locked;
+				Constraint.Swing2Motion = EConstraintMotion::Locked;
 			}
 		}
-		Asset.ConstraintSetup.Add(Template);
+		Asset.Constraints.Add(Constraint);
 	}
 	return Asset.Validate(Mesh, OutError);
 }

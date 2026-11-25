@@ -5,9 +5,6 @@
 #include "PhysicsCore.h"
 #include "PhysXConversion.h"
 #include "PhysScene.h"
-#include "Render/Mesh.h"
-#include "Components/ShapeComponent.h"
-#include <algorithm>
 #include <PxPhysics.h>
 #include <PxRigidDynamic.h>
 #include <PxScene.h>
@@ -15,25 +12,6 @@
 #include <extensions/PxRigidBodyExt.h>
 
 using namespace physx;
-
-UBodySetup::~UBodySetup()
-{
-	// 전역 오브젝트 정리 순회 시 소유자 포인터 해제
-	UObject* OuterObj = GetOuter();
-	if (!OuterObj || std::find(GUObjectArray.begin(), GUObjectArray.end(), OuterObj) == GUObjectArray.end())
-	{
-		return;
-	}
-
-	if (UStaticMesh* OwnerMesh = Cast<UStaticMesh>(OuterObj))
-	{
-		OwnerMesh->ClearBodySetup(this);
-	}
-	else if (UShapeComponent* OwnerShape = Cast<UShapeComponent>(OuterObj))
-	{
-		OwnerShape->ClearShapeBodySetup(this);
-	}
-}
 
 namespace
 {
@@ -126,7 +104,7 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 		return;
 	}
 	Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics); // 두번째 인자가 true면 물리에 의해 움직임, false면 게임 로직에 의해 움직임
-	if (bIsSkeletalBody)
+	if (BoneIndex != INDEX_NONE)
 	{
 		Dynamic->setSolverIterationCounts(12, 4);
 		Dynamic->setMaxDepenetrationVelocity(2.0f);

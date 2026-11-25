@@ -148,7 +148,7 @@ void UStockingComponent::TickComponent(float DeltaTime)
 		(NeededExpansion < CachedBoundsExpansion - ShrinkStep && !bIsPulling))
 	{
 		CachedBoundsExpansion = NeededExpansion;
-		OnTransformDirty();
+		OnTransformDirty(ETeleportType::None);
 	}
 }
 
@@ -225,7 +225,7 @@ void UStockingComponent::PostEditChangeProperty(const FProperty& Property)
 	else if (Name == "SurfaceOffset" || Name == "BoundsPadding" || Name == "MaxPullDistance")
 	{
 		MarkBoneTransformsDirty();
-		OnTransformDirty();
+		OnTransformDirty(ETeleportType::None);
 	}
 }
 
@@ -258,7 +258,7 @@ void UStockingComponent::CalibrateParametersForScale(float InScale)
 		StockingRegion->BoundaryFeatherDistance = 0.045f * ReferenceScale;
 	}
 	MarkBoneTransformsDirty();
-	OnTransformDirty();
+	OnTransformDirty(ETeleportType::None);
 }
 
 void UStockingComponent::ResetClothSimulation()
@@ -516,7 +516,7 @@ bool UStockingComponent::RebuildStockingMesh(FString& OutError)
 	BindDeformationCallback();
 	MarkRenderStateDirty();
 	UpdateBoneTransformsNow();
-	OnTransformDirty();
+	OnTransformDirty(ETeleportType::None);
 	return true;
 }
 

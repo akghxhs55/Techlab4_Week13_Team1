@@ -242,7 +242,7 @@ void UClothComponent::RebuildClothMesh()
 	CachedProxyBounds = LocalBounds;
 	CreateGpuBuffers();
 	MarkRenderStateDirty();
-	OnTransformDirty();
+	OnTransformDirty(ETeleportType::None);
 }
 
 void UClothComponent::ResetClothPose()
@@ -407,7 +407,7 @@ void UClothComponent::PostClothSimulate()
 	{
 		const FVector Margin = (LocalBounds.Max - LocalBounds.Min) * 0.25f;
 		CachedProxyBounds = FBox(LocalBounds.Min - Margin, LocalBounds.Max + Margin);
-		OnTransformDirty();
+		OnTransformDirty(ETeleportType::None);
 	}
 }
 

@@ -166,6 +166,11 @@ void USkeletalMeshComponent::BeginPlay()
 			}
 		}
 	}
+
+	if (bStartRagdollOnBeginPlay && GetWorld() && GetWorld()->IsGameWorld())
+	{
+		StartRagdoll();
+	}
 }
 
 void USkeletalMeshComponent::TickComponent(float DeltaTime)
@@ -291,7 +296,7 @@ void USkeletalMeshComponent::OnTransformDirty(ETeleportType TeleportType)
 void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene, const UPhysicsAsset* OverrideAsset)
 {
 	USkeletalMesh* Mesh = GetSkeletalMesh();
-	const UPhysicsAsset* Asset = OverrideAsset ? OverrideAsset : (Mesh ? Mesh->GetPhysicsAsset() : nullptr);
+	const UPhysicsAsset* Asset = OverrideAsset ? OverrideAsset : GetPhysicsAsset();
 	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
 	if (!Mesh || !Asset || Asset->BodySetups.IsEmpty() || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
 	{
@@ -969,7 +974,7 @@ void FSkeletalMeshComponentEndPhysicsTickFunction::ExecuteTick(float DeltaTime)
 void USkeletalMeshComponent::DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const
 {
 	const USkeletalMesh* Mesh = GetSkeletalMesh();
-	const UPhysicsAsset* PhysicsAsset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	const UPhysicsAsset* PhysicsAsset = GetPhysicsAsset();
 	if (!LineBatcher || !PhysicsAsset)
 	{
 		return;

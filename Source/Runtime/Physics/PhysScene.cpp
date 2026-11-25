@@ -9,10 +9,15 @@
 #include <PxFiltering.h>
 
 #include "BodyInstance.h"
+#include "ClothCore.h"
 #include "PhysicsCore.h"
 #include "PhysicsSettings.h"
+#include "PhysXConversion.h"
+#include "Components/ClothComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Core/Windows/WindowsPlatformTime.h"
+#include <PxRigidDynamic.h>
 
 using namespace physx;
 
@@ -33,7 +38,9 @@ namespace
 		// 일반 충돌 바디
 		pairFlags = PxPairFlag::eCONTACT_DEFAULT;
 		pairFlags |= PxPairFlag::eNOTIFY_TOUCH_FOUND;
+		pairFlags |= PxPairFlag::eNOTIFY_TOUCH_PERSISTS;
 		pairFlags |= PxPairFlag::eNOTIFY_TOUCH_LOST;
+		pairFlags |= PxPairFlag::eNOTIFY_CONTACT_POINTS;
 		return PxFilterFlag::eDEFAULT;
 	}
 
@@ -62,6 +69,15 @@ namespace
 
 			if (!Comp0 || !Comp1 || Comp0 == Comp1) return;
 
+			bool bAddedHit = false;
+			const bool bSkel0 = Body0 && Body0->BoneIndex != INDEX_NONE;
+			const bool bSkel1 = Body1 && Body1->BoneIndex != INDEX_NONE;
+			const PxRigidDynamic* Dyn0 = (bSkel0 || bSkel1) && pairHeader.actors[0] ? pairHeader.actors[0]->is<PxRigidDynamic>() : nullptr;
+			const PxRigidDynamic* Dyn1 = (bSkel0 || bSkel1) && pairHeader.actors[1] ? pairHeader.actors[1]->is<PxRigidDynamic>() : nullptr;
+			const FVector Vel0 = Dyn0 ? P2KVector(Dyn0->getLinearVelocity()) : FVector::ZeroVector;
+			const FVector Vel1 = Dyn1 ? P2KVector(Dyn1->getLinearVelocity()) : FVector::ZeroVector;
+			PxContactPairPoint ContactPoints[16];
+
 			for (PxU32 i = 0; i < nbPairs; ++i)
 			{
 				const PxContactPair& cp = pairs[i];
@@ -70,10 +86,82 @@ namespace
 					continue;
 				}
 
-				if (cp.events & PxPairFlag::eNOTIFY_TOUCH_FOUND)
+				if (!bAddedHit && (cp.events & PxPairFlag::eNOTIFY_TOUCH_FOUND))
 				{
 					Scene->AddPendingHit(Comp0, Comp1);
-					break;
+					bAddedHit = true;
+				}
+
+				if (bSkel0 || bSkel1)
+				{
+					const PxU32 PointCount = cp.extractContacts(ContactPoints, 16);
+					if (PointCount == 0)
+					{
+						continue;
+					}
+
+					PxVec3 TotalImpulse(0.0f, 0.0f, 0.0f);
+					PxVec3 BestPos = ContactPoints[0].position;
+					PxVec3 BestNormal = ContactPoints[0].normal;
+					float BestPointImpulseSq = -1.0f;
+					for (PxU32 c = 0; c < PointCount; ++c)
+					{
+						TotalImpulse += ContactPoints[c].impulse;
+						const float MagSq = ContactPoints[c].impulse.magnitudeSquared();
+						if (MagSq > BestPointImpulseSq)
+						{
+							BestPointImpulseSq = MagSq;
+							BestPos = ContactPoints[c].position;
+							BestNormal = ContactPoints[c].normal;
+						}
+					}
+
+					const float ImpulseMag = TotalImpulse.magnitude();
+					if (ImpulseMag <= 1e-4f)
+					{
+						continue;
+					}
+
+					const FVector WorldPos = P2KVector(BestPos);
+					const FVector WorldNormal = P2KVector(BestNormal);
+					const FVector WorldImpulse = P2KVector(TotalImpulse);
+
+					if (bSkel0)
+					{
+						if (USkeletalMeshComponent* SkelComp = Cast<USkeletalMeshComponent>(Comp0))
+						{
+							const FVector RelVel = Vel0 - Vel1;
+							const FVector SlideVel = RelVel - WorldNormal * RelVel.Dot(WorldNormal);
+							FPhysicsContactImpact Impact{};
+							Impact.TargetComponent = SkelComp;
+							Impact.HitBody = Body0;
+							Impact.WorldLocation = WorldPos;
+							Impact.WorldNormal = WorldNormal;
+							Impact.WorldImpulse = WorldImpulse;
+							Impact.WorldSlideVelocity = SlideVel;
+							Impact.ImpulseMagnitude = ImpulseMag;
+							Scene->QueueContactImpact(Impact);
+						}
+					}
+
+					if (bSkel1)
+					{
+						if (USkeletalMeshComponent* SkelComp = Cast<USkeletalMeshComponent>(Comp1))
+						{
+							const FVector RelVel = Vel1 - Vel0;
+							const FVector InvNormal = WorldNormal * -1.0f;
+							const FVector SlideVel = RelVel - InvNormal * RelVel.Dot(InvNormal);
+							FPhysicsContactImpact Impact{};
+							Impact.TargetComponent = SkelComp;
+							Impact.HitBody = Body1;
+							Impact.WorldLocation = WorldPos;
+							Impact.WorldNormal = InvNormal;
+							Impact.WorldImpulse = WorldImpulse * -1.0f;
+							Impact.WorldSlideVelocity = SlideVel;
+							Impact.ImpulseMagnitude = ImpulseMag;
+							Scene->QueueContactImpact(Impact);
+						}
+					}
 				}
 			}
 		}
@@ -123,6 +211,11 @@ namespace
 FPhysScene::FPhysScene(UWorld* InOwner)
 	: Owner(InOwner)
 {
+	if (FClothCore::GetFactory())
+	{
+		ClothSolver = ClothBridge_CreateSolver(FClothCore::GetFactory());
+	}
+
 	PxPhysics* Physics = FPhysicsCore::GetPhysics();
 	if (!Physics)
 	{
@@ -154,6 +247,19 @@ FPhysScene::FPhysScene(UWorld* InOwner)
 
 FPhysScene::~FPhysScene()
 {
+	if (ClothSolver)
+	{
+		for (UClothComponent* ClothComp : ClothComponents)
+		{
+			if (ClothComp)
+			{
+				ClothBridge_RemoveClothFromSolver(ClothSolver, ClothComp->GetClothHandle());
+			}
+		}
+		ClothComponents.Reset();
+		ClothBridge_DestroySolver(ClothSolver);
+		ClothSolver = nullptr;
+	}
 	if (Scene)
 	{
 		if (bPhysXSceneExecuting)
@@ -166,6 +272,7 @@ FPhysScene::~FPhysScene()
 	SimEventCallback.reset();
 	PendingHitEvents.Empty();
 	PendingTriggerEvents.Empty();
+	PendingContactImpacts.Empty();
 }
 
 void FPhysScene::SetUpForFrame(float DeltaSeconds, const FPhysicsSettings& Settings)
@@ -209,6 +316,17 @@ void FPhysScene::SetUpForFrame(float DeltaSeconds, const FPhysicsSettings& Setti
 
 void FPhysScene::StartFrame()
 {
+	if (ClothSolver && FrameDeltaTime > 0.0f)
+	{
+		for (UClothComponent* ClothComp : ClothComponents)
+		{
+			if (ClothComp && ClothComp->IsRegistered())
+			{
+				ClothComp->PreClothSimulate();
+			}
+		}
+	}
+
 	if (!Scene || NumSubsteps == 0)
 	{
 		return;
@@ -272,6 +390,18 @@ void FPhysScene::EndFrame()
 	DispatchPendingEvents();
 	FrameStats.DispatchEventsMs = FPlatformTime::ToMilliseconds64(FPlatformTime::GetCycles64() - StartCycles);
 	Stats = FrameStats;
+
+	if (ClothSolver && FrameDeltaTime > 0.0f && !ClothComponents.IsEmpty())
+	{
+		ClothBridge_StepSolver(ClothSolver, FrameDeltaTime);
+		for (UClothComponent* ClothComp : ClothComponents)
+		{
+			if (ClothComp && ClothComp->IsRegistered())
+			{
+				ClothComp->PostClothSimulate();
+			}
+		}
+	}
 }
 
 void FPhysScene::SyncComponentsToBodies()
@@ -298,8 +428,52 @@ void FPhysScene::AddPendingTrigger(UPrimitiveComponent* TriggerComp, UPrimitiveC
 	PendingTriggerEvents.Add({ TriggerComp, OtherComp, bIsBegin });
 }
 
+void FPhysScene::QueueContactImpact(const FPhysicsContactImpact& Impact)
+{
+	PendingContactImpacts.Add(Impact);
+}
+
+void FPhysScene::RegisterClothComponent(UClothComponent* Component)
+{
+	if (!Component || !ClothSolver || !Component->GetClothHandle())
+	{
+		return;
+	}
+	if (!ClothComponents.Contains(Component))
+	{
+		ClothComponents.Add(Component);
+		ClothBridge_AddClothToSolver(ClothSolver, Component->GetClothHandle());
+	}
+}
+
+void FPhysScene::UnregisterClothComponent(UClothComponent* Component)
+{
+	if (!Component)
+	{
+		return;
+	}
+	if (ClothComponents.Contains(Component))
+	{
+		if (ClothSolver && Component->GetClothHandle())
+		{
+			ClothBridge_RemoveClothFromSolver(ClothSolver, Component->GetClothHandle());
+		}
+		ClothComponents.Remove(Component);
+	}
+}
+
 void FPhysScene::DispatchPendingEvents()
 {
+	// 스켈레탈 바디 접촉 충격 이벤트 전달
+	TArray<FPhysicsContactImpact> Impacts = std::move(PendingContactImpacts);
+	PendingContactImpacts.Empty();
+	for (const FPhysicsContactImpact& Impact : Impacts)
+	{
+		if (Impact.TargetComponent && Impact.TargetComponent->IsRegistered())
+		{
+			Impact.TargetComponent->NotifyPhysicsContactImpact(Impact);
+		}
+	}
 	// Hit 이벤트 처리
 	TArray<FPendingHitEvent> Hits = std::move(PendingHitEvents);
 	PendingHitEvents.Empty();

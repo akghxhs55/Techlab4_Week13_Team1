@@ -742,6 +742,22 @@ UPhysicsAsset* UAssetManager::LoadPhysicsAsset(const FString& Path, FString& Out
 	return Asset.release();
 }
 
+void UAssetManager::RegisterPhysicsAsset(const FString& Path, UPhysicsAsset* Asset)
+{
+	const FString Key = FAssetUtils::GetAssetKey(Path);
+	if (Key.empty() || !Asset)
+	{
+		return;
+	}
+	const FString FilePath = FAssetUtils::ResolveAssetFilePath(Key);
+	std::error_code Error;
+	const fs::file_time_type WriteTime = FilePath.empty()
+		? fs::file_time_type{}
+		: fs::last_write_time(FPaths::FromUtf8(FilePath), Error);
+	Asset->SetAssetPath(Key);
+	Get().PhysicsAssetMap[Key] = { Asset, WriteTime };
+}
+
 UAnimSequence* UAssetManager::LoadAnimSequence(const FString& Path)
 {
 	const FString Key = FAssetUtils::GetAssetKey(Path);
