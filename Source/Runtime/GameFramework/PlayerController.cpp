@@ -12,6 +12,7 @@
 #include "Camera/CameraShakeBase.h"
 #include <cstring>
 #include "GameFramework/DefaultPawn.h"
+#include "GameFramework/Actor/WheeledVehiclePawn.h"
 
 APlayerController::APlayerController()
 	: ControlRotation(FRotator::Identitiy)
@@ -119,6 +120,21 @@ void APlayerController::InputKey(int32 Key, bool bDown)
 	{
 		if (ASwordCharacter* SwordCharacter = Cast<ASwordCharacter>(PossessedPawn))
 			SwordCharacter->CastBeam();
+	}
+	if (AWheeledVehiclePawn* Vehicle = Cast<AWheeledVehiclePawn>(PossessedPawn))
+	{
+		if (Key == static_cast<int32>(EKeyCode::Space))
+		{
+			Vehicle->SetHandbrakeInput(bDown);
+		}
+		else if (Key == static_cast<int32>(EKeyCode::E) && bJustPressed && bInputAllowed)
+		{
+			Vehicle->ToggleDRS();
+		}
+		else if (Key == static_cast<int32>(EKeyCode::Q) && bJustPressed && bInputAllowed)
+		{
+			Vehicle->ToggleTractionControl();
+		}
 	}
 	if (!bInputAllowed)
 		return;

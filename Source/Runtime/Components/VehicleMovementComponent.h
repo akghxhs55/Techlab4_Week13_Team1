@@ -54,6 +54,9 @@ public:
 	float GetLongitudinalG() const;
 	float GetAverageRearSlipRatio() const;
 	bool IsTCActive() const;
+	void SetDRSRequested(bool bEnable);
+	bool IsDRSActive() const;
+	bool IsDRSRequested() const { return bDRSRequested; }
 
 	// 바퀴별 시뮬레이션 상태 및 트랜스폼 조회 (0: FL, 1: FR, 2: RL, 3: RR)
 	const FWheelSimulationState& GetWheelState(EVehicleWheelOrder Order) const;
@@ -115,4 +118,5 @@ protected:
 	float CurrentThrottle = 0.0f;
 	float CurrentSteer = 0.0f;
 	float CurrentBrake = 0.0f;
+	bool bDRSRequested = false;
 };

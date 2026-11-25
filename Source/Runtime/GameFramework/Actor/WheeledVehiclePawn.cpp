@@ -3,9 +3,21 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/VehicleMovementComponent.h"
+#include "Components/AudioComponent.h"
+#include "Components/ParticleSystemComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Asset/AssetManager.h"
+#include "Audio/SoundWave.h"
+#include "Particles/ParticleSystem.h"
+#include "Particles/ParticleEmitter.h"
+#include "Particles/ParticleLODLevel.h"
+#include "Particles/Module/ParticleModuleRequired.h"
+#include "Particles/Module/ParticleModuleSpawn.h"
+#include "Particles/Module/ParticleModuleLifetime.h"
+#include "Particles/Module/ParticleModuleSize.h"
+#include "Particles/Module/ParticleModuleVelocity.h"
+#include "Particles/Module/ParticleModuleColor.h"
 #include "Engine/World.h"
 #include "UI/UserWidget.h"
 #include "UI/PanelWidget.h"
@@ -14,8 +26,222 @@
 #include "UI/Image.h"
 #include "Math/EngineMath.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+
+namespace
+{
+	USoundWave* GetOrCreateF1EngineWave()
+	{
+		static USoundWave* CachedWave = nullptr;
+		if (CachedWave) return CachedWave;
+
+		CachedWave = NewObject<USoundWave>(nullptr);
+		constexpr uint32 SampleRate = 44100;
+		constexpr uint32 NumFrames = 44100;
+		CachedWave->SampleRate = SampleRate;
+		CachedWave->NumChannels = 1;
+		CachedWave->NumFrames = NumFrames;
+		CachedWave->Duration = 1.0f;
+		CachedWave->PCMData.SetNum(NumFrames);
+
+		constexpr double TwoPi = 6.283185307179586;
+		// 110 Hz 기본음 + F1 V6 하이브리드 배기 하모닉 (정수 배수 주파수로 루프 이음새 제거)
+		for (uint32 i = 0; i < NumFrames; ++i)
+		{
+			const double t = static_cast<double>(i) / static_cast<double>(SampleRate);
+			double s = 0.0;
+			s += 0.42 * std::sin(TwoPi * 110.0 * t);
+			s += 0.30 * std::sin(TwoPi * 220.0 * t);
+			s += 0.22 * std::sin(TwoPi * 330.0 * t);
+			s += 0.14 * std::sin(TwoPi * 440.0 * t);
+			s += 0.10 * std::sin(TwoPi * 660.0 * t);
+			s += 0.06 * std::sin(TwoPi * 880.0 * t);
+			// 소프트 클리핑으로 자연스러운 배기 질감 부여
+			CachedWave->PCMData[i] = static_cast<float>(std::tanh(s * 1.15) * 0.45);
+		}
+		return CachedWave;
+	}
+
+	USoundWave* GetOrCreateAeroWindWave()
+	{
+		static USoundWave* CachedWave = nullptr;
+		if (CachedWave) return CachedWave;
+
+		CachedWave = NewObject<USoundWave>(nullptr);
+		constexpr uint32 SampleRate = 44100;
+		constexpr uint32 NumFrames = 44100;
+		CachedWave->SampleRate = SampleRate;
+		CachedWave->NumChannels = 1;
+		CachedWave->NumFrames = NumFrames;
+		CachedWave->Duration = 1.0f;
+		CachedWave->PCMData.SetNum(NumFrames);
+
+		uint32 Seed = 0x13579BDFu;
+		float Filtered = 0.0f;
+		for (uint32 i = 0; i < NumFrames; ++i)
+		{
+			Seed = Seed * 1664525u + 1013904223u;
+			const float White = (static_cast<float>(Seed >> 8) / 8388608.0f) - 1.0f;
+			Filtered = Filtered * 0.88f + White * 0.12f;
+			// 루프 끝 페이드 크로스 블렌딩
+			float Env = 1.0f;
+			if (i < 256) Env = static_cast<float>(i) / 256.0f;
+			else if (i > NumFrames - 256) Env = static_cast<float>(NumFrames - i) / 256.0f;
+			CachedWave->PCMData[i] = Filtered * 0.55f * Env;
+		}
+		return CachedWave;
+	}
+
+	USoundWave* GetOrCreateTireSkidWave()
+	{
+		static USoundWave* CachedWave = nullptr;
+		if (CachedWave) return CachedWave;
+
+		CachedWave = NewObject<USoundWave>(nullptr);
+		constexpr uint32 SampleRate = 44100;
+		constexpr uint32 NumFrames = 44100;
+		CachedWave->SampleRate = SampleRate;
+		CachedWave->NumChannels = 1;
+		CachedWave->NumFrames = NumFrames;
+		CachedWave->Duration = 1.0f;
+		CachedWave->PCMData.SetNum(NumFrames);
+
+		constexpr double TwoPi = 6.283185307179586;
+		uint32 Seed = 0x2468ACE1u;
+		float BandNoise = 0.0f;
+		for (uint32 i = 0; i < NumFrames; ++i)
+		{
+			const double t = static_cast<double>(i) / static_cast<double>(SampleRate);
+			Seed = Seed * 1664525u + 1013904223u;
+			const float White = (static_cast<float>(Seed >> 8) / 8388608.0f) - 1.0f;
+			BandNoise = BandNoise * 0.72f + White * 0.28f;
+			const double Squeal = 0.50 * std::sin(TwoPi * 920.0 * t) + 0.25 * std::sin(TwoPi * 1380.0 * t);
+			float Env = 1.0f;
+			if (i < 256) Env = static_cast<float>(i) / 256.0f;
+			else if (i > NumFrames - 256) Env = static_cast<float>(NumFrames - i) / 256.0f;
+			CachedWave->PCMData[i] = static_cast<float>((Squeal * 0.35 + BandNoise * 0.65) * 0.40 * Env);
+		}
+		return CachedWave;
+	}
+
+	UParticleSystem* GetOrCreateTireSmokeTemplate()
+	{
+		static UParticleSystem* CachedSys = nullptr;
+		if (CachedSys) return CachedSys;
+
+		CachedSys = NewObject<UParticleSystem>(nullptr);
+		UParticleEmitter* Emitter = NewObject<UParticleEmitter>(CachedSys);
+		UParticleLODLevel* LODLevel = NewObject<UParticleLODLevel>(Emitter);
+		LODLevel->SetLevel(0);
+
+		LODLevel->SetRequiredModule(NewObject<UParticleModuleRequired>(LODLevel));
+
+		auto* Spawn = NewObject<UParticleModuleSpawn>(LODLevel);
+		Spawn->GetRate().Mode = EDistributionMode::Constant;
+		Spawn->GetRate().Constant = 36.0f;
+		Spawn->GetRateScale().Mode = EDistributionMode::Constant;
+		Spawn->GetRateScale().Constant = 1.0f;
+		Spawn->BakeDistributions();
+		LODLevel->SetSpawnModule(Spawn);
+
+		auto* Lifetime = NewObject<UParticleModuleLifetime>(LODLevel);
+		Lifetime->GetLifetime().Mode = EDistributionMode::Uniform;
+		Lifetime->GetLifetime().MinValue = 0.35f;
+		Lifetime->GetLifetime().MaxValue = 0.65f;
+		Lifetime->BakeDistributions();
+		LODLevel->AddModule(Lifetime);
+
+		auto* Size = NewObject<UParticleModuleSize>(LODLevel);
+		Size->GetStartSize().Mode = EDistributionMode::Uniform;
+		Size->GetStartSize().MinValue = FVector(0.38f, 0.38f, 0.38f);
+		Size->GetStartSize().MaxValue = FVector(0.75f, 0.75f, 0.75f);
+		Size->BakeDistributions();
+		LODLevel->AddModule(Size);
+
+		auto* Velocity = NewObject<UParticleModuleVelocity>(LODLevel);
+		Velocity->GetStartVelocity().Mode = EDistributionMode::Uniform;
+		Velocity->GetStartVelocity().MinValue = FVector(-1.5f, -0.8f, 0.6f);
+		Velocity->GetStartVelocity().MaxValue = FVector(0.5f, 0.8f, 1.8f);
+		Velocity->GetStartVelocityRadial().Mode = EDistributionMode::Constant;
+		Velocity->GetStartVelocityRadial().Constant = 0.4f;
+		Velocity->BakeDistributions();
+		LODLevel->AddModule(Velocity);
+
+		auto* Color = NewObject<UParticleModuleColor>(LODLevel);
+		Color->GetStartColor().Mode = EDistributionMode::Constant;
+		Color->GetStartColor().Constant = FVector(0.84f, 0.86f, 0.88f);
+		Color->GetStartAlpha().Mode = EDistributionMode::Constant;
+		Color->GetStartAlpha().Constant = 0.28f;
+		Color->BakeDistributions();
+		LODLevel->AddModule(Color);
+
+		LODLevel->UpdateModuleLists();
+		Emitter->AddLODLevel(LODLevel);
+		Emitter->Build();
+		CachedSys->AddEmitter(Emitter);
+		return CachedSys;
+	}
+
+	UParticleSystem* GetOrCreateFloorSparkTemplate()
+	{
+		static UParticleSystem* CachedSys = nullptr;
+		if (CachedSys) return CachedSys;
+
+		CachedSys = NewObject<UParticleSystem>(nullptr);
+		UParticleEmitter* Emitter = NewObject<UParticleEmitter>(CachedSys);
+		UParticleLODLevel* LODLevel = NewObject<UParticleLODLevel>(Emitter);
+		LODLevel->SetLevel(0);
+
+		LODLevel->SetRequiredModule(NewObject<UParticleModuleRequired>(LODLevel));
+
+		auto* Spawn = NewObject<UParticleModuleSpawn>(LODLevel);
+		Spawn->GetRate().Mode = EDistributionMode::Constant;
+		Spawn->GetRate().Constant = 75.0f;
+		Spawn->GetRateScale().Mode = EDistributionMode::Constant;
+		Spawn->GetRateScale().Constant = 1.0f;
+		Spawn->BakeDistributions();
+		LODLevel->SetSpawnModule(Spawn);
+
+		auto* Lifetime = NewObject<UParticleModuleLifetime>(LODLevel);
+		Lifetime->GetLifetime().Mode = EDistributionMode::Uniform;
+		Lifetime->GetLifetime().MinValue = 0.14f;
+		Lifetime->GetLifetime().MaxValue = 0.28f;
+		Lifetime->BakeDistributions();
+		LODLevel->AddModule(Lifetime);
+
+		auto* Size = NewObject<UParticleModuleSize>(LODLevel);
+		Size->GetStartSize().Mode = EDistributionMode::Uniform;
+		Size->GetStartSize().MinValue = FVector(0.06f, 0.06f, 0.06f);
+		Size->GetStartSize().MaxValue = FVector(0.13f, 0.13f, 0.13f);
+		Size->BakeDistributions();
+		LODLevel->AddModule(Size);
+
+		auto* Velocity = NewObject<UParticleModuleVelocity>(LODLevel);
+		Velocity->GetStartVelocity().Mode = EDistributionMode::Uniform;
+		Velocity->GetStartVelocity().MinValue = FVector(-14.0f, -2.5f, 0.8f);
+		Velocity->GetStartVelocity().MaxValue = FVector(-6.0f, 2.5f, 3.2f);
+		Velocity->GetStartVelocityRadial().Mode = EDistributionMode::Constant;
+		Velocity->GetStartVelocityRadial().Constant = 1.0f;
+		Velocity->BakeDistributions();
+		LODLevel->AddModule(Velocity);
+
+		auto* Color = NewObject<UParticleModuleColor>(LODLevel);
+		Color->GetStartColor().Mode = EDistributionMode::Constant;
+		Color->GetStartColor().Constant = FVector(1.0f, 0.65f, 0.16f);
+		Color->GetStartAlpha().Mode = EDistributionMode::Constant;
+		Color->GetStartAlpha().Constant = 0.95f;
+		Color->BakeDistributions();
+		LODLevel->AddModule(Color);
+
+		LODLevel->UpdateModuleLists();
+		Emitter->AddLODLevel(LODLevel);
+		Emitter->Build();
+		CachedSys->AddEmitter(Emitter);
+		return CachedSys;
+	}
+}
 
 AWheeledVehiclePawn::AWheeledVehiclePawn()
 {
@@ -174,10 +400,44 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	SetupWheelComp(WheelMesh_FR, "Wheel_FR", WheelMesh_FR_Asset, FVector(1.483f, 0.842f, -0.2f));
 	SetupWheelComp(WheelMesh_RL, "Wheel_RL", WheelMesh_RL_Asset, FVector(-1.515f, -0.834f, -0.2f));
 	SetupWheelComp(WheelMesh_RR, "Wheel_RR", WheelMesh_RR_Asset, FVector(-1.515f, 0.834f, -0.2f));
+
+	// 6. 오디오 컴포넌트 (엔진 RPM / 풍절음 / 타이어 슬립)
+	EngineAudioComponent = CreateDefaultSubobject<UAudioComponent>("EngineAudio");
+	EngineAudioComponent->SetupAttachment(ChassisCollision);
+	EngineAudioComponent->bAllowSpatialization = false;
+	EngineAudioComponent->bLooping = true;
+	EngineAudioComponent->SetAutoActivate(false);
+
+	WindAudioComponent = CreateDefaultSubobject<UAudioComponent>("WindAudio");
+	WindAudioComponent->SetupAttachment(ChassisCollision);
+	WindAudioComponent->bAllowSpatialization = false;
+	WindAudioComponent->bLooping = true;
+	WindAudioComponent->SetAutoActivate(false);
+
+	TireAudioComponent = CreateDefaultSubobject<UAudioComponent>("TireAudio");
+	TireAudioComponent->SetupAttachment(ChassisCollision);
+	TireAudioComponent->bAllowSpatialization = false;
+	TireAudioComponent->bLooping = true;
+	TireAudioComponent->SetAutoActivate(false);
+
+	// 7. 파티클 컴포넌트 (후륜 타이어 연기 / 차체 플로어 스파크)
+	TireSmokeRL = CreateDefaultSubobject<UParticleSystemComponent>("TireSmoke_RL");
+	TireSmokeRL->SetupAttachment(ChassisCollision);
+	TireSmokeRL->SetAutoActivate(false);
+
+	TireSmokeRR = CreateDefaultSubobject<UParticleSystemComponent>("TireSmoke_RR");
+	TireSmokeRR->SetupAttachment(ChassisCollision);
+	TireSmokeRR->SetAutoActivate(false);
+
+	FloorSparks = CreateDefaultSubobject<UParticleSystemComponent>("FloorSparks");
+	FloorSparks->SetupAttachment(ChassisCollision);
+	FloorSparks->SetRelativeLocation(FVector(-1.6f, 0.0f, -0.35f));
+	FloorSparks->SetAutoActivate(false);
 }
 
 AWheeledVehiclePawn::~AWheeledVehiclePawn()
 {
+	StopVehicleAudio();
 	DestroyTelemetryHUD();
 }
 
@@ -203,14 +463,26 @@ void AWheeledVehiclePawn::BeginPlay()
 	ElapsedSessionTime = 0.0f;
 	BuffetingTime = 0.0f;
 
-	if (bShowTelemetryHUD && GetWorld() && GetWorld()->IsGameWorld())
+	if (GetWorld() && GetWorld()->IsGameWorld())
 	{
-		CreateTelemetryHUD();
+		if (bShowTelemetryHUD)
+		{
+			CreateTelemetryHUD();
+		}
+		if (bEnableVehicleAudio)
+		{
+			InitVehicleAudio();
+		}
+		if (bEnableVehicleParticles)
+		{
+			InitVehicleParticles();
+		}
 	}
 }
 
 void AWheeledVehiclePawn::EndPlay()
 {
+	StopVehicleAudio();
 	DestroyTelemetryHUD();
 	if (CameraComponent)
 	{
@@ -292,6 +564,14 @@ void AWheeledVehiclePawn::Tick(float DeltaTime)
 		}
 
 		UpdateTelemetryHUD(DeltaTime);
+		if (bEnableVehicleAudio)
+		{
+			UpdateVehicleAudio(DeltaTime);
+		}
+		if (bEnableVehicleParticles)
+		{
+			UpdateVehicleParticles();
+		}
 	}
 }
 
@@ -564,7 +844,12 @@ void AWheeledVehiclePawn::UpdateTelemetryHUD(float DeltaTime)
 
 	if (StatusText)
 	{
-		if (!VehicleMovement->bEnableTractionControl)
+		if (VehicleMovement->IsDRSActive())
+		{
+			StatusText->SetText("DRS OPEN");
+			StatusText->ColorAndOpacity = FLinearColor(0.15f, 0.90f, 1.0f, 1.0f);
+		}
+		else if (!VehicleMovement->bEnableTractionControl)
 		{
 			StatusText->SetText("TCS OFF");
 			StatusText->ColorAndOpacity = FLinearColor(0.60f, 0.64f, 0.70f, 1.0f);
@@ -598,6 +883,168 @@ void AWheeledVehiclePawn::DestroyTelemetryHUD()
 		UUserWidget* WidgetToDestroy = TelemetryWidget;
 		TelemetryWidget = nullptr;
 		WidgetToDestroy->Destroy();
+	}
+}
+
+void AWheeledVehiclePawn::InitVehicleAudio()
+{
+	if (EngineAudioComponent)
+	{
+		EngineAudioComponent->SetSound(GetOrCreateF1EngineWave());
+		EngineAudioComponent->SetVolumeMultiplier(0.18f);
+		EngineAudioComponent->SetPitchMultiplier(0.75f);
+		EngineAudioComponent->Play();
+	}
+	if (WindAudioComponent)
+	{
+		WindAudioComponent->SetSound(GetOrCreateAeroWindWave());
+		WindAudioComponent->SetVolumeMultiplier(0.0f);
+		WindAudioComponent->SetPitchMultiplier(0.85f);
+		WindAudioComponent->Play();
+	}
+	if (TireAudioComponent)
+	{
+		TireAudioComponent->SetSound(GetOrCreateTireSkidWave());
+		TireAudioComponent->SetVolumeMultiplier(0.0f);
+		TireAudioComponent->SetPitchMultiplier(0.95f);
+		TireAudioComponent->Play();
+	}
+}
+
+void AWheeledVehiclePawn::UpdateVehicleAudio(float DeltaTime)
+{
+	if (!VehicleMovement)
+	{
+		return;
+	}
+
+	const float RPM = VehicleMovement->GetEngineRPM();
+	const float MaxRPM = std::max(VehicleMovement->GetMaxRPM(), 1000.0f);
+	const float RPMNorm = FMath::Clamp(RPM / MaxRPM, 0.0f, 1.0f);
+	const float Throttle = std::abs(VehicleMovement->GetThrottleInput());
+	const float SpeedKmH = std::abs(VehicleMovement->GetForwardSpeedKmH());
+
+	if (EngineAudioComponent)
+	{
+		const float TargetPitch = FMath::Lerp(0.65f, 2.45f, RPMNorm);
+		const float TargetVol = FMath::Lerp(0.16f, 0.40f, std::max(RPMNorm * 0.7f, Throttle));
+		EngineAudioComponent->SetPitchMultiplier(TargetPitch);
+		EngineAudioComponent->SetVolumeMultiplier(TargetVol);
+	}
+
+	if (WindAudioComponent)
+	{
+		const float WindAlpha = FMath::Clamp((SpeedKmH - 70.0f) / 230.0f, 0.0f, 1.0f);
+		WindAudioComponent->SetVolumeMultiplier(WindAlpha * 0.34f);
+		WindAudioComponent->SetPitchMultiplier(0.85f + WindAlpha * 0.65f);
+	}
+
+	if (TireAudioComponent)
+	{
+		float MaxSlipMetric = 0.0f;
+		if (SpeedKmH > 12.0f)
+		{
+			for (int32 i = 0; i < 4; ++i)
+			{
+				const FWheelSimulationState& WS = VehicleMovement->GetWheelState(i);
+				if (WS.bInContact)
+				{
+					const float LatSlip = FMath::Clamp((std::abs(WS.SlipAngleRad) - 0.10f) / 0.20f, 0.0f, 1.0f);
+					const float LongSlip = FMath::Clamp((std::abs(WS.SlipRatio) - 0.10f) / 0.25f, 0.0f, 1.0f);
+					MaxSlipMetric = std::max(MaxSlipMetric, std::max(LatSlip, LongSlip));
+				}
+			}
+		}
+		TireAudioComponent->SetVolumeMultiplier(MaxSlipMetric * 0.32f);
+		TireAudioComponent->SetPitchMultiplier(0.92f + MaxSlipMetric * 0.30f);
+	}
+}
+
+void AWheeledVehiclePawn::StopVehicleAudio()
+{
+	if (EngineAudioComponent) EngineAudioComponent->Stop();
+	if (WindAudioComponent) WindAudioComponent->Stop();
+	if (TireAudioComponent) TireAudioComponent->Stop();
+}
+
+void AWheeledVehiclePawn::InitVehicleParticles()
+{
+	UParticleSystem* SmokeSys = GetOrCreateTireSmokeTemplate();
+	UParticleSystem* SparkSys = GetOrCreateFloorSparkTemplate();
+
+	if (TireSmokeRL && SmokeSys)
+	{
+		TireSmokeRL->InitializeSystem(SmokeSys);
+		TireSmokeRL->DeactivateSystem();
+	}
+	if (TireSmokeRR && SmokeSys)
+	{
+		TireSmokeRR->InitializeSystem(SmokeSys);
+		TireSmokeRR->DeactivateSystem();
+	}
+	if (FloorSparks && SparkSys)
+	{
+		FloorSparks->InitializeSystem(SparkSys);
+		FloorSparks->DeactivateSystem();
+	}
+	bTireSmokeActiveRL = false;
+	bTireSmokeActiveRR = false;
+	bFloorSparksActive = false;
+}
+
+void AWheeledVehiclePawn::UpdateVehicleParticles()
+{
+	if (!VehicleMovement)
+	{
+		return;
+	}
+
+	const float Speed = std::abs(VehicleMovement->GetForwardSpeed());
+	const FVehicleParams& Params = VehicleMovement->GetVehicleParams();
+
+	auto UpdateWheelSmoke = [&](UParticleSystemComponent* PSC, int32 WheelIdx, bool& bActiveFlag)
+	{
+		if (!PSC) return;
+		const FWheelSimulationState& WS = VehicleMovement->GetWheelState(WheelIdx);
+		const float WheelRadius = Params.GetWheel(WheelIdx).Radius;
+		FVector ContactOffset = WS.LocalPose.Location;
+		ContactOffset.Z -= WheelRadius * 0.85f;
+		PSC->SetRelativeLocation(ContactOffset);
+
+		const bool bShouldSmoke = WS.bInContact && Speed > 5.0f &&
+			(std::abs(WS.SlipAngleRad) > 0.14f || std::abs(WS.SlipRatio) > 0.12f || VehicleMovement->GetHandbrakeInput());
+		if (bShouldSmoke && !bActiveFlag)
+		{
+			PSC->ActivateSystem(false);
+			bActiveFlag = true;
+		}
+		else if (!bShouldSmoke && bActiveFlag)
+		{
+			PSC->DeactivateSystem();
+			bActiveFlag = false;
+		}
+	};
+
+	UpdateWheelSmoke(TireSmokeRL, 2, bTireSmokeActiveRL);
+	UpdateWheelSmoke(TireSmokeRR, 3, bTireSmokeActiveRR);
+
+	if (FloorSparks)
+	{
+		const FWheelSimulationState& RL = VehicleMovement->GetWheelState(2);
+		const FWheelSimulationState& RR = VehicleMovement->GetWheelState(3);
+		const float RearTravel = std::max(Params.RearLeftWheel.SuspensionTravelDist, 0.05f);
+		const float RearCompression = 0.5f * (RL.SuspensionJounce + RR.SuspensionJounce) / RearTravel;
+		const bool bShouldSpark = (RL.bInContact || RR.bInContact) && Speed > 52.0f && RearCompression > 0.65f;
+		if (bShouldSpark && !bFloorSparksActive)
+		{
+			FloorSparks->ActivateSystem(false);
+			bFloorSparksActive = true;
+		}
+		else if (!bShouldSpark && bFloorSparksActive)
+		{
+			FloorSparks->DeactivateSystem();
+			bFloorSparksActive = false;
+		}
 	}
 }
 
@@ -647,5 +1094,21 @@ void AWheeledVehiclePawn::SetHandbrakeInput(bool bVal)
 	if (VehicleMovement)
 	{
 		VehicleMovement->SetHandbrakeInput(bVal);
+	}
+}
+
+void AWheeledVehiclePawn::ToggleDRS()
+{
+	if (VehicleMovement)
+	{
+		VehicleMovement->SetDRSRequested(!VehicleMovement->IsDRSRequested());
+	}
+}
+
+void AWheeledVehiclePawn::ToggleTractionControl()
+{
+	if (VehicleMovement)
+	{
+		VehicleMovement->bEnableTractionControl = !VehicleMovement->bEnableTractionControl;
 	}
 }

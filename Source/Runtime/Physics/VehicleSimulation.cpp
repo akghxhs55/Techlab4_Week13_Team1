@@ -132,6 +132,8 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 	LongitudinalG = 0.0f;
 	bPrevVelocityValid = false;
 	bTCActive = false;
+	bDRSRequested = false;
+	bDRSActive = false;
 }
 
 float FVehicleSimulationPipeline::EvaluateEngineTorqueScale(float InRPM) const
@@ -242,7 +244,23 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 	WheelStates[3].SteerAngle = 0.0f;
 	SteerAngleRad[3] = 0.0f;
 
-	// 2.5 공력 다운포스(Downforce + 차고 그라운드 이펙트) 및 공기저항(Drag) 인가
+	// 2.5 공력 다운포스(Downforce + 차고 그라운드 이펙트) 및 공기저항(Drag) + DRS 인가
+	if (bDRSRequested && Brake < 0.05f && CurrentForwardSpeed > 20.0f && Throttle > 0.05f)
+	{
+		bDRSActive = true;
+	}
+	else
+	{
+		bDRSActive = false;
+		if (Brake >= 0.05f || CurrentForwardSpeed < 15.0f)
+		{
+			bDRSRequested = false;
+		}
+	}
+
+	const float ActiveDownforceScale = bDRSActive ? Params.DRSDownforceScale : 1.0f;
+	const float ActiveDragScale = bDRSActive ? Params.DRSDragScale : 1.0f;
+
 	if (CurrentForwardSpeed > 1.0f && Params.DownforceCoeff > 0.0f)
 	{
 		float AvgCompression = 0.0f;
@@ -263,14 +281,14 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		const float GroundEffectFactor = 1.0f + Params.GroundEffectStrength * AvgCompression;
 
 		// 전진 속도^2에 비례하는 하향력 (약간의 후방 공력 중심으로 고속 리어 접지력 보강)
-		const float DownforceMag = Params.DownforceCoeff * GroundEffectFactor * CurrentForwardSpeed * CurrentForwardSpeed;
+		const float DownforceMag = Params.DownforceCoeff * ActiveDownforceScale * GroundEffectFactor * CurrentForwardSpeed * CurrentForwardSpeed;
 		const PxVec3 AeroCenterPos = ChassisPose.transform(PxVec3(-0.30f, 0.0f, 0.0f));
 		PxRigidBodyExt::addForceAtPos(*ChassisActor, -UpDir * DownforceMag, AeroCenterPos, PxForceMode::eFORCE);
 	}
 	const float LinearSpeed = ChassisVel.magnitude();
 	if (LinearSpeed > 0.5f && Params.AeroDragCoeff > 0.0f)
 	{
-		const float DragMag = Params.AeroDragCoeff * LinearSpeed * LinearSpeed;
+		const float DragMag = Params.AeroDragCoeff * ActiveDragScale * LinearSpeed * LinearSpeed;
 		ChassisActor->addForce(-ChassisVel.getNormalized() * DragMag, PxForceMode::eFORCE);
 	}
 

@@ -57,6 +57,9 @@ public:
 	void SetTractionControlEnabled(bool bEnable) { bTractionControlEnabled = bEnable; }
 	bool IsTractionControlEnabled() const { return bTractionControlEnabled; }
 
+	void SetDRSRequested(bool bRequest) { bDRSRequested = bRequest; }
+	bool IsDRSActive() const { return bDRSActive; }
+
 	const FVehicleParams& GetParams() const { return Params; }
 	void SetParams(const FVehicleParams& InParams);
 
@@ -76,6 +79,8 @@ private:
 	FVector PrevWorldVelocity = FVector::ZeroVector;
 	bool bTractionControlEnabled = true;
 	bool bTCActive = false;
+	bool bDRSRequested = false;
+	bool bDRSActive = false;
 
 	// PIMPL로 PhysX Vehicle SDK 내부 헤더 의존성 격리
 	struct FPhysXVehicleData* PhysXData = nullptr;

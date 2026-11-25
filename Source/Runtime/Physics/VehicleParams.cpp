@@ -24,6 +24,8 @@ void FVehicleParams::SetupFerrariF1()
 	PeakTorque = 4500.0f; // V6 터보 하이브리드 파워유닛 (1000마력+)
 	DownforceCoeff = 2.6f;            // 고속(288km/h)에서 차체 중량 ~2배 수준의 다운포스 생성
 	AeroDragCoeff = 1.6f;             // 최고속도 약 315~320 km/h 균형
+	DRSDragScale = 0.72f;             // DRS 개방 시 ~345 km/h까지 직선 추월 가속
+	DRSDownforceScale = 0.88f;
 	GroundEffectStrength = 0.25f;     // 플로어 차고 압축 시 최대 +25% 그라운드 이펙트 다운포스
 	TireLateralFriction = 1.75f;      // 전륜 F1 슬릭 타이어 그립 (약언더스티어 안정화 밸런스)
 	RearTireLateralFriction = 2.25f;  // 후륜 광폭 슬릭 타이어 고그립 (스핀 방지)

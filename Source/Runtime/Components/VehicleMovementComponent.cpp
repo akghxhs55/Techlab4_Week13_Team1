@@ -172,7 +172,12 @@ void UVehicleMovementComponent::TickComponent(float DeltaTime)
 	CurrentBrake = FMath::FInterpTo(CurrentBrake, RawBrakeInput, DeltaTime, 10.0f);
 
 	// 3. PhysX 시뮬레이션 파이프라인 구동
+	if (bDRSRequested && (CurrentBrake >= 0.05f || GetForwardSpeed() < 15.0f))
+	{
+		bDRSRequested = false;
+	}
 	SimulationPipeline.SetTractionControlEnabled(bEnableTractionControl);
+	SimulationPipeline.SetDRSRequested(bDRSRequested);
 	UWorld* World = GetWorld();
 	if (World && World->GetPhysicsScene())
 	{
@@ -283,6 +288,20 @@ float UVehicleMovementComponent::GetAverageRearSlipRatio() const
 bool UVehicleMovementComponent::IsTCActive() const
 {
 	return bVehicleInitialized ? SimulationPipeline.IsTCActive() : false;
+}
+
+void UVehicleMovementComponent::SetDRSRequested(bool bEnable)
+{
+	bDRSRequested = bEnable;
+	if (bVehicleInitialized)
+	{
+		SimulationPipeline.SetDRSRequested(bEnable);
+	}
+}
+
+bool UVehicleMovementComponent::IsDRSActive() const
+{
+	return bVehicleInitialized ? SimulationPipeline.IsDRSActive() : false;
 }
 
 const FWheelSimulationState& UVehicleMovementComponent::GetWheelState(EVehicleWheelOrder Order) const

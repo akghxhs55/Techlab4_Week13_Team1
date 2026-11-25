@@ -60,6 +60,8 @@ struct FVehicleParams
 	// 공력(다운포스/항력) 및 타이어 그립·고속 조향 제원
 	float DownforceCoeff = 2.6f;            // 속도^2 비례 하향력 계수 (N / (m/s)^2)
 	float AeroDragCoeff = 1.6f;             // 속도^2 비례 공기저항 계수 (N / (m/s)^2)
+	float DRSDragScale = 0.72f;             // DRS 개방 시 공기저항 배율 (28% 감소)
+	float DRSDownforceScale = 0.88f;        // DRS 개방 시 다운포스 배율
 	float GroundEffectStrength = 0.25f;     // 차고 압축(그라운드 이펙트)에 따른 추가 다운포스 비율
 	float TireLateralFriction = 1.75f;      // 전륜 횡방향 타이어 마찰계수 (F1 슬릭)
 	float RearTireLateralFriction = 2.25f;  // 후륜 광폭 타이어 횡방향 마찰계수 (고속 오버스티어 억제)

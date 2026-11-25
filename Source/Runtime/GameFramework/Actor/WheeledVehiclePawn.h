@@ -6,6 +6,8 @@
 #include "Components/VehicleMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Components/AudioComponent.h"
+#include "Components/ParticleSystemComponent.h"
 #include "WheeledVehiclePawn.generated.h"
 
 class UUserWidget;
@@ -44,6 +46,8 @@ public:
 	void SetSteeringInput(float Val);
 	void SetBrakeInput(float Val);
 	void SetHandbrakeInput(bool bVal);
+	void ToggleDRS();
+	void ToggleTractionControl();
 
 	UPROPERTY(EditAnywhere)
 	FRotator WheelMeshRotationOffset = FRotator(0.0f, 0.0f, 0.0f);
@@ -61,10 +65,21 @@ public:
 	UPROPERTY(EditAnywhere)
 	bool bShowTelemetryHUD = true;
 
+	UPROPERTY(EditAnywhere)
+	bool bEnableVehicleAudio = true;
+
+	UPROPERTY(EditAnywhere)
+	bool bEnableVehicleParticles = true;
+
 protected:
 	void CreateTelemetryHUD();
 	void UpdateTelemetryHUD(float DeltaTime);
 	void DestroyTelemetryHUD();
+	void InitVehicleAudio();
+	void UpdateVehicleAudio(float DeltaTime);
+	void StopVehicleAudio();
+	void InitVehicleParticles();
+	void UpdateVehicleParticles();
 
 	float BaseFieldOfView = 60.0f;
 	float BaseTargetArmLength = 7.0f;
@@ -109,4 +124,26 @@ protected:
 
 	UPROPERTY(VisibleAnywhere)
 	UStaticMeshComponent* WheelMesh_RR = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UAudioComponent* EngineAudioComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UAudioComponent* WindAudioComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UAudioComponent* TireAudioComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UParticleSystemComponent* TireSmokeRL = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UParticleSystemComponent* TireSmokeRR = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UParticleSystemComponent* FloorSparks = nullptr;
+
+	bool bTireSmokeActiveRL = false;
+	bool bTireSmokeActiveRR = false;
+	bool bFloorSparksActive = false;
 };
