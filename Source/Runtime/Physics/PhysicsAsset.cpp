@@ -25,6 +25,11 @@ void UPhysicsAsset::Serialize(FStructuredArchive::FRecord Record)
 	UObject::Serialize(Record);
 
 	FArchive& Ar = Record.GetUnderlyingArchive();
+	if (Ar.IsLoading()) PreviewMeshPath.clear();
+	if (auto Field = Record.TryEnterField("PreviewMeshPath", true))
+	{
+		Field.GetValue() << PreviewMeshPath;
+	}
 	int32 Num = BodySetups.Num();
 	FStructuredArchive::FArray Array = Record.EnterArray("Bodies", Num);
 

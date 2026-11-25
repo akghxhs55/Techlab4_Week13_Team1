@@ -10,6 +10,7 @@ class UAnimSequence;
 class UBlendSpace1D;
 class UWorld;
 class FLineBatcher;
+class UPhysicsAsset;
 namespace physx
 {
 	class PxAggregate;
@@ -55,9 +56,11 @@ public:
 	void EndPhysicsTickComponent(float DeltaTime);
 
 	virtual void SetSimulatePhysics(bool bSimulate) override;
+	// 지정 본과 그 하위 본의 바디만 동적으로 만들고, 나머지는 키네마틱으로 유지한다.
+	bool SetSimulatePhysicsBelow(int32 RootBoneIndex);
 	virtual void OnTransformDirty(ETeleportType TeleportType) override;
 
-	void InitArticulated(FPhysScene* PhysScene);
+	void InitArticulated(FPhysScene* PhysScene, const UPhysicsAsset* OverrideAsset = nullptr);
 	void TermArticulated();
 	void UpdateKinematicBonesToAnim(ETeleportType TeleportType);
 	void BlendInPhysics();
@@ -156,6 +159,7 @@ private:
 	physx::PxAggregate* Aggregate = nullptr;
 	TArray<FBodyInstance*> BoneToBody;
 	bool bPendingKinematicTeleport = false;
+	bool bSimulatingBodiesBelow = false;
 	TArray<TUniquePtr<FConstraintInstance>> Constraints;
 
 	bool bPreviewDissolveActive = false;

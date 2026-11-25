@@ -27,6 +27,7 @@ class FPhysicsAssetEditor : public FSkeletalPreviewEditor
 public:
 	enum class EPreviewShapeType { None, Sphere, Box, Capsule };
 	enum class EBodyDrawMode { All, SelectedOnly, None };
+	enum class ESimulationMode { All, SelectedAndBelow };
 
 	FPhysicsAssetEditor(
 		UEditorEngine& InEditorEngine,
@@ -48,6 +49,9 @@ public:
 	void StopSimulation();
 	void ToggleSimulation();
 	bool IsSimulationActive() const;
+	bool CanStartSimulation() const;
+	void SetSimulationMode(ESimulationMode Mode);
+	ESimulationMode GetSimulationMode() const { return SimulationMode; }
 	const FString& GetSimulationError() const { return SimulationError; }
 	void SetBodyDrawMode(EBodyDrawMode Mode);
 	EBodyDrawMode GetBodyDrawMode() const { return BodyDrawMode; }
@@ -90,8 +94,6 @@ public:
 	bool SetSelectedShapeProperties(const FShapeElem& Shape, const FVector& Size);
 
 	const char* GetEditorTypeName() const override { return "PhysicsAsset"; }
-	static FString MakePreviewDocumentKey(const FString& MeshPath) { return MeshPath + ".physicsasset-preview"; }
-	const FString& GetDocumentKey() const override { return PreviewDocumentKey; }
 	bool UsesPreviewSkybox() const override { return true; }
 
 protected:
@@ -116,7 +118,7 @@ private:
 	TUniquePtr<FPhysicsAssetSimulation> Simulation;
 	UStaticMeshComponent* PreviewFloor = nullptr;
 	FString SimulationError;
-	FString PreviewDocumentKey;
+	ESimulationMode SimulationMode = ESimulationMode::All;
 	FShapeElem* GetSelectedShape();
 	const FShapeElem* GetSelectedShape() const;
 	FVector GetSelectedShapeSize() const;
@@ -137,7 +139,7 @@ private:
 
 	// 각 바디는 생성된 본을 유지하며, 본 선택과 바디 선택은 별도로 관리합니다.
 	TArray<FPhysicsAssetPreviewBody> PreviewBodies;
-	UPhysicsAsset* PhysicsAsset = nullptr; // 메시가 참조하는 에셋. 에디터 종료 시 해제하지 않습니다.
+	UPhysicsAsset* PhysicsAsset = nullptr; // 이 문서만 소유하는 편집본. 공유 메시의 기본 Physics Asset은 변경하지 않습니다.
 	uint32 TopologyRevision = 0;
 	int32 SelectedBodyIndex = -1;
 	int32 SelectedConstraintIndex = -1;

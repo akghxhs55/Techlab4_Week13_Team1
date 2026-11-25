@@ -52,7 +52,7 @@ namespace
 		for (char& Character : Lower) {
 			Character = static_cast<char>(std::tolower(static_cast<unsigned char>(Character)));
 		}
-		return Lower.ends_with(".fbx.bin.physics.json") || Lower.ends_with(".fbx.bin.sockets.json");
+		return Lower.ends_with(".physics.json") || Lower.ends_with(".fbx.bin.sockets.json");
 	}
 
 	EAssetType GetAssetTypeFromPath(const FString& Path) {

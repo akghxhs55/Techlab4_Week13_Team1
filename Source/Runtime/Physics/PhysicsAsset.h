@@ -57,6 +57,9 @@ public:
 
 	void ClearBodies();
 
+	// 독립 Physics Asset 파일이 미리보기에 사용할 스켈레탈 메시 에셋 키.
+	FString PreviewMeshPath;
+
 	TArray<UBodySetup*> BodySetups;
 
 	UPROPERTY()
