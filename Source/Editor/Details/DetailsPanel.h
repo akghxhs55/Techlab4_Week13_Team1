@@ -1,6 +1,8 @@
 #pragma once
 
 #include <format>
+#include <vector>
+#include "Containers/Map.h"
 #include "Editor/EditorUI/EditorPanel.h"
 
 #include "Engine/World.h"
@@ -8,6 +10,7 @@
 struct FTransform;
 class FImGuiRenderer;
 class FEditorUndoHistory;
+class USkeletalMesh;
 using FShadowPreviewQuery = std::function<bool(const ULightComponent*, FTexture2DArray*&, TArray<FLightShadowRenderData>&)>;
 
 using DetailsSelectionCallback = std::function<void(UActorComponent*)>;
@@ -86,6 +89,7 @@ public:
 
 	void SetSelectionCallback(DetailsSelectionCallback InCallback) { Callback = InCallback; }
 	void SetDeleteComponentCallback(DetailsDeleteComponentCallback InCallback) { DeleteCallback = InCallback; }
+	void SetOpenPhysicsAssetCallback(std::function<void(const FString&)> InCallback) { OpenPhysicsAssetCallback = std::move(InCallback); }
 	void SetUndoHistory(FEditorUndoHistory* InHistory) { UndoHistory = InHistory; }
 
 	void SetWorld(UWorld* InWorld)
@@ -104,6 +108,18 @@ public:
 	ImFont* GetCustomFont() { return CustomFont; }
 
 private:
+	void DrawPhysicsAssetSettings(USkeletalMesh& Mesh);
+	void RefreshPhysicsAssetCandidates(const USkeletalMesh& Mesh);
+	struct FPhysicsAssetDetailsState
+	{
+		std::vector<FString> Candidates;
+		FString Message;
+		bool bPickerOpen = false;
+		bool bDirty = false;
+		bool bError = false;
+	};
+	TMap<const USkeletalMesh*, FPhysicsAssetDetailsState> PhysicsAssetStates;
+	std::function<void(const FString&)> OpenPhysicsAssetCallback;
 	void DrawShadowPreview();
 	void DrawComponentNameEditor(UActorComponent* Component, UActorComponent*& Selected, bool bRequested);
 	USceneComponent* PendingRootComponent = nullptr;

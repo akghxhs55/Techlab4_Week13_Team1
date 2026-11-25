@@ -1689,6 +1689,8 @@ void FContentDrawerPanel::RenderContents()
 
 				std::string PathString = FPaths::ToUtf8(Path);
 				std::string FilenameString = FPaths::ToUtf8(Path.filename());
+				// 메시의 기본 Physics Asset 참조는 별도 에셋 카드로 노출하지 않는다.
+				if (!bIsDirectory && ToLowerAscii(FilenameString).ends_with(".fbx.bin.physicsasset.json")) continue;
 
 				if (!ContainsCaseInsensitive(FilenameString, AssetSearchLower))
 					continue;
