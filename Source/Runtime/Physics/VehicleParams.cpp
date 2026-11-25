@@ -19,8 +19,6 @@ void FVehicleParams::SetupDefaultCar()
 void FVehicleParams::SetupFerrariF1()
 {
 	ChassisMass = 850.0f; // F1 차량 규정 최소 중량(~798kg) 기반 레이싱 세팅
-	ChassisDimensions = FVector(5.53f, 1.96f, 1.10f); // 페라리 F1 실측: 전장 5.53m, 전폭 1.96m, 전고 1.10m
-	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.25f); // 초저중심 레이싱 카 무게중심
 	PeakTorque = 4500.0f; // V6 터보 하이브리드 파워유닛 (1000마력+)
 	DownforceCoeff = 2.6f;            // 고속(288km/h)에서 차체 중량 ~2배 수준의 다운포스 생성
 	AeroDragCoeff = 1.6f;             // 최고속도 약 315~320 km/h 균형
@@ -32,8 +30,6 @@ void FVehicleParams::SetupFerrariF1()
 	TireLongitudinalFriction = 1.90f; // 급가속·풀브레이킹 트랙션 한계
 	TireNominalLoad = 2800.0f;
 	TireLoadSensitivity = 0.12f;
-	PacejkaB = 10.8f;
-	PacejkaC = 1.40f;
 	CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 참조치
 	MinHighSpeedSteerScale = 0.13f;   // 초고속 직선/130R에서 4.2도 내외 정밀 조향
 	HighSpeedSteerRefSpeed = 24.0f;   // 86km/h 기준 감쇠 (중속 코너링 ~14도 확보)
@@ -44,7 +40,6 @@ void FVehicleParams::SetupFerrariF1()
 	MaxRPM = 13500.0f;
 	UpshiftRPM = 12600.0f;
 	DownshiftRPM = 7800.0f;
-	MaxTCSlipRatio = 0.14f;
 
 	// 전륜 좌측 (Wheel 0) - 실측: X = +1.522m, Y = -0.800m, Z = -0.22m, 반경 0.358m, 폭 0.305m
 	FrontLeftWheel.Offset = FVector(1.522f, -0.800f, -0.22f);
@@ -83,8 +78,6 @@ void FVehicleParams::SetupFerrariF1()
 void FVehicleParams::SetupKoenigseggGemera()
 {
 	ChassisMass = 1850.0f;
-	ChassisDimensions = FVector(4.975f, 1.988f, 1.295f); // 코닉세그 제메라 실측: 전장 4.975m, 전폭 1.988m, 전고 1.295m
-	CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);
 	PeakTorque = 4500.0f; // 1700hp / 3500+ Nm
 	DownforceCoeff = 0.65f;
 	AeroDragCoeff = 0.95f;
@@ -94,8 +87,6 @@ void FVehicleParams::SetupKoenigseggGemera()
 	TireLongitudinalFriction = 1.35f;
 	TireNominalLoad = 4500.0f;
 	TireLoadSensitivity = 0.10f;
-	PacejkaB = 8.0f;
-	PacejkaC = 1.35f;
 	CorneringStiffness = 45000.0f;
 	MinHighSpeedSteerScale = 0.15f;
 	HighSpeedSteerRefSpeed = 20.0f;
@@ -106,7 +97,6 @@ void FVehicleParams::SetupKoenigseggGemera()
 	MaxRPM = 8500.0f;
 	UpshiftRPM = 7800.0f;
 	DownshiftRPM = 4200.0f;
-	MaxTCSlipRatio = 0.18f;
 
 	// 전륜 좌측 (Wheel 0) - 실측: X = +1.483m, Y = -0.842m, Z = -0.20m, 21인치(반경 0.355m)
 	FrontLeftWheel.Offset = FVector(1.483f, -0.842f, -0.2f);
@@ -171,20 +161,6 @@ FWheelConfig& FVehicleParams::GetWheel(int32 Index)
 const FWheelConfig& FVehicleParams::GetWheel(int32 Index) const
 {
 	return GetWheel(static_cast<EVehicleWheelOrder>(Index));
-}
-
-FVector FVehicleParams::ComputeChassisMOI() const
-{
-	const float X = ChassisDimensions.X;
-	const float Y = ChassisDimensions.Y;
-	const float Z = ChassisDimensions.Z;
-	const float Factor = ChassisMass / 12.0f;
-
-	return FVector(
-		Factor * (Y * Y + Z * Z), // Roll (X축 관성)
-		Factor * (X * X + Z * Z), // Pitch (Y축 관성)
-		Factor * (X * X + Y * Y)  // Yaw (Z축 관성)
-	);
 }
 
 PxVehicleFrame GetKurisuVehicleFrame()

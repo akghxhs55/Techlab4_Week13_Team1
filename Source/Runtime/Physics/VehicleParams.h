@@ -7,12 +7,6 @@ namespace physx
 {
 	struct PxVehicleFrame;
 	struct PxVehicleScale;
-	struct PxVehicleAxleDescription;
-	struct PxVehicleRigidBodyParams;
-	struct PxVehicleWheelParams;
-	struct PxVehicleSuspensionParams;
-	struct PxVehicleSuspensionForceParams;
-	struct PxVehicleTireForceParams;
 }
 
 // 4륜 바퀴 식별용 인덱스
@@ -53,8 +47,6 @@ struct FVehicleParams
 {
 	// 차체(Chassis) 제원
 	float ChassisMass = 1500.0f;                            // 차체 질량 (kg)
-	FVector ChassisDimensions = FVector(4.0f, 2.0f, 1.2f); // 전장 4m, 전폭 2m, 전고 1.2m
-	FVector CenterOfMassOffset = FVector(0.0f, 0.0f, -0.2f);// 무게중심 오프셋 (저중심 안정화)
 	float PeakTorque = 4000.0f;                             // 총 구동 토크 (N*m)
 
 	// 공력(다운포스/항력) 및 타이어 그립·고속 조향 제원
@@ -68,8 +60,6 @@ struct FVehicleParams
 	float TireLongitudinalFriction = 1.90f; // 종방향 가감속 트랙션 마찰계수
 	float TireNominalLoad = 2800.0f;        // 타이어 기준 수직하중 (N, 하중 민감도 기준)
 	float TireLoadSensitivity = 0.12f;      // 하중 민감도 지수 (수직하중 증가 시 마찰계수 체감)
-	float PacejkaB = 10.8f;                 // 간이 Magic Formula 강성 인자
-	float PacejkaC = 1.40f;                 // 간이 Magic Formula 형상 인자 (피크 이후 완만한 감쇠)
 	float LongitudinalStiffness = 80000.0f;	// 종방향 타이어 강성 (N / 슬립비)
 	float CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 참조치
 	float MinHighSpeedSteerScale = 0.13f;   // 초고속 시 최대 조향각 배율 (32도 * 0.13 ≈ 4.16도)
@@ -91,7 +81,6 @@ struct FVehicleParams
 	float MaxRPM = 13500.0f;
 	float UpshiftRPM = 12600.0f;
 	float DownshiftRPM = 7800.0f;
-	float MaxTCSlipRatio = 0.14f;           // 트랙션 컨트롤 허용 슬립비 상한
 
 	// 4개 바퀴 설정 (0: FL, 1: FR, 2: RL, 3: RR)
 	FWheelConfig FrontLeftWheel;
@@ -116,9 +105,6 @@ struct FVehicleParams
 
 	FWheelConfig& GetWheel(int32 Index);
 	const FWheelConfig& GetWheel(int32 Index) const;
-
-	// 직육면체 근사 관성 모멘트(MOI) 계산
-	FVector ComputeChassisMOI() const;
 };
 
 // PhysX Vehicle 2.0 축 및 스케일 헬퍼

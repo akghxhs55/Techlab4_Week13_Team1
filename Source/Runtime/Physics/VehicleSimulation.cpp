@@ -22,7 +22,6 @@ using namespace physx;
 // PhysX Vehicle SDK 내부 상태 및 파라미터 보관 구조체 (PIMPL)
 struct FPhysXVehicleData
 {
-	PxVehicleAxleDescription AxleDescription;
 	PxVehicleWheelParams WheelParams[4];
 	PxVehicleSuspensionParams SuspParams[4];
 	PxVehicleSuspensionForceParams SuspForceParams[4];
@@ -115,13 +114,6 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 			}
 		}
 	}
-
-	// 2개 액슬(전륜 0,1 / 후륜 2,3) 구성
-	PhysXData->AxleDescription.setToDefault();
-	const PxU32 frontWheels[2] = { 0, 1 };
-	PhysXData->AxleDescription.addAxle(2, frontWheels);
-	const PxU32 rearWheels[2] = { 2, 3 };
-	PhysXData->AxleDescription.addAxle(2, rearWheels);
 
 	// 서스펜션 계산 설정 (3D 원통 스윕 지원, 코너링 중 안쪽 바퀴 접지 유지를 위해 펴짐 속도 제한 비활성)
 	PhysXData->SuspCalcParams.suspensionJounceCalculationType = PhysXData->UnitCylinderSweepMesh
@@ -605,8 +597,6 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 			0.68f,
 			1.22f
 		);
-		const float GravelLongScale = WheelStates[i].bOnGravel ? 0.75f : 1.0f;
-		const float MaxLongFriction = NormalLoad * Params.TireLongitudinalFriction * GravelLongScale * LoadSensitivityFactor;
 
 		float DriveTorque = 0.0f;
 		if (i >= 2) // Rear wheels (2, 3)
@@ -617,6 +607,8 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		// 트랙션 컨트롤: 접지 한계를 넘는 토크를 자른다
 		if (bTractionControlEnabled && bContact && i >= 2 && Throttle > 0.05f)
 		{
+			const float GravelLongScale = WheelStates[i].bOnGravel ? 0.75f : 1.0f;
+			const float MaxLongFriction = NormalLoad * Params.TireLongitudinalFriction * GravelLongScale * LoadSensitivityFactor;
 			const float TCLimit = MaxLongFriction * 0.94f * Wheel.Radius;
 			if (DriveTorque > TCLimit)
 			{
