@@ -1,66 +1,168 @@
 #include "EnginePCH.h"
 #include "ConstraintInstance.h"
 
+#include <PxPhysics.h>
+#include <extensions/PxD6Joint.h>
+#include <extensions/PxJointLimit.h>
+
 #include "BodyInstance.h"
 #include "PhysicsCore.h"
 #include "PhysXConversion.h"
-#include <extensions/PxD6JointCreate.h>
-#include <extensions/PxD6Joint.h>
-#include <extensions/PxJointLimit.h>
-#include <PxRigidDynamic.h>
 
-bool FConstraintInstance::InitConstraint(FBodyInstance& Child, FBodyInstance& Parent)
+using namespace physx;
+
+namespace
 {
-	TermConstraint();
-	auto* ChildActor = Child.GetPxRigidDynamic();
-	auto* ParentActor = Parent.GetPxRigidDynamic();
-	auto* Physics = FPhysicsCore::GetPhysics();
-	if (!Physics || !ChildActor || !ParentActor)
-		return false;
-
-	const physx::PxTransform ChildFrame = bUseBoneOriginFrames
-		? physx::PxTransform(physx::PxVec3(0.0f), K2PQuat(JointFrameRotation.Quaternion())) : K2PTransform(Frame1);
-	const physx::PxTransform ParentFrame = bUseBoneOriginFrames
-		? ParentActor->getGlobalPose().getInverse() * ChildActor->getGlobalPose() * ChildFrame
-		: K2PTransform(Frame2);
-
-	Joint = physx::PxD6JointCreate(*Physics, ChildActor, ChildFrame, ParentActor, ParentFrame);
-	if (!Joint)
-		return false;
-
-	auto ToPxMotion = [](EConstraintAngularMotion Motion)
+	PxD6Motion::Enum ConvertMotion(EConstraintMotion InMotion)
 	{
-		switch (Motion)
+		switch (InMotion)
 		{
-		case EConstraintAngularMotion::Locked: return physx::PxD6Motion::eLOCKED;
-		case EConstraintAngularMotion::Free: return physx::PxD6Motion::eFREE;
-		default: return physx::PxD6Motion::eLIMITED;
+		case EConstraintMotion::Locked:
+			return PxD6Motion::eLOCKED;
+		case EConstraintMotion::Limited:
+			return PxD6Motion::eLIMITED;
+		case EConstraintMotion::Free:
+			return PxD6Motion::eFREE;
+		default:
+			return PxD6Motion::eLOCKED;
 		}
-	};
-	Joint->setMotion(physx::PxD6Axis::eTWIST, ToPxMotion(TwistMotion)); // 조인트 로컬 X축을 중심으로 비트는 회전
-	Joint->setMotion(physx::PxD6Axis::eSWING1, ToPxMotion(Swing1Motion)); // 조인트 로컬 Y축 기울어지는 회전
-	Joint->setMotion(physx::PxD6Axis::eSWING2, ToPxMotion(Swing2Motion)); // 조인트 로컬 Z축 기울어지는 회전
-	Joint->setTwistLimit(physx::PxJointAngularLimitPair(TwistLowerRadians, TwistUpperRadians)); // 여기서 정한 각도까지만 회전 허용
-	Joint->setSwingLimit(physx::PxJointLimitCone(Swing1LimitRadians, Swing2LimitRadians));
-	Joint->setConstraintFlag(physx::PxConstraintFlag::eCOLLISION_ENABLED, !bDisableCollision); // 조인트로 연결된 두 바디끼리 충돌할지 설정
-	return true;
+	}
 }
 
-void FConstraintInstance::UpdateConstraintFrames(FBodyInstance& Child, FBodyInstance& Parent) // 애니메이션 자세로 바디를 옮긴 뒤 래그돌을 시작할 때, 조인트가 옛 자세의 연결점을 계속 사용하지 않도록 갱신
+void FConstraintInstance::InitConstraint(
+	FBodyInstance* InBody1, 
+	FBodyInstance* InBody2, 
+	const FTransform& InFrame1, 
+	const FTransform& InFrame2, 
+	FPhysScene* InScene)
 {
-	if (!Joint || !bUseBoneOriginFrames || !Child.GetPxRigidDynamic() || !Parent.GetPxRigidDynamic())
+	if (Joint)
+	{
+		TermConstraint();
+	}
+
+	ConstraintBone1 = InBody1;
+	ConstraintBone2 = InBody2;
+	RefFrame1 = InFrame1;
+	RefFrame2 = InFrame2;
+
+	PxRigidActor* Actor1 = InBody1 ? InBody1->RigidActor : nullptr;
+	PxRigidActor* Actor2 = InBody2 ? InBody2->RigidActor : nullptr;
+
+	if (!Actor1 && !Actor2)
+	{
+		KRS_LOG(Warning, "[Physics] InitConstraint failed: Both bodies are null");
 		return;
-	const physx::PxTransform ChildFrame(physx::PxVec3(0.0f), K2PQuat(JointFrameRotation.Quaternion()));
-	Joint->setLocalPose(physx::PxJointActorIndex::eACTOR0, ChildFrame);
-	Joint->setLocalPose(physx::PxJointActorIndex::eACTOR1,
-		Parent.GetPxRigidDynamic()->getGlobalPose().getInverse() * Child.GetPxRigidDynamic()->getGlobalPose() * ChildFrame);
+	}
+
+	if (Actor1 && Actor2 && Actor1 == Actor2)
+	{
+		KRS_LOG(Warning, "[Physics] InitConstraint failed: Both bodies refer to the same actor");
+		return;
+	}
+
+	PxPhysics* Physics = FPhysicsCore::GetPhysics();
+	if (!Physics)
+	{
+		KRS_LOG(Error, "[Physics] InitConstraint failed: Physics SDK is null");
+		return;
+	}
+
+	const PxTransform Pose1 = K2PTransform(InFrame1);
+	const PxTransform Pose2 = K2PTransform(InFrame2);
+
+	Joint = PxD6JointCreate(*Physics, Actor1, Pose1, Actor2, Pose2);
+	if (!Joint)
+	{
+		KRS_LOG(Error, "[Physics] PxD6JointCreate failed");
+		return;
+	}
+
+	UpdateLinearLimit();
+	UpdateAngularLimit();
+	UpdateBreakable();
+
+	Joint->setConstraintFlag(PxConstraintFlag::eCOLLISION_ENABLED, bEnableCollision);
+
+	Joint->userData = this;
 }
 
 void FConstraintInstance::TermConstraint()
 {
 	if (Joint)
 	{
+		Joint->userData = nullptr;
 		Joint->release();
 		Joint = nullptr;
 	}
+	ConstraintBone1 = nullptr;
+	ConstraintBone2 = nullptr;
+}
+
+void FConstraintInstance::UpdateLinearLimit()
+{
+	if (!Joint)
+	{
+		return;
+	}
+
+	Joint->setMotion(PxD6Axis::eX, ConvertMotion(LinearX));
+	Joint->setMotion(PxD6Axis::eY, ConvertMotion(LinearY));
+	Joint->setMotion(PxD6Axis::eZ, ConvertMotion(LinearZ));
+
+	const bool bHasLinearLimit = (LinearX == EConstraintMotion::Limited)
+		|| (LinearY == EConstraintMotion::Limited)
+		|| (LinearZ == EConstraintMotion::Limited);
+
+	if (bHasLinearLimit && LinearLimitDistance > 0.0f)
+	{
+		Joint->setDistanceLimit(PxJointLinearLimit(LinearLimitDistance));
+	}
+}
+
+void FConstraintInstance::UpdateAngularLimit()
+{
+	if (!Joint)
+	{
+		return;
+	}
+
+	Joint->setMotion(PxD6Axis::eSWING1, ConvertMotion(Swing1Motion));
+	Joint->setMotion(PxD6Axis::eSWING2, ConvertMotion(Swing2Motion));
+	Joint->setMotion(PxD6Axis::eTWIST, ConvertMotion(TwistMotion));
+
+	// Swing1 / Swing2 제한 (Cone 형태)
+	const bool bHasSwingLimit = (Swing1Motion == EConstraintMotion::Limited)
+		|| (Swing2Motion == EConstraintMotion::Limited);
+
+	if (bHasSwingLimit)
+	{
+		const float Swing1Rad = FMath::Clamp(FMath::DegreesToRadians(Swing1LimitAngle), 0.001f, PI - 0.001f);
+		const float Swing2Rad = FMath::Clamp(FMath::DegreesToRadians(Swing2LimitAngle), 0.001f, PI - 0.001f);
+		Joint->setSwingLimit(PxJointLimitCone(Swing1Rad, Swing2Rad));
+	}
+
+	// Twist 제한 (AngularLimitPair)
+	if (TwistMotion == EConstraintMotion::Limited)
+	{
+		float LowerRad = FMath::DegreesToRadians(TwistLimitLowerAngle);
+		float UpperRad = FMath::DegreesToRadians(TwistLimitUpperAngle);
+		if (LowerRad > UpperRad)
+		{
+			std::swap(LowerRad, UpperRad);
+		}
+		LowerRad = FMath::Clamp(LowerRad, -2.0f * PI + 0.001f, 2.0f * PI - 0.001f);
+		UpperRad = FMath::Clamp(UpperRad, -2.0f * PI + 0.001f, 2.0f * PI - 0.001f);
+		Joint->setTwistLimit(PxJointAngularLimitPair(LowerRad, UpperRad));
+	}
+}
+
+void FConstraintInstance::UpdateBreakable()
+{
+	if (!Joint)
+	{
+		return;
+	}
+
+	Joint->setBreakForce(BreakForce, BreakTorque);
 }

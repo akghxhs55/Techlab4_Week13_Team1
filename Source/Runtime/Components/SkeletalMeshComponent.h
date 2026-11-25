@@ -2,43 +2,36 @@
 
 #include "SkinnedMeshComponent.h"
 #include "Animation/AnimInstance.h"
-#include "Serialization/StructuredArchive.h"
-#include <functional>
 #include "SkeletalMeshComponent.generated.h"
 
+struct FConstraintInstance;
 class UAnimInstance;
 class UAnimSequence;
 class UBlendSpace1D;
 class UWorld;
 class FLineBatcher;
+class UPhysicsAsset;
+namespace physx
+{
+	class PxAggregate;
+}
 
 // World의 SkeletalMeshComponent마다 root 디버그를 그린다 (DrawCollisionShapes와 같은 방식). PIE의 Show Root에서 호출
 void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher);
 // Settings > Debug Draw (PIE) > Show Root 값. 에디터가 매 프레임 갱신하고, 런타임 액터("root" 라벨 등)가 읽는다
 extern bool GShowSkeletalRootDebug;
+void DrawPhysicsAssetBodies(UWorld* World, FLineBatcher* LineBatcher);
 class UAnimationAsset;
 class UAnimSingleNodeInstance;
 class UAnimGraphInstance;
-class UPhysicsAsset;
-namespace physx { class PxAggregate; }
-struct FConstraintInstance;
-struct FHitResult;
-struct FRay;
-struct FBodyInstance;
-struct FPhysicsContactImpact;
 
-struct FSkeletalPhysicsImpact
+class USkeletalMeshComponent;
+
+struct FSkeletalMeshComponentEndPhysicsTickFunction : public FTickFunction
 {
-	int32 BoneIndex = -1;
-	FVector WorldLocation = FVector::ZeroVector;
-	FVector WorldNormal = FVector(0.0f, 0.0f, 1.0f);
-	FVector WorldImpulse = FVector::ZeroVector;
-	FVector WorldSlideVelocity = FVector::ZeroVector;
-	float ImpulseMagnitude = 0.0f;
-	bool bFromExternalImpulse = false;
+	USkeletalMeshComponent* Target = nullptr;
+	virtual void ExecuteTick(float DeltaTime) override;
 };
-
-using FSkeletalPhysicsImpactCallback = std::function<void(const FSkeletalPhysicsImpact&)>;
 
 UCLASS()
 class USkeletalMeshComponent : public USkinnedMeshComponent
@@ -58,29 +51,19 @@ public:
 	UAnimInstance* GetAnimInstance() const { return AnimInstance; }
 	void BeginPlay() override;
 	void TickComponent(float DeltaTime) override;
-	void SetPhysicsAsset(UPhysicsAsset* InAsset);
-	UPhysicsAsset* GetPhysicsAsset() const;
-	bool StartRagdoll();
-	void StopRagdoll();
-	bool SetRagdollSimulationEnabled(bool bEnable);
-	bool IsRagdollActive() const { return bRagdollActive; }
 
-	UPROPERTY()
-	bool bStartRagdollOnBeginPlay = false;
-	bool HasArticulatedBodies() const { return !Bodies.IsEmpty(); }
-	FBodyInstance* GetBodyInstance(const FString& BoneName) const;
-	void AddImpulseToBone(const FString& BoneName, const FVector& Impulse, bool bVelocityChange = false);
-	void SetRagdollLinearVelocity(const FVector& Velocity);
-	bool SetBodySimulatePhysics(const FString& BoneName, bool bSimulate);
-	bool SetAllBodiesBelowSimulatePhysics(const FString& BoneName, bool bSimulate);
-	bool IsAnyBodySimulatingPhysics() const;
-	void SyncPhysicsToBones();
-	void AddPhysicsImpactListener(const void* ListenerKey, FSkeletalPhysicsImpactCallback Callback);
-	void RemovePhysicsImpactListener(const void* ListenerKey);
-	void NotifyPhysicsContactImpact(const FPhysicsContactImpact& ContactImpact);
-	int32 FindBoneIndexForBody(const FBodyInstance* Body) const;
-	bool RaycastPhysicsBodies(const FRay& WorldRay, FHitResult& OutHit) const;
-	bool SweepPhysicsBodies(const FRay& WorldRay, float MaxDistance, float Radius, FHitResult& OutHit) const;
+	virtual void RegisterComponentTickFunctions(bool bRegister) override;
+	void EndPhysicsTickComponent(float DeltaTime);
+
+	virtual void SetSimulatePhysics(bool bSimulate) override;
+	// 지정 본과 그 하위 본의 바디만 동적으로 만들고, 나머지는 키네마틱으로 유지한다.
+	bool SetSimulatePhysicsBelow(int32 RootBoneIndex);
+	virtual void OnTransformDirty(ETeleportType TeleportType) override;
+
+	void InitArticulated(FPhysScene* PhysScene, const UPhysicsAsset* OverrideAsset = nullptr);
+	void TermArticulated();
+	void UpdateKinematicBonesToAnim(ETeleportType TeleportType);
+	void BlendInPhysics();
 
 	const TArray<FBoneInfo>& GetBones() const;
 	int32 FindBoneIndex(const FString& Name) const;
@@ -130,6 +113,9 @@ public:
 	// 디버그: root 본 구체 + 액터 위치(root 높이)에서 root까지의 선
 	void DrawRootDebug(FLineBatcher* LineBatcher) const;
 
+	// 디버그: 메시의 Physics 에셋 바디(구·박스·캡슐)를 각 본의 현재 월드 행렬 위에 그린다
+	void DrawPhysicsAssetDebug(FLineBatcher* LineBatcher) const;
+
 	void StartPreviewDissolve(float InDuration, const FVector4& InEdgeColor);
 	void UpdatePreviewDissolve(float DeltaTime);
 	void ResetPreviewDissolve();
@@ -138,10 +124,9 @@ public:
 	bool IsPreviewDissolveActive() const { return bPreviewDissolveActive; }
 
 protected:
-	bool ShouldCreatePhysicsState() const override;
-	void OnCreatePhysicsState() override;
-	void OnDestroyPhysicsState() override;
-	void OnUnregister() override;
+	virtual void OnCreatePhysicsState() override;
+	virtual void OnDestroyPhysicsState() override;
+
 	// 단일 애니메이션 에셋 경로/루프/재생 속도를 씬에 저장·복원한다 (Serialize에서 부른다)
 	void SerializeSingleAnimation(FStructuredArchive::FRecord& Record);
 
@@ -149,26 +134,10 @@ protected:
 	void OnSkeletalMeshChanged() override;
 
 private:
-	bool InitArticulated();
-	void TermArticulated();
-	void UpdateKinematicBonesToAnim();
-	FBodyInstance* FindArticulatedBody(const FString& BoneName) const;
+	void InitConstraints(const UPhysicsAsset& Asset);
+	bool IsSimulatingRagdoll() const;
+	void UpdateComponentToRootBody();
 
-	UPhysicsAsset* PhysicsAssetOverride = nullptr;
-	TArray<FBodyInstance*> Bodies;
-	physx::PxAggregate* BodyAggregate = nullptr;
-	TArray<FConstraintInstance*> Constraints;
-	TArray<int32> BodyBoneIndices;
-	struct FPhysicsImpactListenerEntry
-	{
-		const void* Key = nullptr;
-		FSkeletalPhysicsImpactCallback Callback;
-	};
-
-	TArray<FPhysicsImpactListenerEntry> PhysicsImpactListeners;
-	bool bRagdollActive = false;
-	bool bLogNextRagdollStep = false;
-	FVector RagdollStartBodyPosition = FVector::ZeroVector;
     UPROPERTY()
     FString AnimBlueprintPath;
 
@@ -184,6 +153,14 @@ private:
 
 	FTransform PendingRootMotion;           // 월드 공간 누적값
 	bool bHasPendingRootMotion = false;
+
+	FSkeletalMeshComponentEndPhysicsTickFunction EndPhysicsTickFunction;
+	TArray<TUniquePtr<FBodyInstance>> Bodies;
+	physx::PxAggregate* Aggregate = nullptr;
+	TArray<FBodyInstance*> BoneToBody;
+	bool bPendingKinematicTeleport = false;
+	bool bSimulatingBodiesBelow = false;
+	TArray<TUniquePtr<FConstraintInstance>> Constraints;
 
 	bool bPreviewDissolveActive = false;
 	bool bDissolveHidden = false;

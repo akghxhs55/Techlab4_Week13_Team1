@@ -42,6 +42,8 @@ public:
 	void Shutdown();
 
 	virtual void OnRenderLine(class FLineBatcher& LineBatcher);
+	// 장면 깊이가 유지되는 디버그 패스입니다. 기즈모용 깊이 초기화 전에 호출합니다.
+	virtual void OnRenderDebugOverlay(const FSceneView*) {}
 
 	////////////////////////////////////////////////////////////
 	// Getter
@@ -49,6 +51,8 @@ public:
 
 	virtual const char* GetEditorTypeName() const = 0;
 	const FString& GetAssetPath() const { return AssetPath; }
+	// 같은 에셋을 서로 다른 에디터로 열 때 사용할 문서 식별자입니다.
+	virtual const FString& GetDocumentKey() const { return AssetPath; }
 	FPreviewScene& GetPreviewScene() { return PreviewScene; }
 	FEditorViewportClient* GetViewportClient() const { return ViewportClient.get(); }
 	virtual const FGizmo* GetPreviewGizmo() const { return nullptr; }

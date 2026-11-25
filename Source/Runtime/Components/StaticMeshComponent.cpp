@@ -37,7 +37,7 @@ void UStaticMeshComponent::SetStaticMesh(UStaticMesh* InStaticMesh)
 	StaticMesh = InStaticMesh;
 	ClearOverrideMaterials();
 	MarkRenderStateDirty();
-	OnTransformDirty();
+	OnTransformDirty(ETeleportType::None);
 }
 
 int32 UStaticMeshComponent::GetNumMaterials() const

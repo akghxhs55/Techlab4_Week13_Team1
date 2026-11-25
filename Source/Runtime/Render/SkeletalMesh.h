@@ -9,7 +9,9 @@
 #include "Material.h"
 #include <unordered_map>
 #include <vector>
+#include "Physics/PhysicsAsset.h"
 #include "SkeletalMesh.generated.h"
+
 
 struct FSkeletalMeshLODRenderData
 {
@@ -31,8 +33,6 @@ struct FSkeletalMeshRenderData
 	TArray<FSkeletalMeshLODRenderData> LODRenderData;
 };
 
-class UPhysicsAsset;
-
 UCLASS()
 class USkeletalMesh : public URenderAsset
 {
@@ -43,8 +43,6 @@ public:
 	const TArray<FBoneInfo>& GetRefSkeleton() const { return RefSkeleton; }
 	int32 GetNumBones() const { return RefSkeleton.Num(); }
 	int32 FindBoneIndex(const FString& Name) const;
-	UPhysicsAsset* GetPhysicsAsset() const { return PhysicsAsset; }
-	void SetPhysicsAsset(UPhysicsAsset* InAsset) { PhysicsAsset = InAsset; }
 	const FSkeletalMeshRenderData& GetRenderData() const { return RenderData; }
 	const TArray<FSkeletalMaterialSlot>& GetMaterialSlots() const { return MaterialSlots; }
 	UMaterialInterface* GetMaterial(uint32 SlotIndex) const;
@@ -61,6 +59,12 @@ public:
 	bool LoadSocketsFromFile(const FString& FilePath);
 	bool SaveSocketsToFile(const FString& FilePath) const;
 
+	UPhysicsAsset* GetPhysicsAsset() const { return PhysicsAsset; }
+	void SetPhysicsAsset(UPhysicsAsset* NewPhysicsAsset) { PhysicsAsset = NewPhysicsAsset; }
+	bool SetPhysicsAssetByPath(const FString& Path, FString& OutError);
+	bool LoadPhysicsAssetReference(FString& OutError);
+	bool SavePhysicsAssetReference(FString& OutError) const;
+
 private:
 	struct FMaterialSlotsHash
 	{
@@ -72,7 +76,8 @@ private:
 	TArray<UMaterialInterface*> Materials;
 	FSkeletalMeshRenderData RenderData;
 	TArray<FSkeletalMeshSocket> Sockets;
-	UPhysicsAsset* PhysicsAsset = nullptr;
 	// UStaticMesh와 같은 캐시: 같은 머티리얼 조합의 컴포넌트끼리 섹션 목록 공유
 	TMap<TArray<UMaterialInterface*>, TWeakPtr<const FMeshRenderState>, FMaterialSlotsHash> RenderStates;
+	UPROPERTY(EditAnywhere)
+	UPhysicsAsset* PhysicsAsset = nullptr;
 };

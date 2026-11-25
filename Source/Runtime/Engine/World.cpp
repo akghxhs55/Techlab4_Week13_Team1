@@ -1152,6 +1152,12 @@ void UWorld::UpdateOverlaps()
 			continue;
 		}
 
+		// PhysX 물리 상태가 생성되어 PhysX가 충돌/이벤트를 처리하는 도형은 중복 방지를 위해 제외
+		if (Shape->IsPhysicsStateCreated())
+		{
+			continue;
+		}
+
 		Shapes.Add(Shape);
 	}
 

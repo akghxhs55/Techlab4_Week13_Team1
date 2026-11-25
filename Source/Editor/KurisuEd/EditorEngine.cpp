@@ -549,6 +549,10 @@ void UEditorEngine::InitPanels()
 	);
 
 	DetailsPanel->SetWorld(GetActiveWorld());
+	DetailsPanel->SetOpenPhysicsAssetCallback([this](const FString& Path)
+	{
+		if (EditorManager) EditorManager->OpenPhysicsAssetEditor(Path);
+	});
 
 	WorldSettingsPanel = LevelEditorTab->AddPanel<FWorldSettingsPanel>();
 	WorldSettingsPanel->SetWorld(GetActiveWorld());

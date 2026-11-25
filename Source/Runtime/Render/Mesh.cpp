@@ -10,21 +10,10 @@
 
 UStaticMesh::~UStaticMesh()
 {
-	for (FPrimitiveSceneProxy* Proxy : RenderProxies)
-		Proxy->OnMeshDestroyed();
+    for (FPrimitiveSceneProxy* Proxy : RenderProxies)
+        Proxy->OnMeshDestroyed();
 	VertexBuffer = nullptr;
 	IndexBuffer = nullptr;
-	UBodySetup* ToDelete = BodySetup;
-	BodySetup = nullptr;
-	delete ToDelete;
-}
-
-void UStaticMesh::ClearBodySetup(const UBodySetup* InBodySetup)
-{
-	if (BodySetup == InBodySetup)
-	{
-		BodySetup = nullptr;
-	}
 }
 
 UBodySetup* UStaticMesh::GetBodySetup()

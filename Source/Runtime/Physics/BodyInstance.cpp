@@ -53,8 +53,11 @@ namespace
 	{
 		const bool bSim = Enabled == ECollisionEnabled::PhysicsOnly || Enabled == ECollisionEnabled::QueryAndPhysics;
 		const bool bQuery = Enabled == ECollisionEnabled::QueryOnly || Enabled == ECollisionEnabled::QueryAndPhysics;
+		const bool bTrigger = Enabled == ECollisionEnabled::QueryOnly;
+
 		Shape->setFlag(PxShapeFlag::eSIMULATION_SHAPE, bSim);
 		Shape->setFlag(PxShapeFlag::eSCENE_QUERY_SHAPE, bQuery);
+		Shape->setFlag(PxShapeFlag::eTRIGGER_SHAPE, bTrigger);
 	}
 
 	int32 CreateShapes(PxRigidActor& Actor, const FAggregateGeom& Geom, const FVector& InScale, ECollisionEnabled Enabled)
@@ -98,7 +101,7 @@ namespace
 	}
 }
 
-void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene)
+void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene, PxAggregate* Aggregate)
 {
 	if (RigidActor)
 	{
@@ -150,7 +153,15 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 	Dynamic->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, !bEnableGravity);
 
 	Dynamic->userData = this;
-	Scene->addActor(*Dynamic);
+
+	if (Aggregate)
+	{
+		Aggregate->addActor(*Dynamic);
+	}
+	else
+	{
+		Scene->addActor(*Dynamic);
+	}
 
 	RigidActor = Dynamic;
 	BodySetup = InBodySetup;
@@ -183,7 +194,7 @@ bool FBodyInstance::IsDynamic() const
 	return Dynamic && !(Dynamic->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC);
 }
 
-void FBodyInstance::SetBodyTransform(const FTransform& WorldTransform, bool bTeleport)
+void FBodyInstance::SetBodyTransform(const FTransform& WorldTransform, ETeleportType TeleportType)
 {
 	PxRigidDynamic* Dynamic = GetPxRigidDynamic();
 	if (!Dynamic)
@@ -197,7 +208,7 @@ void FBodyInstance::SetBodyTransform(const FTransform& WorldTransform, bool bTel
 	};
 	const bool bKinematic = Dynamic->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC;
 
-	if (bKinematic && !bTeleport)
+	if (bKinematic && TeleportType == ETeleportType::None)
 	{
 		Dynamic->setKinematicTarget(Pose);
 	}

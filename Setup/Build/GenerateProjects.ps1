@@ -47,6 +47,13 @@ try {
             "$temporaryDrive/", '$(ProjectDir)../../')
         # Premake also emits the drive root without a trailing separator.
         $content = $content.Replace($temporaryDrive, '$(ProjectDir)..\..')
+        # VS matches filter items to project items by their Include paths.
+        # Use plain relative paths in both files; filters do not evaluate
+        # MSBuild properties like $(ProjectDir) in the same way as projects.
+        $content = $content.Replace(
+            'Include="$(ProjectDir)..\..\', 'Include="..\..\')
+        $content = $content.Replace(
+            'Include="$(ProjectDir)../../', 'Include="../../')
         if ($content.Contains($temporaryDrive)) {
             throw "Temporary drive reference remains in $($_.Name)."
         }

@@ -13,17 +13,6 @@ UShapeComponent::UShapeComponent()
 
 UShapeComponent::~UShapeComponent()
 {
-	UBodySetup* ToDelete = ShapeBodySetup;
-	ShapeBodySetup = nullptr;
-	delete ToDelete;
-}
-
-void UShapeComponent::ClearShapeBodySetup(const UBodySetup* InBodySetup)
-{
-	if (ShapeBodySetup == InBodySetup)
-	{
-		ShapeBodySetup = nullptr;
-	}
 }
 
 UBodySetup* UShapeComponent::GetBodySetup()

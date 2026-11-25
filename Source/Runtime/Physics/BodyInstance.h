@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/EngineBaseTypes.h"
 #include "BodyInstance.generated.h"
 
 class FPhysScene;
@@ -11,6 +12,7 @@ namespace physx
 {
 	class PxRigidActor;
 	class PxRigidDynamic;
+	class PxAggregate;
 }
 
 UENUM()
@@ -23,7 +25,7 @@ enum class ECollisionEnabled : uint8
 };
 
 USTRUCT()
-struct FBodyInstance // Component와 PhysX의 Rigid Body를 연결하고 관리
+struct FBodyInstance
 {
 	GENERATED_BODY()
 
@@ -45,17 +47,16 @@ struct FBodyInstance // Component와 PhysX의 Rigid Body를 연결하고 관리
 	UPROPERTY(EditAnywhere)
 	ECollisionEnabled CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 
-	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene);
+	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene, physx::PxAggregate* Aggregate = nullptr);
 	void TermBody();
 	bool IsValidBodyInstance() const { return RigidActor != nullptr; }
 
 	physx::PxRigidDynamic* GetPxRigidDynamic() const;
 	bool IsDynamic() const;
 
-	void SetBodyTransform(const FTransform& WorldTransform, bool bTeleport);
+	void SetBodyTransform(const FTransform& WorldTransform, ETeleportType TeleportType);
 	FTransform GetUnrealWorldTransform() const;
 	void SetInstanceSimulatePhysics(bool bSimulate);
-	void SetCollisionEnabled(ECollisionEnabled InCollisionEnabled);
 	void AddImpulse(const FVector& Impulse, bool bVelocityChange);
 	void AddForce(const FVector& Force);
 	void SetLinearVelocity(const FVector& Velocity);
@@ -66,5 +67,5 @@ struct FBodyInstance // Component와 PhysX의 Rigid Body를 연결하고 관리
 	UBodySetup* BodySetup = nullptr;
 	FPhysScene* PhysScene = nullptr;
 	FVector Scale3D = FVector(1.0f, 1.0f, 1.0f);
-	bool bIsSkeletalBody = false;
+	int32 BoneIndex = INDEX_NONE;
 };

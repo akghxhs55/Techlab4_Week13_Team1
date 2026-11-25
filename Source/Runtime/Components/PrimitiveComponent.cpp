@@ -84,20 +84,20 @@ bool UPrimitiveComponent::LineTraceComponentLocal(const FRay& LocalRay, float& O
 	return Mesh && TraceMeshLocal(LocalRay, *Mesh, OutT);
 }
 
-void UPrimitiveComponent::OnTransformDirty()
+void UPrimitiveComponent::OnTransformDirty(ETeleportType TeleportType)
 {
 	if (SceneProxy)
 		SceneProxy->GetScene()->MarkDirty(SceneProxy);
 
 	if (!bSyncingFromPhysics && BodyInstance.IsValidBodyInstance())
 	{
-		BodyInstance.SetBodyTransform({ GetWorldRotation(), GetWorldLocation(), GetWorldScale3D() }, BodyInstance.IsDynamic());
+		BodyInstance.SetBodyTransform({ GetWorldRotation(), GetWorldLocation(), GetWorldScale3D() }, TeleportType);
 	}
 }
 
-bool UPrimitiveComponent::MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit)
+bool UPrimitiveComponent::MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit, ETeleportType TeleportType)
 {
-	return Super::MoveComponent(Delta, NewRotation, bSweep, Hit);
+	return Super::MoveComponent(Delta, NewRotation, bSweep, Hit, TeleportType);
 }
 
 void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)

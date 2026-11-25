@@ -3,6 +3,8 @@
 #include "Editor/EditorUI/EditorStyle.h"
 #include "Editor/Viewports/LevelEditorViewport.h"
 #include "Engine/GameViewportClient.h"
+#include "Engine/World.h"
+#include "Editor/Viewports/PhysicsStatOverlay.h"
 
 #include "Core/StatOverlay.h"
 #include "Core/Stats/LightweightStats.h"
@@ -556,6 +558,15 @@ const FRenderStats& Stats = RenderData.RenderStats;
 		Lines.Add({ std::format("  Particles {} / {} ({:.1f} %)", Active, Capacity,
 			Capacity > 0 ? 100.0 * static_cast<double>(Active) / static_cast<double>(Capacity) : 0.0), ValueColor });
 		Lines.Add({ std::format("  Memory {:.1f} KB", static_cast<double>(MemoryBytes) / 1024.0), ValueColor });
+	}
+
+	if (FStatOverlay::IsEnabled(EStatFlags::Physics)) {
+		// PIE 화면은 실제 게임 뷰포트의 월드를 사용한다.
+		const UWorld* PhysicsWorld = GameViewportClient && Client->GetViewIndex() == GameViewportIndex
+			? GameViewportClient->GetWorld() : Client->GetWorld();
+		Lines.Add({ "Physics", TitleColor });
+		for (const FString& Line : PhysicsStatOverlay::BuildLines(PhysicsWorld ? PhysicsWorld->GetPhysicsScene() : nullptr))
+			Lines.Add({ Line, ValueColor });
 	}
 
 	if (Lines.Num() == 0 && ProfileLines.Num() == 0)
