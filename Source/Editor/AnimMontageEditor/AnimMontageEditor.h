@@ -2,6 +2,7 @@
 
 #include "Editor/SkeletalPreviewEditor/SkeletalPreviewEditor.h"
 #include "Animation/AnimMontageAsset.h"
+#include "Math/Transform.h"
 
 class UAnimGraphInstance;
 
@@ -34,15 +35,20 @@ public:
 protected:
 	bool InitializeResources() override;
 	void ShutdownResources() override;
+	void TickAfterWorld(float DeltaTime) override;
 	TUniquePtr<IEditorTab> CreateTab() override;
 
 private:
 	void RebuildPreviewGraph();
 	void RefreshAssetLength();
+	void ApplyPreviewRootMotion();
+	void ResetPreviewRootMotion();
 
 	FAnimMontageAsset MontageAsset;
 	TUniquePtr<UAnimGraphInstance> PreviewInstance;
 	FString Message;
+	FTransform PreviewBaseTransform;
+	bool bHasPreviewBase = false;
 	float CachedAssetLength = 0.0f;
 	float ScrubPosition = 0.0f;
 	int32 SelectedNotifyIndex = INDEX_NONE;

@@ -39,6 +39,8 @@ bool FAnimMontageEditor::InitializeResources()
 	RebuildPreviewGraph();
 	RefreshAssetLength();
 	MeshComponent->SetAnimInstance(PreviewInstance.get());
+	PreviewBaseTransform = MeshComponent->GetTransform();
+	bHasPreviewBase = true;
 	return true;
 }
 
@@ -112,7 +114,60 @@ void FAnimMontageEditor::ShutdownResources()
 		MeshComponent->SetAnimInstance(nullptr);
 	}
 	PreviewInstance.reset();
+	bHasPreviewBase = false;
 	FSkeletalPreviewEditor::ShutdownResources();
+}
+
+void FAnimMontageEditor::TickAfterWorld(float DeltaTime)
+{
+	FSkeletalPreviewEditor::TickAfterWorld(DeltaTime);
+	ApplyPreviewRootMotion();
+}
+
+void FAnimMontageEditor::ApplyPreviewRootMotion()
+{
+	if (!MeshComponent)
+	{
+		return;
+	}
+	if (!bHasPreviewBase)
+	{
+		PreviewBaseTransform = MeshComponent->GetTransform();
+		bHasPreviewBase = true;
+	}
+	if (!MeshComponent->HasPendingRootMotion())
+	{
+		return;
+	}
+
+	const FTransform Delta = MeshComponent->ConsumeRootMotion();
+	FTransform Moved = MeshComponent->GetTransform();
+	Moved.Location = Moved.Location + Delta.Location;
+	Moved.Rotation = (Delta.Rotation * Moved.Rotation).Normalized();
+
+	// 몽타주 프리뷰 메시가 너무 멀어지면 기준 위치로 되돌린다
+	const FBox Bounds = MeshComponent->CalcBounds();
+	const float MeshHeight = Bounds.Max.Z - Bounds.Min.Z;
+	const float MaxPreviewDistance = (MeshHeight > 0.0f ? MeshHeight : 1.0f) * 3.0f;
+	const FVector FromBase = Moved.Location - PreviewBaseTransform.Location;
+	if (FromBase.X * FromBase.X + FromBase.Y * FromBase.Y > MaxPreviewDistance * MaxPreviewDistance)
+	{
+		Moved = PreviewBaseTransform;
+	}
+	MeshComponent->SetTransform(Moved);
+}
+
+void FAnimMontageEditor::ResetPreviewRootMotion()
+{
+	if (!MeshComponent)
+	{
+		return;
+	}
+	MeshComponent->ConsumeRootMotion();
+	if (bHasPreviewBase)
+	{
+		MeshComponent->SetTransform(PreviewBaseTransform);
+	}
 }
 
 TUniquePtr<IEditorTab> FAnimMontageEditor::CreateTab()
@@ -142,6 +197,7 @@ void FAnimMontageEditor::PreviewPlay()
 	}
 	RefreshAssetLength();
 	RebuildPreviewGraph();
+	ResetPreviewRootMotion();
 	MeshComponent->SetAnimInstance(PreviewInstance.get());
 	PreviewInstance->PlayMontageFromAsset(GetAssetPath(), MontageAsset, 1.0f);
 	if (ScrubPosition > 0.0f && ScrubPosition < CachedAssetLength)
@@ -179,6 +235,7 @@ void FAnimMontageEditor::PreviewStop()
 	{
 		PreviewInstance->StopMontage(MontageAsset.SlotName, 0.0f);
 	}
+	ResetPreviewRootMotion();
 	ScrubPosition = 0.0f;
 }
 

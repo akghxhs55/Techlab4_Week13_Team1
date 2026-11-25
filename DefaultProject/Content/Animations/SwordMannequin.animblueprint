@@ -2,7 +2,7 @@
   "Format": "KurisuAnimBlueprint",
   "Version": 1,
   "PreviewMeshPath": "Models/SwordModel/SK_SK_Mannequin_root.fbx.bin",
-  "RootMotionMode": 0,
+  "RootMotionMode": 2,
   "RootGraphId": 1,
   "NextId": 58,
   "Variables": [
