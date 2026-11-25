@@ -58,7 +58,6 @@ public:
 	virtual void SetSimulatePhysics(bool bSimulate) override;
 	// 지정 본과 그 하위 본의 바디만 동적으로 만들고, 나머지는 키네마틱으로 유지한다.
 	bool SetSimulatePhysicsBelow(int32 RootBoneIndex);
-	bool SetSimulatePhysicsBelow(const TArray<int32>& RootBoneIndices);
 	virtual void AddImpulse(FVector Impulse, FName BoneName = NAME_None, bool bVelChange = false) override;
 	void AddImpulseToAllBodiesBelow(FVector Impulse, FName BoneName = NAME_None, bool bVelChange = false, bool bIncludeSelf = true);
 	virtual void OnTransformDirty(ETeleportType TeleportType) override;
