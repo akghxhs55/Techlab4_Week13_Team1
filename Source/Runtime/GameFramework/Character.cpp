@@ -25,6 +25,56 @@ ACharacter::ACharacter()
 	CharacterMovementComponent = CreateDefaultSubobject<UCharacterMovementComponent>("CharacterMovementComponent");
 }
 
+bool ACharacter::StartRagdoll()
+{
+	if (SkeletalMeshComponent && SkeletalMeshComponent->IsRagdollActive())
+		return true;
+	const FVector InheritedVelocity = GetVelocity();
+	KRS_LOG(Info, "[Ragdoll] inherited velocity=({},{},{})",
+		InheritedVelocity.X, InheritedVelocity.Y, InheritedVelocity.Z);
+	if (!SkeletalMeshComponent || !CapsuleComponent)
+		return false;
+	if (CharacterMovementComponent)
+	{
+		bMovementTickBeforeRagdoll = CharacterMovementComponent->IsComponentTickEnabled();
+		CharacterMovementComponent->StopMovementImmediately();
+		CharacterMovementComponent->SetComponentTickEnabled(false);
+	}
+	bCapsuleOverlapBeforeRagdoll = CapsuleComponent->bGenerateOverlapEvents;
+	bCapsuleBlockBeforeRagdoll = CapsuleComponent->bBlockComponent;
+	CapsuleCollisionBeforeRagdoll = static_cast<uint8>(CapsuleComponent->BodyInstance.CollisionEnabled);
+	CapsuleComponent->bGenerateOverlapEvents = false;
+	CapsuleComponent->bBlockComponent = false;
+	CapsuleComponent->BodyInstance.SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	if (!SkeletalMeshComponent->StartRagdoll())
+	{
+		RestoreRagdollMovementAndCollision();
+		return false;
+	}
+	SkeletalMeshComponent->SetRagdollLinearVelocity(InheritedVelocity);
+	return true;
+}
+
+void ACharacter::StopRagdoll()
+{
+	if (!SkeletalMeshComponent || !SkeletalMeshComponent->IsRagdollActive())
+		return;
+	SkeletalMeshComponent->StopRagdoll();
+	RestoreRagdollMovementAndCollision();
+}
+
+void ACharacter::RestoreRagdollMovementAndCollision()
+{
+	if (CapsuleComponent)
+	{
+		CapsuleComponent->BodyInstance.SetCollisionEnabled(static_cast<ECollisionEnabled>(CapsuleCollisionBeforeRagdoll));
+		CapsuleComponent->bGenerateOverlapEvents = bCapsuleOverlapBeforeRagdoll;
+		CapsuleComponent->bBlockComponent = bCapsuleBlockBeforeRagdoll;
+	}
+	if (CharacterMovementComponent)
+		CharacterMovementComponent->SetComponentTickEnabled(bMovementTickBeforeRagdoll);
+}
+
 void ACharacter::AddControllerYawInput(float Value)
 {
 	if (!bUseControllerRotationYaw || !GetRootComponent()) return;

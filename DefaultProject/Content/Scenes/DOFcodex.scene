@@ -1,0 +1,1329 @@
+{
+  "Version": 4,
+  "World": {
+    "Properties": {
+      "GameModeClassName": "AGameMode",
+      "PlayerPawnClassName": "",
+      "PlayerControllerClassName": "",
+      "HUDClassName": ""
+    },
+    "PersistentLevel": {
+      "Properties": {},
+      "Actors": [
+        {
+          "Class": "ADefaultPawn",
+          "Name": "DOFcodex_Camera",
+          "RootComponentName": "StaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "StaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 0,
+                    "Y": 0,
+                    "Z": 2.2
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.24,
+                    "Y": 0.24,
+                    "Z": 0.24
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": true,
+                "bReceiveShadow": false,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            },
+            {
+              "Class": "UCameraComponent",
+              "Name": "CameraComponent",
+              "Parent": "StaticMeshComponent",
+              "Properties": {
+                "Transform": {
+                  "Location": {
+                    "X": 0.0,
+                    "Y": 0.0,
+                    "Z": 0.0
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 1.0,
+                    "Y": 1.0,
+                    "Z": 1.0
+                  }
+                },
+                "bAutoActivate": true,
+                "bHiddenInGame": false,
+                "bVisible": true,
+                "bExternalInputManaged": true,
+                "bEnableDepthOfField": true,
+                "FocalDistance": 5.0,
+                "ApertureFStop": 4.0,
+                "MinimumFStop": 1.2,
+                "DiaphragmBladeCount": 4,
+                "SensorWidthMM": 36.0,
+                "DepthBlurKmFor50Percent": 0.08,
+                "DepthBlurRadius": 0.0,
+                "NearBlurScale": 1.0,
+                "FarBlurScale": 1.0,
+                "NearMaxBlurRadius": 30.0,
+                "FarMaxBlurRadius": 40.0,
+                "bUsePawnControlRotation": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "ADirectionalLightActor",
+          "Name": "Soft_Key_Light",
+          "RootComponentName": "UDirectionalLightComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UDirectionalLightComponent",
+              "Name": "UDirectionalLightComponent",
+              "Parent": "",
+              "Properties": {
+                "AngularRadiusDegrees": 0.5,
+                "AttachSocketName": "",
+                "CascadeDistributionExponent": 3.0,
+                "CascadeTransitionFraction": 0.15,
+                "DynamicShadowCascades": 4,
+                "DynamicShadowDistanceMovableLight": 200.0,
+                "Intensity": 0.55,
+                "LightColor": 4294964440,
+                "ShadowBias": 0.5,
+                "ShadowDistanceFadeoutFraction": 0.1,
+                "ShadowResolutionScale": 1.0,
+                "ShadowSharpen": 0.0,
+                "ShadowSlopeBias": 0.5,
+                "Transform": {
+                  "Location": {
+                    "X": 0.0,
+                    "Y": 0.0,
+                    "Z": 6.0
+                  },
+                  "Rotation": {
+                    "Pitch": 34.0,
+                    "Roll": 0.0,
+                    "Yaw": -32.0
+                  },
+                  "Scale": {
+                    "X": 1.0,
+                    "Y": 1.0,
+                    "Z": 1.0
+                  }
+                },
+                "bAutoActivate": true,
+                "bCastShadows": true,
+                "bHiddenInGame": false,
+                "bVisible": true
+              }
+            },
+            {
+              "Class": "UBillboardComponent",
+              "Name": "UBillboardComponent",
+              "Parent": "UDirectionalLightComponent",
+              "Material": {
+                "Base": "BillboardMaterial",
+                "Instance": {
+                  "Properties": {},
+                  "Textures": [
+                    "Engine/Icons/Directional.png"
+                  ]
+                }
+              },
+              "Properties": {
+                "AttachSocketName": "",
+                "Transform": {
+                  "Location": {
+                    "X": 0.0,
+                    "Y": 0.0,
+                    "Z": 0.0
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 1.0,
+                    "Y": 1.0,
+                    "Z": 1.0
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": true,
+                "bReceiveShadow": false,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            },
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UArrowComponent",
+              "Parent": "UDirectionalLightComponent",
+              "OverrideMaterials": [
+                {
+                  "Asset": "EditorArrowMaterial"
+                }
+              ],
+              "Properties": {
+                "AttachSocketName": "",
+                "StaticMesh": "Arrow",
+                "Transform": {
+                  "Location": {
+                    "X": 0.0,
+                    "Y": 0.0,
+                    "Z": 0.0
+                  },
+                  "Rotation": {
+                    "Pitch": 90.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.3,
+                    "Y": 0.3,
+                    "Z": 0.5
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": true,
+                "bReceiveShadow": false,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "Dark_Floor",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.022,
+                          "Y": 0.029,
+                          "Z": 0.045,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Cube",
+                "Transform": {
+                  "Location": {
+                    "X": 9,
+                    "Y": 0,
+                    "Z": -0.3
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 22,
+                    "Y": 24,
+                    "Z": 0.5
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "Dark_Back_Wall",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.009,
+                          "Y": 0.015,
+                          "Z": 0.025,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "SpecularFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.05,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Cube",
+                "Transform": {
+                  "Location": {
+                    "X": 18,
+                    "Y": 0,
+                    "Z": 4
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.25,
+                    "Y": 24,
+                    "Z": 9
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "Bokeh_Contrast_Board",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.004,
+                          "Y": 0.007,
+                          "Z": 0.012,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "SpecularFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.05,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Cube",
+                "Transform": {
+                  "Location": {
+                    "X": 14.55,
+                    "Y": 0,
+                    "Z": 5.05
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.16,
+                    "Y": 17,
+                    "Z": 3.25
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "NEAR_Red_3m",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.85,
+                          "Y": 0.16,
+                          "Z": 0.11,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.85,
+                          "Y": 0.16,
+                          "Z": 0.11,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 3,
+                    "Y": -1.4,
+                    "Z": 2.1
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.47,
+                    "Y": 0.47,
+                    "Z": 0.47
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": true,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "FOCUS_Green_5m",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.07,
+                          "Y": 0.72,
+                          "Z": 0.51,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.07,
+                          "Y": 0.72,
+                          "Z": 0.51,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 5,
+                    "Y": 0,
+                    "Z": 2.1
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.75,
+                    "Y": 0.75,
+                    "Z": 0.75
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": true,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "FAR_Blue_9m",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.11,
+                          "Y": 0.32,
+                          "Z": 0.9,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.11,
+                          "Y": 0.32,
+                          "Z": 0.9,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 9,
+                    "Y": 4.2,
+                    "Z": 2.1
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 1.25,
+                    "Y": 1.25,
+                    "Z": 1.25
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": true,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_01",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 1,
+                          "Y": 0.62,
+                          "Z": 0.22,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 1,
+                          "Y": 0.62,
+                          "Z": 0.22,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": -6.5,
+                    "Z": 4.55
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_02",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.22,
+                          "Y": 0.78,
+                          "Z": 1,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.22,
+                          "Y": 0.78,
+                          "Z": 1,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": -4.4,
+                    "Z": 5.35
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_03",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 1,
+                          "Y": 0.85,
+                          "Z": 0.55,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 1,
+                          "Y": 0.85,
+                          "Z": 0.55,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": -2.2,
+                    "Z": 4.55
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_04",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.95,
+                          "Y": 0.3,
+                          "Z": 0.36,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.95,
+                          "Y": 0.3,
+                          "Z": 0.36,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": 0,
+                    "Z": 5.35
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_05",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.4,
+                          "Y": 1,
+                          "Z": 0.62,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.4,
+                          "Y": 1,
+                          "Z": 0.62,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": 2.2,
+                    "Z": 4.55
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_06",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 1,
+                          "Y": 0.8,
+                          "Z": 0.38,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 1,
+                          "Y": 0.8,
+                          "Z": 0.38,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": 4.4,
+                    "Z": 5.35
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        },
+        {
+          "Class": "AStaticMeshActor",
+          "Name": "BOKEH_Point_07",
+          "RootComponentName": "UStaticMeshComponent",
+          "Properties": {
+            "bActorEnableCollision": false
+          },
+          "Components": [
+            {
+              "Class": "UStaticMeshComponent",
+              "Name": "UStaticMeshComponent",
+              "Parent": "",
+              "OverrideMaterials": [
+                {
+                  "Instance": {
+                    "Properties": {},
+                    "ParameterOverrides": [
+                      {
+                        "Name": "BaseColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.55,
+                          "Y": 0.7,
+                          "Z": 1,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveColor",
+                        "Type": 1,
+                        "ScalarValue": 0.0,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.55,
+                          "Y": 0.7,
+                          "Z": 1,
+                          "W": 1.0
+                        }
+                      },
+                      {
+                        "Name": "EmissiveFactor",
+                        "Type": 0,
+                        "ScalarValue": 0.85,
+                        "TexturePath": "",
+                        "VectorValue": {
+                          "X": 0.0,
+                          "Y": 0.0,
+                          "Z": 0.0,
+                          "W": 1.0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Properties": {
+                "StaticMesh": "Sphere",
+                "Transform": {
+                  "Location": {
+                    "X": 14.25,
+                    "Y": 6.5,
+                    "Z": 4.55
+                  },
+                  "Rotation": {
+                    "Pitch": 0.0,
+                    "Roll": 0.0,
+                    "Yaw": 0.0
+                  },
+                  "Scale": {
+                    "X": 0.055,
+                    "Y": 0.055,
+                    "Z": 0.055
+                  }
+                },
+                "bAutoActivate": true,
+                "bBlockComponent": false,
+                "bCastShadow": false,
+                "bGenerateOverlapEvents": false,
+                "bHiddenInGame": false,
+                "bReceiveShadow": true,
+                "bVisible": true,
+                "bReceivesDecals": false
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

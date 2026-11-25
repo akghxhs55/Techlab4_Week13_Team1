@@ -32,7 +32,13 @@ public:
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 
 	bool IsEditorIcon() const { return bEditorIcon; }
+
 	void SetEditorIcon(bool IsEditorIcon) { bEditorIcon = IsEditorIcon; }
+	UPROPERTY(EditAnywhere)
+	bool bUseComplexAsSimpleCollision = false;
+
+protected:
+	virtual void OnCreatePhysicsState() override;
 
 private:
 	UPROPERTY(EditAnywhere)
@@ -40,4 +46,6 @@ private:
 
 	// 조명 Icon Debug arrow용
 	bool bEditorIcon = false;
+
+	UStaticMesh* PhysicsBodyMesh = nullptr;
 };

@@ -672,6 +672,8 @@ bool FTranslucencyPassMeshProcessor::AddMeshBatch(const FMeshBatch& Batch, const
 
 		FMeshDrawCommand Cmd{};
 		Cmd.Pipeline = *Pipeline;
+		if (Batch.bTwoSided)
+			Cmd.Pipeline.RasterizerState = ERasterizerState::SolidNone;
 		Cmd.Pipeline.Shader = ResolvedShader;
 		Cmd.VertexFactory = VF;
 		Cmd.FirstIndex = Element.FirstIndex;

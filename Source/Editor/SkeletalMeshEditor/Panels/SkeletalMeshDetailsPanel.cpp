@@ -2,6 +2,7 @@
 #include "SkeletalMeshDetailsPanel.h"
 #include "Editor/SkeletalMeshEditor/SkeletalMeshEditor.h"
 #include "Render/SkeletalMesh.h"
+#include "Render/StockingRegion.h"
 #include "Asset/AssetUtils.h"
 #include "Math/Transform.h"
 #include "Editor/Details/PropertyEditor.h"
@@ -136,6 +137,85 @@ void FSkeletalMeshDetailsPanel::DrawContent()
 				const FString ToRemove = SelectedSocketName;
 				SelectedSocketName.clear();
 				Mesh->RemoveSocket(ToRemove);
+			}
+		}
+	}
+
+	ImGui::Separator();
+	if (ImGui::CollapsingHeader("Stocking Region", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		if (UStockingRegion* Region = Editor.GetEditingStockingRegion())
+		{
+			bool bSelectMode = Editor.IsRegionSelectMode();
+			if (ImGui::Checkbox("Triangle Select Mode", &bSelectMode))
+			{
+				Editor.SetRegionSelectMode(bSelectMode);
+			}
+
+			bool bEraseMode = Editor.IsRegionEraseMode();
+			ImGui::SameLine();
+			if (ImGui::Checkbox("Erase", &bEraseMode))
+			{
+				Editor.SetRegionEraseMode(bEraseMode);
+			}
+
+			float BrushRadius = Editor.GetRegionBrushRadius();
+			if (ImGui::SliderFloat("Brush Radius", &BrushRadius, 0.0f, 0.4f, "%.3f"))
+			{
+				Editor.SetRegionBrushRadius(BrushRadius);
+			}
+
+			ImGui::SliderInt("Subdivision", &Region->SubdivisionIterations, 0, 2);
+			ImGui::DragFloat("Surface Offset", &Region->SurfaceOffset, 0.0005f, 0.0f, 0.05f, "%.4f");
+			ImGui::DragFloat("Boundary Feather", &Region->BoundaryFeatherDistance, 0.002f, 0.005f, 0.3f, "%.3f");
+
+			if (ImGui::Button("Select Bone Tris"))
+			{
+				Editor.SelectRegionBySelectedBone();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Grow"))
+			{
+				Editor.GrowStockingRegion();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Shrink"))
+			{
+				Editor.ShrinkStockingRegion();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Clear"))
+			{
+				Editor.ClearStockingRegion();
+			}
+
+			if (ImGui::Button("Save Region"))
+			{
+				FString Message;
+				Editor.SaveStockingRegion(Message);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Load Region"))
+			{
+				FString Message;
+				Editor.LoadStockingRegion(Message);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Validate"))
+			{
+				FString Message;
+				Editor.ValidateStockingRegion(Message);
+			}
+
+			ImGui::Text("Selected Triangles: %d", Region->GetSelectedTriangleCount());
+			const ImVec4 StatusColor = Editor.IsStockingRegionValid()
+				? ImVec4(0.35f, 0.90f, 0.45f, 1.0f)
+				: ImVec4(0.95f, 0.65f, 0.25f, 1.0f);
+			ImGui::TextColored(StatusColor, "%s", Editor.GetStockingRegionStatus().c_str());
+
+			if (ImGui::Button("Open in Clothing Editor"))
+			{
+				Editor.OpenInClothingEditor();
 			}
 		}
 	}

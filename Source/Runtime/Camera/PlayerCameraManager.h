@@ -2,6 +2,7 @@
 #include "GameFramework/Actor.h"
 
 #include "CameraModifier_CameraShake.h"
+#include "Camera/DepthOfFieldSettings.h"
 
 #include "PlayerCameraManager.generated.h"
 
@@ -15,6 +16,7 @@ struct FMinimalViewInfo
 	float NearClip = 0.1f;
 	float FarClip = 10000.0f;
 	bool bIsOrthogonal = false;
+	FDepthOfFieldSettings DepthOfField{};
 
 	void BlendViewInfo(const FMinimalViewInfo& Other, float Alpha);
 	FMatrix CalculateViewMatrix() const;

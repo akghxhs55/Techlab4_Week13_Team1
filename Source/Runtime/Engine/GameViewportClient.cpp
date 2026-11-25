@@ -183,6 +183,7 @@ FSceneView FGameViewportClient::CalcSceneView(const FRect& InViewRect)
 			OutView.FarClip = POV.FarClip;
 			OutView.OrthoWidth = POV.OrthoWidth;
 			OutView.bIsPerspective = !POV.bIsOrthogonal;
+			OutView.DepthOfField = POV.DepthOfField;
 			OutView.bIsWireframe = false;
 
 			// 프러스텀 후 반환
@@ -229,6 +230,7 @@ FSceneView FGameViewportClient::CalcSceneView(const FRect& InViewRect)
 		OutView.FarClip = CameraComponent->GetFarZ();
 		OutView.OrthoWidth = CameraComponent->GetOrthoWidth();
 		OutView.bIsPerspective = !CameraComponent->GetIsOrthogonal();
+		OutView.DepthOfField = CameraComponent->GetDepthOfFieldSettings();
 		OutView.bIsWireframe = false;
 	}
 	else

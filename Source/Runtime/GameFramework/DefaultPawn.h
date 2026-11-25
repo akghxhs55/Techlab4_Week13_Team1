@@ -16,6 +16,7 @@ public:
 	void Tick(float DeltaTime) override;
 	void AddControllerYawInput(float Value) override;
 	void AddControllerPitchInput(float Value) override;
+	FRotator GetMovementInputRotation() const override;
 	UCameraComponent* GetCameraComponent() const { return CameraComponent; }
 	UStaticMeshComponent* GetStaticMeshComponent() const { return StaticMeshComponent; }
 private:

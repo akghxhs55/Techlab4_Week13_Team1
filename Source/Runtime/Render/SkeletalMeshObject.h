@@ -2,6 +2,18 @@
 
 #include "Render/SkeletalMesh.h"
 #include "Render/VertexFactory.h"
+#include <functional>
+
+struct FSkinVertexDeformDelta
+{
+	FVector PositionOffset = FVector::ZeroVector;
+	float StretchDelta = 0.0f;
+	FVector NormalOffset = FVector::ZeroVector;
+	float CreaseDelta = 0.0f;
+};
+static_assert(sizeof(FSkinVertexDeformDelta) == 32);
+
+using FPostSkinDeformCallback = std::function<void(TArray<FVertex>& InOutVertices, FBox& InOutBounds)>;
 
 class FSkeletalMeshObject
 {
@@ -26,6 +38,8 @@ public:
 	// 이번 포즈가 Bounds 밖으로 나가면 여유를 두고 넓히고 true를 돌려준다
 	bool UpdateBounds();
 	void SetDebugWeightBone(int32 BoneIndex) { DebugWeightBone = BoneIndex; }
+	void SetPostSkinDeformCallback(FPostSkinDeformCallback InCallback) { PostSkinDeformCallback = std::move(InCallback); }
+	bool HasPostSkinDeformCallback() const { return static_cast<bool>(PostSkinDeformCallback); }
 
 protected:
 	void UpdateRefToLocalMatrices(const TArray<FMatrix>& ComponentSpaceTransforms);
@@ -37,6 +51,7 @@ protected:
 	TArray<FMatrix> RefToLocal;
 	FBox Bounds;
 	FBox SkinnedBounds;
+	FPostSkinDeformCallback PostSkinDeformCallback;
 };
 
 class FSkeletalMeshObjectCPUSkin : public FSkeletalMeshObject
@@ -72,8 +87,13 @@ public:
 private:
 	void UpdateSkinnedBoundsFromBones();
 	void UploadBoneMatrices();
+	void EnsureDeformDeltaBuffer();
+	void UploadDeformDeltas();
 
 	TUniquePtr<FStructuredBuffer> BoneMatrixBuffer;
+	TUniquePtr<FStructuredBuffer> DeformDeltaBuffer;
+	TArray<FSkinVertexDeformDelta> DeformDeltas;
+	TArray<FVertex> BaseSkinnedScratch;
 	FGpuSkinVertexFactory VertexFactory;
 	mutable TArray<FVertex> CPUVertices;
 	mutable bool bCPUVerticesDirty = false;

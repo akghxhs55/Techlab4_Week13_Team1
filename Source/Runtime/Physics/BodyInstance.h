@@ -7,6 +7,7 @@ class FPhysScene;
 class UPrimitiveComponent;
 struct FTransform;
 class UBodySetup;
+struct FStaticMeshData;
 
 namespace physx
 {
@@ -51,6 +52,7 @@ struct FBodyInstance
 	bool bUseTriangleMesh = false;
 
 	void InitBody(UBodySetup* InBodySetup, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene, physx::PxAggregate* Aggregate = nullptr);
+	void InitStaticTriangleMeshBody(const FStaticMeshData& Mesh, const FTransform& WorldTransform, UPrimitiveComponent* Owner, FPhysScene* InScene);
 	void TermBody();
 	bool IsValidBodyInstance() const { return RigidActor != nullptr; }
 
@@ -60,6 +62,7 @@ struct FBodyInstance
 	void SetBodyTransform(const FTransform& WorldTransform, ETeleportType TeleportType);
 	FTransform GetUnrealWorldTransform() const;
 	void SetInstanceSimulatePhysics(bool bSimulate);
+	void SetCollisionEnabled(ECollisionEnabled InCollisionEnabled);
 	void AddImpulse(const FVector& Impulse, bool bVelocityChange);
 	void AddForce(const FVector& Force);
 	void SetLinearVelocity(const FVector& Velocity);

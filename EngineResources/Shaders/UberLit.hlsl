@@ -95,10 +95,7 @@ struct VS_OUT
 
 struct FUberOutput
 {
-    float4 LitColor : SV_Target0;
-#if !VIEW_MODE_WORLD_NORMAL
-    float4 NormalRoughness : SV_Target1;
-#endif
+	float4 LitColor : SV_Target0;
 };
 
 // 광원의 그림자 (1 = 빛 받음). 채널이 없거나 이 물체의 bReceiveShadow가 꺼져 있으면 1.
@@ -439,7 +436,6 @@ FUberOutput Uber_PS(VS_OUT Input)
                 ? float3(1.0f, 1.0f, 1.0f)
                 : saturate(HeatColor * 1.35f + float3(0.08f, 0.08f, 0.08f));
             Output.LitColor = float4(WireColor, 1.0f);
-            Output.NormalRoughness = float4(ShadingNormal, 0.8f); // SV_Target1도 반드시 채운다
             return Output;
         }
 
@@ -447,7 +443,6 @@ FUberOutput Uber_PS(VS_OUT Input)
         const float HalfLambert = dot(ShadingNormal, HeatmapL) * 0.5f + 0.5f;
         const float LightingFactor = HalfLambert * 0.7f + 0.3f;
         Output.LitColor = float4(HeatColor * LightingFactor, 1.0f);
-        Output.NormalRoughness = float4(ShadingNormal, 0.8f); // SV_Target1도 반드시 채운다
         return Output;
     }
 
@@ -596,9 +591,8 @@ FUberOutput Uber_PS(VS_OUT Input)
         FinalColor = FinalColor * (1.0f - UnlitDecal.a) + UnlitDecal.rgb;
     }
 
-    Output.LitColor = float4(FinalColor,
-        WorldUVParams.w > 0.5f ? 1.0f : SurfaceColor.a * BaseColor.a);
-    Output.NormalRoughness = float4(ShadingNormal, 0.8f);
+	Output.LitColor = float4(FinalColor,
+		WorldUVParams.w > 0.5f ? 1.0f : SurfaceColor.a * BaseColor.a);
 #endif
     return Output;
 }

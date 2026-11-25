@@ -16,6 +16,7 @@
 #include "Asset/AssetUtils.h"
 #include "Core/Misc/Paths.h"
 #include "Serialization/JsonArchive.h"
+#include "Editor/Physics/PhysicsAssetGenerator.h"
 
 #include <cmath>
 #include <cfloat>
@@ -938,6 +939,52 @@ bool FPhysicsAssetEditor::RemoveBody(int32 BodyIndex)
 	++TopologyRevision;
 	MarkModified();
 	SyncShapeGizmo();
+	return true;
+}
+
+bool FPhysicsAssetEditor::GenerateBodies()
+{
+	if (IsSimulationActive() || !PhysicsAsset || !Mesh) return false;
+	if (!PreviewBodies.IsEmpty())
+	{
+		const int Choice = MessageBoxW(GetActiveWindow(),
+			L"Replace all existing bodies and constraints with generated ones?\n\nUnsaved edits can still be discarded when closing the editor.",
+			L"Generate Physics Asset", MB_OKCANCEL | MB_ICONQUESTION);
+		if (Choice != IDOK) return false;
+	}
+
+	UPhysicsAsset* Generated = NewObject<UPhysicsAsset>();
+	TArray<FString> Warnings;
+	TArray<uint8> Bytes;
+	const bool bGenerated = Generated &&
+		FPhysicsAssetGenerator::Generate(*Generated, FPhysicsAssetGenInput::FromMesh(*Mesh), FPhysicsAssetGenSettings{}, Warnings) &&
+		FJsonArchive::SaveObjectToBytes(Generated, Bytes);
+	delete Generated;
+	for (const FString& Warning : Warnings) KRS_LOG(Warning, "[PhysicsAssetEditor] {}", Warning);
+	if (!bGenerated)
+	{
+		SaveMessage = Warnings.IsEmpty() ? FString("Could not generate the physics asset.")
+			: FString("Could not generate the physics asset: ") + Warnings.Last();
+		bSaveFailed = true;
+		return false;
+	}
+
+	CancelViewportInteraction();
+	SelectBone(-1);
+	OnBoneSelected();
+	PreviewBodies.Empty();
+	const bool bLoaded = FJsonArchive::LoadObjectFromBytes(PhysicsAsset, Bytes);
+	RebuildBodyViews();
+	MarkModified();
+	SyncShapeGizmo();
+	if (!bLoaded)
+	{
+		SaveMessage = "Could not apply the generated physics asset.";
+		bSaveFailed = true;
+		return false;
+	}
+	KRS_LOG(Info, "[PhysicsAssetEditor] Generated {} bodies and {} constraints",
+		PhysicsAsset->BodySetups.Num(), PhysicsAsset->Constraints.Num());
 	return true;
 }
 

@@ -177,6 +177,7 @@ void FOutputLogPanel::RenderContents()
 	using namespace ViewportToolbarWidgets;
 	const ImGuiStyle& Style = ImGui::GetStyle();
 	bool CopyToClipboard = false;
+	bool CopySelectedToClipboard = false;
 
 	//////////////////////////////////////////////////////////
 	// 상단 바 (UE): [돋보기 Search Log][Filters v] ............ [Settings v]
@@ -241,6 +242,7 @@ void FOutputLogPanel::RenderContents()
 		ImGui::Checkbox("Auto-scroll", &AutoScroll);
 		ImGui::Separator();
 		if (ImGui::MenuItem("Copy")) CopyToClipboard = true;
+		if (ImGui::MenuItem("Copy Selected")) CopySelectedToClipboard = true;
 		if (ImGui::MenuItem("Clear Log")) ClearLog();
 		if (ImGui::MenuItem("Save to Logs")) SaveFilteredLog();
 		if (ImGui::IsItemHovered())
@@ -260,26 +262,86 @@ void FOutputLogPanel::RenderContents()
 		if (ImGui::BeginPopupContextWindow())
 		{
 			if (ImGui::Selectable("Copy")) CopyToClipboard = true;
+			if (ImGui::Selectable("Copy Selected")) CopySelectedToClipboard = true;
 			if (ImGui::Selectable("Clear Log"))
 				ClearLog();
 			ImGui::EndPopup();
 		}
+		if (ImGui::IsWindowFocused() && ImGui::GetIO().KeyCtrl)
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_C)) CopySelectedToClipboard = true;
+			if (ImGui::IsKeyPressed(ImGuiKey_A))
+			{
+				for (int32 Index = 0; Index < Items.Num(); ++Index)
+					SelectedLogFlags[Index] = PassVerbosity(Items[Index].Verbosity) &&
+						Filter.PassFilter(Items[Index].message.c_str());
+			}
+		}
 
 		if (LogFont) ImGui::PushFont(LogFont, 0.0f);
 		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(Style.ItemSpacing.x, 0.0f));
-		if (CopyToClipboard)
-			ImGui::LogToClipboard();
-		for (const FLogData& item : Items)
+		auto SelectRange = [&](int32 End, bool bKeepExisting)
 		{
+			if (!bKeepExisting)
+				for (uint8& Flag : SelectedLogFlags) Flag = 0;
+			for (int32 Row = std::min(SelectionAnchor, End); Row <= std::max(SelectionAnchor, End); ++Row)
+				if (PassVerbosity(Items[Row].Verbosity) && Filter.PassFilter(Items[Row].message.c_str()))
+					SelectedLogFlags[Row] = 1;
+		};
+		for (int32 Index = 0; Index < Items.Num(); ++Index)
+		{
+			const FLogData& item = Items[Index];
 			if (!PassVerbosity(item.Verbosity) || !Filter.PassFilter(item.message.c_str()))
 				continue;
 
+			ImGui::PushID(Index);
 			ImGui::PushStyleColor(ImGuiCol_Text, item.Color);
-			ImGui::TextUnformatted(item.message.c_str());
+			const bool bSelected = SelectedLogFlags[Index] != 0;
+			const bool bClicked = ImGui::Selectable(item.message.c_str(), bSelected);
+			if (bClicked)
+			{
+				if (ImGui::GetIO().KeyShift && SelectionAnchor >= 0)
+					SelectRange(Index, ImGui::GetIO().KeyCtrl);
+				else if (ImGui::GetIO().KeyCtrl)
+				{
+					SelectedLogFlags[Index] = !bSelected;
+					SelectionAnchor = Index;
+				}
+				else
+				{
+					for (uint8& Flag : SelectedLogFlags) Flag = 0;
+					SelectedLogFlags[Index] = 1;
+					SelectionAnchor = Index;
+				}
+			}
+			if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+				!ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift)
+			{
+				SelectionAnchor = Index;
+				bDraggingLogSelection = true;
+				SelectRange(Index, false);
+			}
+			if (bDraggingLogSelection && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+				ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && SelectionAnchor >= 0)
+				SelectRange(Index, false);
 			ImGui::PopStyleColor();
+			ImGui::PopID();
 		}
-		if (CopyToClipboard)
-			ImGui::LogFinish();
+		if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+			bDraggingLogSelection = false;
+		if (CopyToClipboard || CopySelectedToClipboard)
+		{
+			FString Text;
+			for (int32 Index = 0; Index < Items.Num(); ++Index)
+			{
+				const FLogData& Item = Items[Index];
+				if (!PassVerbosity(Item.Verbosity) || !Filter.PassFilter(Item.message.c_str()) ||
+					(CopySelectedToClipboard && !SelectedLogFlags[Index])) continue;
+				if (!Text.empty()) Text += '\n';
+				Text += Item.message;
+			}
+			if (!Text.empty()) ImGui::SetClipboardText(Text.c_str());
+		}
 		if (ScrollToBottom || (AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()))
 			ImGui::SetScrollHereY(1.0f);
 		ScrollToBottom = false;
@@ -436,6 +498,9 @@ void FOutputLogPanel::SaveFilteredLog()
 void FOutputLogPanel::ClearLog()
 {
 	Items.Reset();
+	SelectedLogFlags.Reset();
+	SelectionAnchor = -1;
+	bDraggingLogSelection = false;
 }
 
 void FOutputLogPanel::ExecCommand(const FString& CommandLine)
@@ -1136,5 +1201,6 @@ void FOutputLogPanel::OnLog(ELogVerbosity Verbosity, const FString& Message)
 	}
 	LogData.message = Message;
 	Items.Add(LogData);
+	SelectedLogFlags.Add(0);
 	ScrollToBottom = true;
 }

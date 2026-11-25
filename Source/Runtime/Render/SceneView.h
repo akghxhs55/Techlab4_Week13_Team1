@@ -7,6 +7,7 @@
 #include "Math/Frustum.h"
 #include "Math/Rect.h"
 #include "Render/MeshBatch.h"
+#include "Camera/DepthOfFieldSettings.h"
 #include <algorithm>
 
 // Immutable description of one camera view for the duration of a render.
@@ -30,6 +31,7 @@ struct FSceneView
 	bool bIsPerspective = true;
 	bool bIsWireframe = false;
 	bool bGameView = false;
+	FDepthOfFieldSettings DepthOfField{};
 
 	FLinearColor OverlayColor{ 0.0f, 0.0f, 0.0f, 0.0f };   // rgb = 페이드 색, a = FadeAmount
 	float LetterboxAmount = 0.0f;                        // 0~1 진행도

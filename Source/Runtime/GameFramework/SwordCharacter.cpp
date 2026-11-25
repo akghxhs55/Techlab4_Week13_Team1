@@ -6,6 +6,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/CharacterMovementComponent.h"
+#include "Components/ClothComponent.h"
 #include "Components/ParticleSystemComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -14,6 +15,7 @@
 #include "Particles/ParticleEventTypes.h"
 #include "Particles/ParticleSystem.h"
 #include "Render/Material.h"
+#include "Render/MaterialInstance.h"
 #include "Render/Mesh.h"
 #include "Render/SkeletalMesh.h"
 #include <cmath>
@@ -156,6 +158,30 @@ ASwordCharacter::ASwordCharacter()
 	SwordRibbonComponent->SetVisibility(false);
 	SwordRibbonComponent->Deactivate();
 
+	CapeClothComponent = CreateDefaultSubobject<UClothComponent>("CapeClothComponent");
+	CapeClothComponent->SetupAttachment(CapsuleComponent);
+	CapeClothComponent->SetRelativeLocation(FVector(-0.24f, 0.0f, 0.52f));
+	CapeClothComponent->Preset = EClothPreset::Grid;
+	CapeClothComponent->ClothWidth = 0.38f;
+	CapeClothComponent->BottomWidth = 0.86f;
+	CapeClothComponent->ClothHeight = 1.14f;
+	CapeClothComponent->SegmentsX = 12;
+	CapeClothComponent->SegmentsY = 16;
+	CapeClothComponent->Damping = FVector(0.04f, 0.04f, 0.04f);
+	CapeClothComponent->StretchStiffness = 1.0f;
+	CapeClothComponent->BendStiffness = 0.18f;
+	CapeClothComponent->ShearStiffness = 0.55f;
+	CapeClothComponent->DragCoefficient = 0.25f;
+	CapeClothComponent->LiftCoefficient = 0.10f;
+	CapeClothComponent->LinearInertiaScale = 0.55f;
+	CapeClothComponent->AngularInertiaScale = 0.30f;
+	CapeClothComponent->CentrifugalInertiaScale = 0.15f;
+	CapeClothComponent->bUseVirtualParticles = true;
+	CapeClothComponent->bUseBackstop = false;
+	CapeClothComponent->bUseMotionConstraints = false;
+	CapeClothComponent->bEnableContinuousCollision = true;
+	EnsureCapeSetup();
+
 	SpringArmComponent = CreateDefaultSubobject<USpringArmComponent>("SpringArmComponent");
 	SpringArmComponent->SetupAttachment(CapsuleComponent);
 	SpringArmComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 0.7f));
@@ -216,6 +242,49 @@ void ASwordCharacter::BeginPlay()
 	{
 		if (!MeshComponent->SetAnimBlueprint("Animations/SwordMannequin.animblueprint"))
 			KRS_LOG(Error, "Failed to assign SwordMannequin.animblueprint to ASwordCharacter ({})", MeshComponent->GetAnimBlueprintError());
+	}
+	EnsureCapeSetup();
+}
+
+void ASwordCharacter::EnsureCapeSetup()
+{
+	if (!CapeClothComponent)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetSkeletalMeshComponent();
+	CapeClothComponent->SetupAttachment(CapsuleComponent);
+	CapeClothComponent->SetTargetSkeletalMesh(MeshComponent);
+	CapeClothComponent->ClearBonePins();
+	CapeClothComponent->PinRowToBone(0, "spine_03");
+	CapeClothComponent->ClearBoneCapsuleColliders();
+	CapeClothComponent->AddBoneCapsuleCollider("pelvis", "spine_01", 0.16f, 0.16f);
+	CapeClothComponent->AddBoneCapsuleCollider("spine_01", "spine_03", 0.16f, 0.17f);
+	CapeClothComponent->AddBoneCapsuleCollider("spine_03", "head", 0.13f, 0.12f);
+	CapeClothComponent->AddBoneCapsuleCollider("clavicle_l", "upperarm_l", 0.12f, 0.11f);
+	CapeClothComponent->AddBoneCapsuleCollider("upperarm_l", "lowerarm_l", 0.10f, 0.09f);
+	CapeClothComponent->AddBoneCapsuleCollider("clavicle_r", "upperarm_r", 0.12f, 0.11f);
+	CapeClothComponent->AddBoneCapsuleCollider("upperarm_r", "lowerarm_r", 0.10f, 0.09f);
+	CapeClothComponent->AddBoneCapsuleCollider("thigh_l", "calf_l", 0.13f, 0.11f);
+	CapeClothComponent->AddBoneCapsuleCollider("calf_l", "foot_l", 0.11f, 0.09f);
+	CapeClothComponent->AddBoneCapsuleCollider("thigh_r", "calf_r", 0.13f, 0.11f);
+	CapeClothComponent->AddBoneCapsuleCollider("calf_r", "foot_r", 0.11f, 0.09f);
+
+	if (!CapeMaterialInstance)
+	{
+		if (UMaterial* DefaultMat = UAssetManager::GetAssetByPath<UMaterial>("DefaultMaterial"))
+		{
+			CapeMaterialInstance = UMaterial::CreateDynamicInstance(DefaultMat);
+			if (CapeMaterialInstance)
+			{
+				CapeMaterialInstance->SetBaseColorOverride(FVector4(0.58f, 0.09f, 0.11f, 1.0f));
+			}
+		}
+	}
+	if (CapeMaterialInstance)
+	{
+		CapeClothComponent->SetMaterial(0, CapeMaterialInstance);
 	}
 }
 

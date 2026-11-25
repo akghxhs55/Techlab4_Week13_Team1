@@ -4,6 +4,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/CharacterMovementComponent.h"
+#include "Components/ClothComponent.h"
 #include "Components/ParticleSystemComponent.h"
 #include "Components/ScriptComponent.h"
 #include "GameFramework/Actor/RifleActor.h"
@@ -15,6 +16,8 @@
 #include "UI/UserWidget.h"
 #include "Asset/AssetManager.h"
 #include "Particles/ParticleSystem.h"
+#include "Render/Material.h"
+#include "Render/MaterialInstance.h"
 #include "Render/SkeletalMesh.h"
 #include "Engine/World.h"
 #include <algorithm>
@@ -71,6 +74,30 @@ ATestCharacter::ATestCharacter()
 	// CharacterMovement 속도는 cm 단위를 사용한다
 	GetCharacterMovement()->MaxWalkSpeed = 600.0f;
 
+	SkirtClothComponent = CreateDefaultSubobject<UClothComponent>("SkirtClothComponent");
+	SkirtClothComponent->SetupAttachment(CapsuleComponent);
+	SkirtClothComponent->SetRelativeLocation(FVector(0.02f, 0.0f, 0.04f));
+	SkirtClothComponent->Preset = EClothPreset::Cone;
+	SkirtClothComponent->TopRadius = 0.145f;
+	SkirtClothComponent->BottomRadius = 0.46f;
+	SkirtClothComponent->ClothHeight = 0.44f;
+	SkirtClothComponent->SegmentsX = 24;
+	SkirtClothComponent->SegmentsY = 10;
+	SkirtClothComponent->Damping = FVector(0.05f, 0.05f, 0.05f);
+	SkirtClothComponent->StretchStiffness = 1.0f;
+	SkirtClothComponent->BendStiffness = 0.18f;
+	SkirtClothComponent->ShearStiffness = 0.55f;
+	SkirtClothComponent->DragCoefficient = 0.30f;
+	SkirtClothComponent->LiftCoefficient = 0.12f;
+	SkirtClothComponent->LinearInertiaScale = 0.55f;
+	SkirtClothComponent->AngularInertiaScale = 0.35f;
+	SkirtClothComponent->CentrifugalInertiaScale = 0.25f;
+	SkirtClothComponent->bUseVirtualParticles = true;
+	SkirtClothComponent->bUseBackstop = false;
+	SkirtClothComponent->bUseMotionConstraints = false;
+	SkirtClothComponent->bEnableContinuousCollision = true;
+	EnsureSkirtSetup();
+
 	SpringArmComponent = CreateDefaultSubobject<USpringArmComponent>("SpringArmComponent");
 	SpringArmComponent->SetupAttachment(CapsuleComponent);
 	SpringArmComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 0.7f));
@@ -126,6 +153,7 @@ void ATestCharacter::BeginPlay()
 	if (World && World->IsGameWorld() && MeshComponent &&
 		!MeshComponent->SetAnimBlueprint(GetAnimationBlueprintPath()))
 		KRS_LOG(Error, "Failed to assign rifleanimgraph.animblueprint to ATestCharacter in BeginPlay ({})", MeshComponent->GetAnimBlueprintError());
+	EnsureSkirtSetup();
 	if (World && World->IsGameWorld() && SpringArmComponent)
 	{
 		SpringArmComponent->TargetArmLength = NormalArmLength;
@@ -333,5 +361,42 @@ void ATestCharacter::ReactToHit()
 	else if (AnimGraph)
 	{
 		AnimGraph->RequestHit();
+	}
+}
+
+void ATestCharacter::EnsureSkirtSetup()
+{
+	if (!SkirtClothComponent)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetSkeletalMeshComponent();
+	SkirtClothComponent->SetupAttachment(CapsuleComponent);
+	SkirtClothComponent->SetTargetSkeletalMesh(MeshComponent);
+	SkirtClothComponent->ClearBonePins();
+	SkirtClothComponent->PinRowToBone(0, "pelvis");
+	SkirtClothComponent->ClearBoneCapsuleColliders();
+	SkirtClothComponent->AddBoneCapsuleCollider("pelvis", "spine_01", 0.115f, 0.115f);
+	SkirtClothComponent->AddBoneCapsuleCollider("spine_01", "spine_02", 0.12f, 0.12f);
+	SkirtClothComponent->AddBoneCapsuleCollider("thigh_l", "calf_l", 0.09f, 0.08f);
+	SkirtClothComponent->AddBoneCapsuleCollider("calf_l", "foot_l", 0.08f, 0.065f);
+	SkirtClothComponent->AddBoneCapsuleCollider("thigh_r", "calf_r", 0.09f, 0.08f);
+	SkirtClothComponent->AddBoneCapsuleCollider("calf_r", "foot_r", 0.08f, 0.065f);
+
+	if (!SkirtMaterialInstance)
+	{
+		if (UMaterial* DefaultMat = UAssetManager::GetAssetByPath<UMaterial>("DefaultMaterial"))
+		{
+			SkirtMaterialInstance = UMaterial::CreateDynamicInstance(DefaultMat);
+			if (SkirtMaterialInstance)
+			{
+				SkirtMaterialInstance->SetBaseColorOverride(FVector4(0.14f, 0.18f, 0.38f, 1.0f));
+			}
+		}
+	}
+	if (SkirtMaterialInstance)
+	{
+		SkirtClothComponent->SetMaterial(0, SkirtMaterialInstance);
 	}
 }
