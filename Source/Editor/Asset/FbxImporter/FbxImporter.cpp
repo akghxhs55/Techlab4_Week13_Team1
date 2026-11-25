@@ -5,6 +5,11 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimSequenceFile.h"
 #include "Asset/AssetManager.h"
+#include "Editor/Physics/PhysicsAssetGenerator.h"
+#include "Physics/PhysicsAsset.h"
+#include "Render/SkeletalMesh.h"
+#include "Serialization/JsonArchive.h"
+#include "UObject/Casts.h"
 
 #include <algorithm>
 #include <array>
@@ -1432,10 +1437,67 @@ namespace
 		}
 		return true;
 	}
+
+	bool WriteGeneratedPhysicsAsset(const FSkeletalMeshData& Mesh, const std::filesystem::path& Temp, const FString& DebugName, TArray<FString>& Warnings)
+	{
+		UPhysicsAsset* Asset = NewObject<UPhysicsAsset>();
+		TArray<FString> GenWarnings;
+		const bool bGenerated = FPhysicsAssetGenerator::Generate(*Asset, FPhysicsAssetGenInput::FromImportData(Mesh), FPhysicsAssetGenSettings{}, GenWarnings);
+		Warnings.Append(GenWarnings);
+
+		bool bWritten = false;
+		TArray<uint8> Bytes;
+		if (!bGenerated)
+		{
+			Warnings.Add("FBX: physics asset was not generated: " + DebugName);
+		}
+		else if (!FJsonArchive::SaveObjectToBytes(Asset, Bytes))
+		{
+			Warnings.Add("FBX: cannot serialize generated physics asset: " + DebugName);
+		}
+		else
+		{
+			std::ofstream File(Temp, std::ios::binary | std::ios::trunc);
+			File.write(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<std::streamsize>(Bytes.Num()));
+			File.close();
+			bWritten = static_cast<bool>(File);
+			if (!bWritten) Warnings.Add("FBX: cannot write generated physics asset: " + Utf8Path(Temp));
+		}
+		delete Asset;
+		return bWritten;
+	}
+
+	void AttachPhysicsAssetToLoadedMesh(USkeletalMesh& Mesh, const std::filesystem::path& PhysicsPath, const FString& Key, TArray<FString>& Warnings)
+	{
+		if (Mesh.GetPhysicsAsset())
+		{
+			Warnings.Add("FBX: skeletal mesh already has a physics asset in memory; restart the engine to use the generated one: " + Key);
+			return;
+		}
+		TArray<uint8> Bytes;
+		std::error_code SizeError;
+		const auto Size = std::filesystem::file_size(PhysicsPath, SizeError);
+		std::ifstream File(PhysicsPath, std::ios::binary);
+		if (!SizeError && File)
+		{
+			Bytes.SetNum(static_cast<int32>(Size));
+			File.read(reinterpret_cast<char*>(Bytes.GetData()), static_cast<std::streamsize>(Size));
+		}
+		UPhysicsAsset* Asset = NewObject<UPhysicsAsset>();
+		if (SizeError || !File || !FJsonArchive::LoadObjectFromBytes(Asset, Bytes))
+		{
+			Warnings.Add("FBX: cannot load generated physics asset: " + Utf8Path(PhysicsPath));
+			delete Asset;
+			return;
+		}
+		Asset->Validate(Mesh, Key);
+		Mesh.SetPhysicsAsset(Asset);
+	}
 }
 
-bool FFbxImporter::ImportToAssets(const FString& Path, EFbxImportMode Mode, FFbxImportResult& OutResult, FString& OutError)
+bool FFbxImporter::ImportToAssets(const FString& Path, const FFbxImportOptions& Options, FFbxImportResult& OutResult, FString& OutError)
 {
+	const EFbxImportMode Mode = Options.Mode;
 	OutResult = {};
 	OutError.clear();
 	struct FWarningLog
@@ -1477,6 +1539,22 @@ bool FFbxImporter::ImportToAssets(const FString& Path, EFbxImportMode Mode, FFbx
 		const auto SkeletalPath = Folder / (Name + ".fbx.bin");
 		TArray<std::filesystem::path> AnimationPaths; // 이번 임포트가 저장하는 애니메이션 파일들
 		const auto Primary = Mode == EFbxImportMode::Static ? StaticPath : SkeletalPath;
+		auto PhysicsPath = SkeletalPath;
+		PhysicsPath += ".physics.json";
+		const bool bGeneratePhysics = Options.bCreatePhysicsAsset && Mode == EFbxImportMode::Skeletal && !std::filesystem::exists(PhysicsPath);
+		bool bPhysicsWritten = false;
+		const FString SkeletalKey = FAssetUtils::GetAssetKey(Utf8Path(SkeletalPath));
+		USkeletalMesh* LoadedSkeletal = Cast<USkeletalMesh>(UAssetManager::FindLoadedAsset(SkeletalKey));
+		const auto FinishRegister = [&](bool bChanged)
+		{
+			if (!RegisterImported(OutResult.Paths, bChanged, OutResult.Warnings, OutError)) return false;
+			if (bPhysicsWritten)
+			{
+				KRS_LOG(Info, "FBX physics asset generated: {}", Utf8Path(PhysicsPath));
+				if (LoadedSkeletal) AttachPhysicsAssetToLoadedMesh(*LoadedSkeletal, PhysicsPath, SkeletalKey, OutResult.Warnings);
+			}
+			return true;
+		};
 		FFbxBakedMesh Previous;
 		FString ReadError;
 		if (!bTestAnimationImport && FFbxMeshBake::Read(Utf8Path(Primary), Previous, ReadError) && SameSource(Source, Previous.Source)
@@ -1516,7 +1594,19 @@ bool FFbxImporter::ImportToAssets(const FString& Path, EFbxImportMode Mode, FFbx
 				OutResult.Paths = std::move(Paths);
 				if (bHasAnimation) for (const auto& AnimationFile : ExistingAnimations) OutResult.AnimationPaths.Add(Utf8Path(AnimationFile));
 				KRS_LOG(Info, "FBX Import skipped (source unchanged): {}", Source.Path);
-				return RegisterImported(OutResult.Paths, false, OutResult.Warnings, OutError);
+				if (bGeneratePhysics)
+				{
+					auto Temp = PhysicsPath;
+					Temp += ".tmp." + std::to_string(GetCurrentProcessId()) + "." + std::to_string(GetTickCount64());
+					if (WriteGeneratedPhysicsAsset(Previous.SkeletalMesh, Temp, SkeletalKey, OutResult.Warnings))
+					{
+						bPhysicsWritten = MoveFileExW(Temp.c_str(), PhysicsPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+						if (!bPhysicsWritten) OutResult.Warnings.Add("FBX: cannot save generated physics asset: " + Utf8Path(PhysicsPath) + " (Windows " + std::to_string(GetLastError()) + ")");
+					}
+					std::error_code EC;
+					std::filesystem::remove(Temp, EC);
+				}
+				return FinishRegister(false);
 			}
 		}
 
@@ -1646,6 +1736,12 @@ bool FFbxImporter::ImportToAssets(const FString& Path, EFbxImportMode Mode, FFbx
 			Skeletal.Kind = EFbxMeshKind::Skeletal;
 			if (!Importer.BuildSkeletalMesh(Skeletal.SkeletalMesh, Warnings, OutError)) { OutResult.Warnings.Append(Warnings); return false; }
 			OutResult.Warnings.Append(Warnings);
+			if (bGeneratePhysics)
+			{
+				const auto Temp = Staged.Folder / "physics.tmp";
+				bPhysicsWritten = WriteGeneratedPhysicsAsset(Skeletal.SkeletalMesh, Temp, SkeletalKey, OutResult.Warnings);
+				if (bPhysicsWritten) Staged.Files.Add({ Temp, PhysicsPath });
+			}
 			Outputs.Add(std::move(Skeletal));
 		}
 		FFbxBakedMesh Static;
@@ -1719,7 +1815,7 @@ bool FFbxImporter::ImportToAssets(const FString& Path, EFbxImportMode Mode, FFbx
 			KRS_LOG(Info, "FBX animation saved: {} files in {}", OutResult.AnimationPaths.Num(), Utf8Path(Folder));
 		}
 		KRS_LOG(Info, "FBX Import saved: {} ({} files)", Source.Path, OutResult.Paths.Num());
-		return RegisterImported(OutResult.Paths, true, OutResult.Warnings, OutError);
+		return FinishRegister(true);
 	}
 	catch (const std::filesystem::filesystem_error& E)
 	{
