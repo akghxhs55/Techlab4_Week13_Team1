@@ -13,7 +13,6 @@ UShapeComponent::UShapeComponent()
 
 UShapeComponent::~UShapeComponent()
 {
-	delete ShapeBodySetup;
 }
 
 UBodySetup* UShapeComponent::GetBodySetup()

@@ -64,6 +64,10 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 		ImGui::PopID();
 		if (ImGui::Button("Delete Constraint")) Editor.RemoveConstraint(Editor.GetSelectedConstraintIndex());
 		ImGui::EndDisabled();
+		ImGui::Separator();
+		ImGui::TextWrapped("Viewport: Green = Swing limits, Blue = Twist limits, Yellow = Current orientation, Red = Locked, Gray = Free / Reference.");
+		if (Editor.GetBodyDrawMode() == FPhysicsAssetEditor::EBodyDrawMode::None)
+			ImGui::TextWrapped("Enable Body Drawing in Settings to display constraint limits.");
 		return;
 	}
 
@@ -179,7 +183,7 @@ void FPhysicsAssetDetailsPanel::DrawContent()
 		{
 			ImGui::Text("Body Index: %d", Editor.GetSelectedBodyIndex());
 			ImGui::Text("Shapes: %d", Body->GetGeometry().GetElementCount());
-			ImGui::TextWrapped("Save changes to the mesh's .physics.json file with Ctrl+S.");
+			ImGui::TextWrapped("Save this Physics Asset with Ctrl+S.");
 		}
 		else
 		{

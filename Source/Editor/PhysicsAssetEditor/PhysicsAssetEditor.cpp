@@ -5,10 +5,14 @@
 #include "Engine/World.h"
 #include "Engine/Scene.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Asset/AssetManager.h"
+#include "Render/Mesh.h"
 #include "Render/SkeletalMesh.h"
 #include "Render/LineBatcher.h"
 #include "Physics/PhysicsAsset.h"
 #include "Physics/BodySetup.h"
+#include "Physics/PhysXConversion.h"
 #include "Asset/AssetUtils.h"
 #include "Core/Misc/Paths.h"
 #include "Serialization/JsonArchive.h"
@@ -17,6 +21,8 @@
 #include <cfloat>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <foundation/PxMathUtils.h>
 
 FAggregateGeom& FPhysicsAssetPreviewBody::GetGeometry()
 {
@@ -30,6 +36,13 @@ const FAggregateGeom& FPhysicsAssetPreviewBody::GetGeometry() const
 
 namespace
 {
+	// 편집본은 이 에디터만 소유한다. UObject 목록의 일괄 정리 전에 자식도 함께 해제한다.
+	void ClearEditingBodies(UPhysicsAsset& Asset)
+	{
+		for (UBodySetup* Body : Asset.BodySetups) delete Body;
+		Asset.ClearBodies();
+	}
+
 	bool ShapePropertiesEqual(const FShapeElem& A, const FVector& SizeA, const FShapeElem& B, const FVector& SizeB)
 	{
 		return A.Center.X == B.Center.X && A.Center.Y == B.Center.Y && A.Center.Z == B.Center.Z &&
@@ -140,6 +153,187 @@ namespace
 		}
 	}
 
+	bool GetConstraintWorldFrames(const USkeletalMeshComponent& Component, const FPhysicsAssetConstraint& Constraint,
+		int32 Parent, int32 Child, physx::PxTransform& ParentFrame, physx::PxTransform& ChildFrame)
+	{
+		const auto& Bones = Component.GetBones();
+		const FVector Scale = Component.GetWorldScale3D();
+		if (Parent < 0 || Child < 0 || Parent >= Bones.Num() || Child >= Bones.Num() ||
+			!std::isfinite(Constraint.FrameOffset.Pitch) || !std::isfinite(Constraint.FrameOffset.Yaw) ||
+			!std::isfinite(Constraint.FrameOffset.Roll)) return false;
+		for (int32 Axis = 0; Axis < 3; ++Axis)
+			if (!std::isfinite(Scale[Axis]) || Scale[Axis] <= 0.0f) return false;
+		TArray<FMatrix> BindMatrices;
+		TArray<physx::PxTransform> BindPoses;
+		BindMatrices.SetNum(Bones.Num());
+		BindPoses.SetNum(Bones.Num());
+		// InitConstraints와 같은 바인드 포즈/스케일/축 정렬 규칙으로 로컬 프레임을 복원합니다.
+		for (int32 Index = 0; Index < Bones.Num(); ++Index)
+		{
+			const int32 BoneParent = Bones[Index].ParentIndex;
+			if (BoneParent >= Index || BoneParent < -1) return false;
+			const FMatrix Local = Bones[Index].LocalBindPose.GetLocalMatrix();
+			BindMatrices[Index] = BoneParent < 0 ? Local : Local * BindMatrices[BoneParent];
+			const FTransform Bind(BindMatrices[Index]);
+			BindPoses[Index] = K2PTransform(FTransform(Bind.Rotation, Bind.Location * Scale));
+		}
+		physx::PxVec3 BoneAxis(1.0f, 0.0f, 0.0f);
+		bool bFoundAxis = false;
+		for (int32 Bone = Child; Bone >= 0 && !bFoundAxis; Bone = Bones[Bone].ParentIndex)
+		{
+			for (int32 Index = Bone + 1; Index < Bones.Num(); ++Index)
+			{
+				if (Bones[Index].ParentIndex != Bone) continue;
+				const FVector& Offset = Bones[Index].LocalBindPose.Location;
+				const float X = std::abs(Offset.X), Y = std::abs(Offset.Y), Z = std::abs(Offset.Z);
+				if (X + Y + Z < 1e-5f) continue;
+				BoneAxis = X >= Y && X >= Z ? physx::PxVec3(Offset.X > 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f) :
+					(Y >= Z ? physx::PxVec3(0.0f, Offset.Y > 0.0f ? 1.0f : -1.0f, 0.0f) :
+						physx::PxVec3(0.0f, 0.0f, Offset.Z > 0.0f ? 1.0f : -1.0f));
+				bFoundAxis = true;
+				break;
+			}
+		}
+		const physx::PxQuat Alignment = physx::PxShortestRotation(physx::PxVec3(1.0f, 0.0f, 0.0f), BoneAxis);
+		const physx::PxQuat Offset = K2PQuat(Constraint.FrameOffset.Quaternion().Normalized());
+		const physx::PxTransform JointBind(BindPoses[Child].p, (BindPoses[Child].q * Alignment * Offset).getNormalized());
+		const FTransform LocalToWorld(Component.GetWorldRotation(), Component.GetWorldLocation(), Scale);
+		ParentFrame = K2PTransform(Component.GetBoneTransform(Parent, LocalToWorld)) * (BindPoses[Parent].getInverse() * JointBind);
+		ChildFrame = K2PTransform(Component.GetBoneTransform(Child, LocalToWorld)) * (BindPoses[Child].getInverse() * JointBind);
+		return ParentFrame.isValid() && ChildFrame.isValid();
+	}
+
+	void DrawConstraintArc(FLineBatcher& Lines, const physx::PxTransform& Frame, const physx::PxVec3& Center,
+		const physx::PxVec3& AxisA, const physx::PxVec3& AxisB, float Radius, float Start, float End, const FVector4& Color)
+	{
+		constexpr int32 Segments = 64;
+		if (End <= Start) return;
+		const auto PointAt = [&](float Angle)
+		{
+			return P2KVector(Frame.transform(Center + (AxisA * std::cos(Angle) + AxisB * std::sin(Angle)) * Radius));
+		};
+		FVector Previous = PointAt(Start);
+		for (int32 Index = 1; Index <= Segments; ++Index)
+		{
+			const FVector Current = PointAt(Start + (End - Start) * static_cast<float>(Index) / Segments);
+			Lines.AddLine(Previous, Current, Color);
+			Previous = Current;
+		}
+	}
+
+	void DrawConstraintLimits(FLineBatcher& Lines, const physx::PxTransform& ParentFrame,
+		const physx::PxTransform& ChildFrame, const FPhysicsAssetConstraint& Constraint, float Radius)
+	{
+		if (!std::isfinite(Radius) || !std::isfinite(Constraint.Swing1LimitDeg) || !std::isfinite(Constraint.Swing2LimitDeg) ||
+			!std::isfinite(Constraint.TwistMinDeg) || !std::isfinite(Constraint.TwistMaxDeg)) return;
+		const physx::PxVec3 X(1.0f, 0.0f, 0.0f), Y(0.0f, 1.0f, 0.0f), Z(0.0f, 0.0f, 1.0f), Zero(0.0f);
+		const FVector4 SwingColor(0.25f, 1.0f, 0.4f, 1.0f);
+		const FVector4 TwistColor(0.25f, 0.7f, 1.0f, 1.0f);
+		const FVector4 CurrentColor(1.0f, 0.85f, 0.1f, 1.0f);
+		const FVector4 FreeColor(0.5f, 0.5f, 0.55f, 1.0f);
+		const FVector4 LockedColor(1.0f, 0.3f, 0.3f, 1.0f);
+		const FVector Origin = P2KVector(ParentFrame.p);
+		const bool bLimited1 = Constraint.Swing1Motion == EConstraintMotion::Limited;
+		const bool bLimited2 = Constraint.Swing2Motion == EConstraintMotion::Limited;
+		const bool bLocked1 = Constraint.Swing1Motion == EConstraintMotion::Locked;
+		const bool bLocked2 = Constraint.Swing2Motion == EConstraintMotion::Locked;
+		const float Angle1 = FMath::Clamp(FMath::DegreesToRadians(Constraint.Swing1LimitDeg), 0.001f, PI - 0.001f);
+		const float Angle2 = FMath::Clamp(FMath::DegreesToRadians(Constraint.Swing2LimitDeg), 0.001f, PI - 0.001f);
+		const auto DrawFreeSwing = [&]()
+		{
+			DrawConstraintArc(Lines, ParentFrame, Zero, X, Y, Radius, 0.0f, 2.0f * PI, FreeColor);
+			DrawConstraintArc(Lines, ParentFrame, Zero, X, Z, Radius, 0.0f, 2.0f * PI, FreeColor);
+			DrawConstraintArc(Lines, ParentFrame, Zero, Y, Z, Radius, 0.0f, 2.0f * PI, FreeColor);
+		};
+		Lines.AddLine(Origin, P2KVector(ParentFrame.transform(X * Radius)), FreeColor);
+		if (bLimited1 && bLimited2)
+		{
+			// tan(각도/4) 공간의 타원을 쿼터니언으로 옮겨 90도 이상의 제한도 유한하게 그립니다.
+			const float TanY = std::tan(Angle1 * 0.25f), TanZ = std::tan(Angle2 * 0.25f);
+			const auto Boundary = [&](float Angle)
+			{
+				const float A = TanY * std::cos(Angle), B = TanZ * std::sin(Angle);
+				const float Squared = A * A + B * B;
+				const float Inv = 1.0f / (1.0f + Squared);
+				const physx::PxQuat Swing(0.0f, 2.0f * A * Inv, 2.0f * B * Inv, (1.0f - Squared) * Inv);
+				return P2KVector(ParentFrame.transform(Swing.rotate(X) * Radius));
+			};
+			FVector Previous = Boundary(0.0f);
+			for (int32 Index = 1; Index <= 64; ++Index)
+			{
+				const FVector Current = Boundary(2.0f * PI * static_cast<float>(Index) / 64.0f);
+				Lines.AddLine(Previous, Current, SwingColor);
+				if (Index % 8 == 0) Lines.AddLine(Origin, Current, SwingColor);
+				Previous = Current;
+			}
+		}
+		else if ((bLimited1 && !bLocked2) || (bLimited2 && !bLocked1))
+		{
+			// 한 Swing만 제한하고 다른 축은 Free이면 허용 띠의 양쪽 경계가 두 원뿔이 됩니다.
+			const float Limit = FMath::Min(bLimited1 ? Angle1 : Angle2, PI * 0.5f);
+			const physx::PxVec3 Axis = bLimited1 ? Z : Y;
+			const physx::PxVec3 RingB = bLimited1 ? Y : Z;
+			const float Height = Radius * std::sin(Limit), RingRadius = Radius * std::cos(Limit);
+			// 단일 Swing 제한은 asin 범위이므로 90도 이상이면 방향 제한이 없습니다.
+			if (Limit >= PI * 0.5f) DrawFreeSwing();
+			else for (float Sign : { -1.0f, 1.0f })
+			{
+				const physx::PxVec3 Center = Axis * (Sign * Height);
+				DrawConstraintArc(Lines, ParentFrame, Center, X, RingB, RingRadius, 0.0f, 2.0f * PI, SwingColor);
+				for (const physx::PxVec3& Side : { X, -X, RingB, -RingB })
+					Lines.AddLine(Origin, P2KVector(ParentFrame.transform(Center + Side * RingRadius)), SwingColor);
+			}
+		}
+		else if (bLocked1 && bLocked2)
+		{
+			Lines.AddLine(Origin, P2KVector(ParentFrame.transform(X * Radius)), LockedColor);
+		}
+		else if (bLocked1 || bLocked2)
+		{
+			const float Limit = bLimited1 ? Angle1 : (bLimited2 ? Angle2 : PI);
+			const physx::PxVec3 OtherAxis = bLocked2 ? -Z : Y;
+			const FVector4& Color = bLimited1 || bLimited2 ? SwingColor : FreeColor;
+			DrawConstraintArc(Lines, ParentFrame, Zero, X, OtherAxis, Radius, -Limit, Limit, Color);
+			for (float Sign : { -1.0f, 1.0f })
+				Lines.AddLine(Origin, P2KVector(ParentFrame.transform((X * std::cos(Limit) + OtherAxis * (Sign * std::sin(Limit))) * Radius)), Color);
+		}
+		else
+		{
+			DrawFreeSwing();
+		}
+		// 실제 자식 프레임의 X축은 부모 프레임의 허용 범위와 비교합니다.
+		const FVector ChildOrigin = P2KVector(ChildFrame.p);
+		Lines.AddLine(Origin, ChildOrigin, CurrentColor);
+		Lines.AddLine(ChildOrigin, P2KVector(ChildFrame.transform(X * (Radius * 1.1f))), CurrentColor);
+
+		// Swing과 겹치지 않게 Twist 다이얼은 기준 X축의 뒤쪽에 배치합니다.
+		const physx::PxVec3 DialCenter = -X * (Radius * 0.3f);
+		const FVector DialOrigin = P2KVector(ParentFrame.transform(DialCenter));
+		const float DialRadius = Radius * 0.65f;
+		const auto DialPoint = [&](float Angle)
+		{
+			return P2KVector(ParentFrame.transform(DialCenter + (Y * std::cos(Angle) + Z * std::sin(Angle)) * DialRadius));
+		};
+		float Lower = 0.0f, Upper = 0.0f;
+		if (Constraint.TwistMotion == EConstraintMotion::Limited)
+		{
+			Lower = FMath::Clamp(FMath::DegreesToRadians(FMath::Min(Constraint.TwistMinDeg, Constraint.TwistMaxDeg)), -2.0f * PI + 0.001f, 2.0f * PI - 0.001f);
+			Upper = FMath::Clamp(FMath::DegreesToRadians(FMath::Max(Constraint.TwistMinDeg, Constraint.TwistMaxDeg)), -2.0f * PI + 0.001f, 2.0f * PI - 0.001f);
+		}
+		else if (Constraint.TwistMotion == EConstraintMotion::Free) { Lower = -PI; Upper = PI; }
+		const FVector4& DialColor = Constraint.TwistMotion == EConstraintMotion::Limited ? TwistColor :
+			(Constraint.TwistMotion == EConstraintMotion::Locked ? LockedColor : FreeColor);
+		DrawConstraintArc(Lines, ParentFrame, DialCenter, Y, Z, DialRadius, Lower, Upper, DialColor);
+		Lines.AddLine(DialOrigin, DialPoint(Lower), DialColor);
+		Lines.AddLine(DialOrigin, DialPoint(Upper), DialColor);
+		Lines.AddLine(DialOrigin, DialPoint(0.0f), FreeColor);
+		// 상대 회전을 Swing * Twist로 분리합니다. 180도 Swing 특이점에서는 Twist를 표시하지 않습니다.
+		physx::PxQuat Relative = ParentFrame.q.getConjugate() * ChildFrame.q;
+		if (Relative.w < 0.0f) Relative = -Relative;
+		if (Relative.x * Relative.x + Relative.w * Relative.w > 1e-10f)
+			Lines.AddLine(DialOrigin, DialPoint(2.0f * std::atan2(Relative.x, Relative.w)), CurrentColor);
+	}
+
 	void DrawAggregateGeometry(FLineBatcher& Lines, const FAggregateGeom& Geometry,
 		const FMatrix& BoneToWorld, const FVector4& Color, const FShapeElem* SelectedShape, const FVector4& SelectionColor)
 	{
@@ -199,7 +393,6 @@ FPhysicsAssetEditor::FPhysicsAssetEditor(
 	USkeletalMesh& InPreviewMesh
 )
 	: FSkeletalPreviewEditor(InEditorEngine, InEditorManager, InAssetPath)
-	, PreviewDocumentKey(MakePreviewDocumentKey(InAssetPath))
 {
 	Mesh = &InPreviewMesh;
 }
@@ -223,8 +416,8 @@ bool FPhysicsAssetEditor::Save()
 		return false;
 	};
 	if (!PhysicsAsset) return Fail("There is no physics asset to save.");
-	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(GetAssetPath());
-	if (MeshFile.empty()) return Fail("Cannot resolve the skeletal mesh file path.");
+	const FString PhysicsPath = FAssetUtils::ResolveAssetFilePath(GetAssetPath());
+	if (PhysicsPath.empty()) return Fail("Cannot resolve the physics asset file path.");
 	for (const UBodySetup* Body : PhysicsAsset->BodySetups)
 		if (!Body) return Fail("Cannot save a physics asset containing a null body.");
 
@@ -232,7 +425,6 @@ bool FPhysicsAssetEditor::Save()
 	ShapeGizmo.EndDrag();
 	TArray<uint8> Bytes;
 	if (!FJsonArchive::SaveObjectToBytes(PhysicsAsset, Bytes)) return Fail("Could not serialize the physics asset.");
-	const FString PhysicsPath = MeshFile + ".physics.json";
 	const std::filesystem::path Target = FPaths::FromUtf8(PhysicsPath);
 	std::filesystem::path Temporary = Target;
 	Temporary += std::wstring(L".tmp.") + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(GetTickCount64());
@@ -279,6 +471,7 @@ bool FPhysicsAssetEditor::DiscardChanges()
 	SelectBone(-1);
 	// 로드가 기존 BodySetup을 해제하므로 편집 뷰의 참조를 먼저 비웁니다.
 	PreviewBodies.Empty();
+	ClearEditingBodies(*PhysicsAsset);
 	const bool bRestored = FJsonArchive::LoadObjectFromBytes(PhysicsAsset, SavedAssetBytes);
 	RebuildBodyViews();
 	if (!bRestored)
@@ -330,16 +523,40 @@ void FPhysicsAssetEditor::RebuildBodyViews()
 	++TopologyRevision;
 }
 
+bool FPhysicsAssetEditor::CanStartSimulation() const
+{
+	return Simulation && MeshComponent && PreviewFloor && PhysicsAsset && !PreviewBodies.IsEmpty()
+		&& (SimulationMode == ESimulationMode::All || GetSelectedBody() != nullptr);
+}
+
+void FPhysicsAssetEditor::SetSimulationMode(ESimulationMode Mode)
+{
+	if (IsSimulationActive() || (Mode != ESimulationMode::All && Mode != ESimulationMode::SelectedAndBelow)) return;
+	SimulationMode = Mode;
+	SimulationError.clear();
+}
+
 bool FPhysicsAssetEditor::StartSimulation()
 {
 	if (IsSimulationActive()) return true;
 	CancelViewportInteraction();
-	if (!Simulation || !MeshComponent || !PhysicsAsset)
+	if (!Simulation || !MeshComponent || !PreviewFloor || !PhysicsAsset)
 	{
 		SimulationError = "The preview mesh or physics asset is unavailable.";
 		return false;
 	}
-	const bool bStarted = Simulation->Start(*MeshComponent, *PhysicsAsset, SimulationError);
+	int32 RootBoneIndex = INDEX_NONE;
+	if (SimulationMode == ESimulationMode::SelectedAndBelow)
+	{
+		const FPhysicsAssetPreviewBody* SelectedBody = GetSelectedBody();
+		if (!SelectedBody)
+		{
+			SimulationError = "Select a physics body to simulate it and its descendants.";
+			return false;
+		}
+		RootBoneIndex = SelectedBody->BoneIndex;
+	}
+	const bool bStarted = Simulation->Start(*MeshComponent, *PreviewFloor, *PhysicsAsset, SimulationError, RootBoneIndex);
 	SyncShapeGizmo();
 	return bStarted;
 }
@@ -352,37 +569,15 @@ void FPhysicsAssetEditor::StopSimulation()
 	if (UWorld* World = PreviewScene.GetWorld()) World->GetScene().UpdateAllTransforms();
 }
 
-void FPhysicsAssetEditor::ToggleSimulationPause()
+void FPhysicsAssetEditor::ToggleSimulation()
 {
-	if (Simulation) Simulation->TogglePause();
-}
-
-void FPhysicsAssetEditor::StepSimulation()
-{
-	if (Simulation) Simulation->Step();
-}
-
-void FPhysicsAssetEditor::ResetSimulation()
-{
-	if (!IsSimulationActive()) return;
-	const bool bWasPaused = IsSimulationPaused();
-	StopSimulation();
-	if (StartSimulation() && bWasPaused) ToggleSimulationPause();
+	if (IsSimulationActive()) StopSimulation();
+	else StartSimulation();
 }
 
 bool FPhysicsAssetEditor::IsSimulationActive() const
 {
 	return Simulation && Simulation->IsActive();
-}
-
-bool FPhysicsAssetEditor::IsSimulationPaused() const
-{
-	return Simulation && Simulation->IsPaused();
-}
-
-float FPhysicsAssetEditor::GetSimulationTime() const
-{
-	return Simulation ? Simulation->GetElapsedTime() : 0.0f;
 }
 
 void FPhysicsAssetEditor::OnRenderLine(FLineBatcher& LineBatcher)
@@ -396,7 +591,6 @@ void FPhysicsAssetEditor::OnRenderDebugOverlay(const FSceneView* View)
 	PhysicsBodyLines->BeginFrame();
 	// 물리 형상 전용 배치에서 깊이를 검사하고, 장면 깊이에는 쓰지 않습니다.
 	PhysicsBodyLines->SetDepthTest(bBodyDepthTest, false);
-	if (Simulation) Simulation->DrawFloor(*PhysicsBodyLines);
 	const FShapeElem* SelectedShape = GetSelectedShape();
 	for (int32 Index = 0; Index < PreviewBodies.Num(); ++Index)
 	{
@@ -422,9 +616,18 @@ void FPhysicsAssetEditor::OnRenderDebugOverlay(const FSceneView* View)
 			const FVector ParentPosition = MeshComponent->GetBoneWorldMatrix(Parent).TransformPosition(FVector::ZeroVector);
 			const FVector ChildPosition = MeshComponent->GetBoneWorldMatrix(Child).TransformPosition(FVector::ZeroVector);
 			const FVector4 Color = bSelected ? SelectedShapeColor : FVector4(0.4f, 0.7f, 1.0f, 1.0f);
-			// 연결 관계와 자식 본의 앵커 위치를 표시합니다. 조인트 프레임 계산은 런타임이 담당합니다.
+			// 전체 연결은 간단히 표시하고, 선택한 조인트에만 각도 제한을 표시합니다.
 			PhysicsBodyLines->AddLine(ParentPosition, ChildPosition, Color);
 			PhysicsBodyLines->AddSphere(ChildPosition, FMath::Max(BoneSphereSize, 0.005f), Color);
+			if (bSelected)
+			{
+				physx::PxTransform ParentFrame(physx::PxIdentity), ChildFrame(physx::PxIdentity);
+				if (GetConstraintWorldFrames(*MeshComponent, Constraint, Parent, Child, ParentFrame, ChildFrame))
+				{
+					const float Radius = FMath::Max(0.05f, FMath::Max(BoneSphereSize * 8.0f, (ChildPosition - ParentPosition).Size() * 0.6f));
+					DrawConstraintLimits(*PhysicsBodyLines, ParentFrame, ChildFrame, Constraint, Radius);
+				}
+			}
 		}
 	}
 	PhysicsBodyLines->OnRender(View->ViewProjectionMatrix);
@@ -465,17 +668,31 @@ bool FPhysicsAssetEditor::InitializeResources()
 	PreviewBodies.Empty();
 	SelectedBodyIndex = -1;
 	SelectedConstraintIndex = -1;
-	PhysicsAsset = Mesh->GetPhysicsAsset();
-	if (!PhysicsAsset)
+	PhysicsAsset = NewObject<UPhysicsAsset>();
+	if (!PhysicsAsset) return false;
+	const FString PhysicsFile = FAssetUtils::ResolveAssetFilePath(GetAssetPath());
+	if (PhysicsFile.empty()) return false;
+	std::error_code FileError;
+	const bool bExistingFile = std::filesystem::exists(FPaths::FromUtf8(PhysicsFile), FileError);
+	if (FileError) return false;
+	if (bExistingFile)
 	{
-		PhysicsAsset = NewObject<UPhysicsAsset>(Mesh);
-		if (!PhysicsAsset) return false;
-		Mesh->SetPhysicsAsset(PhysicsAsset);
+		std::ifstream File(FPaths::FromUtf8(PhysicsFile), std::ios::binary | std::ios::ate);
+		if (!File) return false;
+		const std::streamsize Size = File.tellg();
+		if (Size <= 0 || Size > std::numeric_limits<int32>::max()) return false;
+		TArray<uint8> Bytes;
+		Bytes.SetNum(static_cast<int32>(Size));
+		File.seekg(0);
+		if (!File.read(reinterpret_cast<char*>(Bytes.GetData()), Size)) return false;
+		if (!FJsonArchive::LoadObjectFromBytes(PhysicsAsset, Bytes)) return false;
 	}
+	PhysicsAsset->PreviewMeshPath = FAssetUtils::GetAssetKey(Mesh->GetPath());
+	if (PhysicsAsset->PreviewMeshPath.empty()) return false;
 	for (const UBodySetup* Body : PhysicsAsset->BodySetups)
 		if (!Body) return false;
 	if (!FJsonArchive::SaveObjectToBytes(PhysicsAsset, SavedAssetBytes)) return false;
-	bDirty = false;
+	bDirty = !bExistingFile;
 	bSaveFailed = false;
 	RebuildBodyViews();
 	PhysicsBodyLines = MakeUnique<FLineBatcher>();
@@ -483,7 +700,41 @@ bool FPhysicsAssetEditor::InitializeResources()
 	ShapeGizmoTarget = Cast<USceneComponent>(PreviewScene.AddComponent(USceneComponent::StaticClass()));
 	if (!ShapeGizmoTarget) return false;
 	ShapeGizmoTarget->DetachFromParent();
+	if (!InitializePreviewFloor()) return false;
 	Simulation = MakeUnique<FPhysicsAssetSimulation>();
+	return true;
+}
+
+bool FPhysicsAssetEditor::InitializePreviewFloor()
+{
+	UStaticMesh* FloorMesh = UAssetManager::GetAssetByPath<UStaticMesh>("Cube");
+	if (!FloorMesh || !MeshComponent) return false;
+	const FBox Bounds = MeshComponent->CalcBounds();
+	const FBox& FloorBounds = FloorMesh->GetMeshData().AABB;
+	const FVector NativeSize = FloorBounds.Max - FloorBounds.Min;
+	const FVector MeshSize = Bounds.Max - Bounds.Min;
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		if (!std::isfinite(Bounds.Min[Axis]) || !std::isfinite(Bounds.Max[Axis]) ||
+			!std::isfinite(NativeSize[Axis]) || !std::isfinite(MeshSize[Axis]) ||
+			NativeSize[Axis] <= 0.0f || MeshSize[Axis] < 0.0f) return false;
+	}
+	// 바닥 윗면의 중심을 월드 원점에 맞추고, 캐릭터가 쓰러질 공간을 확보합니다.
+	const float HalfExtent = FMath::Max(1.0f, FMath::Max(MeshSize.Z, FMath::Max(MeshSize.X, MeshSize.Y))) * 2.0f;
+	const float Thickness = FMath::Max(0.05f, MeshSize.Z * 0.025f);
+	const FVector FloorScale(HalfExtent * 2.0f / NativeSize.X, HalfExtent * 2.0f / NativeSize.Y, Thickness / NativeSize.Z);
+	const FVector Center(0.0f, 0.0f, -Thickness * 0.5f);
+	const FVector NativeCenter = (FloorBounds.Min + FloorBounds.Max) * 0.5f;
+	PreviewFloor = Cast<UStaticMeshComponent>(PreviewScene.AddComponent(UStaticMeshComponent::StaticClass()));
+	if (!PreviewFloor) return false;
+	PreviewFloor->SetStaticMesh(FloorMesh);
+	PreviewFloor->DetachFromParent();
+	PreviewFloor->SetTransform(FTransform(FRotator(0.0f, 0.0f, 0.0f), Center - NativeCenter * FloorScale, FloorScale));
+	PreviewFloor->bGenerateOverlapEvents = false;
+	PreviewFloor->bBlockComponent = true;
+	PreviewFloor->BodyInstance.bSimulatePhysics = false;
+	PreviewFloor->BodyInstance.bEnableGravity = false;
+	PreviewFloor->BodyInstance.CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	return true;
 }
 
@@ -491,6 +742,7 @@ void FPhysicsAssetEditor::ShutdownResources()
 {
 	StopSimulation();
 	Simulation.reset();
+	PreviewFloor = nullptr;
 	CancelViewportInteraction();
 	ShapeGizmo.SetTarget(nullptr);
 	ShapeGizmoTarget = nullptr;
@@ -499,9 +751,11 @@ void FPhysicsAssetEditor::ShutdownResources()
 	SelectedBodyIndex = -1;
 	PreviewBodies.Empty();
 	SelectedConstraintIndex = -1;
-	PhysicsAsset = nullptr;
 	PhysicsBodyLines.reset();
 	FSkeletalPreviewEditor::ShutdownResources();
+	if (PhysicsAsset) ClearEditingBodies(*PhysicsAsset);
+	delete PhysicsAsset;
+	PhysicsAsset = nullptr;
 }
 
 int32 FPhysicsAssetEditor::FindBodyByBone(int32 BoneIndex) const

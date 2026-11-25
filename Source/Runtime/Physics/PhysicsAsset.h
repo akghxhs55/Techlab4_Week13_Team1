@@ -56,9 +56,17 @@ public:
 	bool Validate(const USkeletalMesh& Mesh, const FString& DebugName) const;
 
 	void ClearBodies();
+	const FString& GetAssetPath() const { return AssetPath; }
+	void SetAssetPath(const FString& Path) { AssetPath = Path; }
+
+	// 독립 Physics Asset 파일이 미리보기에 사용할 스켈레탈 메시 에셋 키.
+	FString PreviewMeshPath;
 
 	TArray<UBodySetup*> BodySetups;
 
 	UPROPERTY()
 	TArray<FPhysicsAssetConstraint> Constraints;
+
+private:
+	FString AssetPath;
 };

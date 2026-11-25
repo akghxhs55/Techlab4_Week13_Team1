@@ -2,6 +2,9 @@
 #include "SkeletalMesh.h"
 #include "Render/RenderCommand.h"
 #include "Asset/AssetManager.h"
+#include "Asset/AssetUtils.h"
+#include "Core/Misc/Paths.h"
+#include "Physics/PhysicsAssetFile.h"
 #include "json.hpp"
 #include <fstream>
 
@@ -31,6 +34,88 @@ namespace
 		}
 		return Bounds;
 	}
+}
+
+bool USkeletalMesh::SetPhysicsAssetByPath(const FString& Path, FString& OutError)
+{
+	OutError.clear();
+	if (Path.empty()) { SetPhysicsAsset(nullptr); return true; }
+	const FString PreviewMesh = PhysicsAssetFile::ResolvePreviewMeshPath(Path, OutError);
+	if (PreviewMesh.empty()) return false;
+	if (_wcsicmp(FPaths::FromUtf8(PreviewMesh).c_str(), FPaths::FromUtf8(FAssetUtils::ResolveAssetFilePath(GetPath())).c_str()) != 0)
+	{
+		OutError = "This Physics Asset references a different skeletal mesh.";
+		return false;
+	}
+	UPhysicsAsset* Asset = UAssetManager::LoadPhysicsAsset(Path, OutError);
+	if (!Asset) return false;
+	for (const UBodySetup* Body : Asset->BodySetups)
+		if (!Body) { OutError = "The Physics Asset contains a null body."; return false; }
+	if (!Asset->Validate(*this, Path))
+	{
+		OutError = "The Physics Asset contains invalid bodies or constraints. See Output Log.";
+		return false;
+	}
+	SetPhysicsAsset(Asset);
+	return true;
+}
+
+bool USkeletalMesh::LoadPhysicsAssetReference(FString& OutError)
+{
+	OutError.clear();
+	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(GetPath());
+	if (MeshFile.empty()) { OutError = "Cannot resolve the skeletal mesh path."; return false; }
+	const std::filesystem::path SettingsFile = FPaths::FromUtf8(MeshFile + ".physicsasset.json");
+	std::error_code Error;
+	const bool bHasSettings = std::filesystem::exists(SettingsFile, Error);
+	if (Error) { OutError = "Cannot access the Physics Asset reference file."; return false; }
+	if (bHasSettings)
+	{
+		std::ifstream File(SettingsFile, std::ios::binary);
+		const json Settings = File ? json::parse(File, nullptr, false) : json();
+		if (!Settings.is_object() || !Settings.contains("PhysicsAsset") || !Settings["PhysicsAsset"].is_string())
+		{
+			OutError = "Cannot read the saved Physics Asset reference: " + FPaths::ToUtf8(SettingsFile);
+			return false;
+		}
+		return SetPhysicsAssetByPath(Settings["PhysicsAsset"].get<FString>(), OutError);
+	}
+	const FString LegacyPath = MeshFile + ".physics.json";
+	if (std::filesystem::exists(FPaths::FromUtf8(LegacyPath), Error))
+		return SetPhysicsAssetByPath(LegacyPath, OutError);
+	if (Error) { OutError = "Cannot access the legacy Physics Asset."; return false; }
+	SetPhysicsAsset(nullptr);
+	return true;
+}
+
+bool USkeletalMesh::SavePhysicsAssetReference(FString& OutError) const
+{
+	OutError.clear();
+	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(GetPath());
+	if (MeshFile.empty()) { OutError = "Cannot resolve the skeletal mesh path."; return false; }
+	if (PhysicsAsset && PhysicsAsset->GetAssetPath().empty())
+	{
+		OutError = "Select a Physics Asset file before saving the default.";
+		return false;
+	}
+	const json Settings = { { "Version", 1 }, { "PhysicsAsset", PhysicsAsset ? PhysicsAsset->GetAssetPath() : FString() } };
+	const std::filesystem::path Target = FPaths::FromUtf8(MeshFile + ".physicsasset.json");
+	std::filesystem::path Temporary = Target;
+	Temporary += L".tmp." + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(GetTickCount64());
+	std::ofstream File(Temporary, std::ios::binary | std::ios::trunc);
+	if (!File) { OutError = "Cannot create the Physics Asset reference file."; return false; }
+	File << Settings.dump(2);
+	File.flush();
+	File.close();
+	const bool bWritten = static_cast<bool>(File);
+	if (!bWritten || !MoveFileExW(Temporary.c_str(), Target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+	{
+		std::error_code Error;
+		std::filesystem::remove(Temporary, Error);
+		OutError = "Cannot save the default Physics Asset. Check write access.";
+		return false;
+	}
+	return true;
 }
 
 bool USkeletalMesh::Build(FSkeletalMeshData&& ImportData, FString& OutError)

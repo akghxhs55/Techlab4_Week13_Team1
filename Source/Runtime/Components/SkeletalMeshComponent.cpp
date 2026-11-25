@@ -224,7 +224,9 @@ void USkeletalMeshComponent::RegisterComponentTickFunctions(bool bRegister)
 		EndPhysicsTickFunction.RegisterTickFunction(GetWorld()->GetTickTaskManager());
 	}
 
-	EndPhysicsTickFunction.SetTickFunctionEnable(Bodies.Num() > 0 && Bodies[0]->IsDynamic());
+	bool bAnyDynamic = false;
+	for (const auto& Body : Bodies) bAnyDynamic |= Body->IsDynamic();
+	EndPhysicsTickFunction.SetTickFunctionEnable(bAnyDynamic);
 }
 
 void USkeletalMeshComponent::EndPhysicsTickComponent(float DeltaTime)
@@ -234,6 +236,7 @@ void USkeletalMeshComponent::EndPhysicsTickComponent(float DeltaTime)
 
 void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
 {
+	bSimulatingBodiesBelow = false;
 	for (auto& Body : Bodies)
 	{
 		Body->SetInstanceSimulatePhysics(bSimulate);
@@ -247,6 +250,35 @@ void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
 	}
 }
 
+bool USkeletalMeshComponent::SetSimulatePhysicsBelow(int32 RootBoneIndex)
+{
+	const TArray<FBoneInfo>& Bones = GetBones();
+	if (RootBoneIndex < 0 || RootBoneIndex >= Bones.Num()) return false;
+	bSimulatingBodiesBelow = true;
+
+	bool bAnyDynamic = false;
+	for (auto& Body : Bodies)
+	{
+		bool bBelowRoot = false;
+		// 바디가 없는 중간 본도 통과해 스켈레톤 계층 전체에서 하위 여부를 찾는다.
+		int32 Bone = Body->BoneIndex;
+		for (int32 Depth = 0; Bone >= 0 && Bone < Bones.Num() && Depth < Bones.Num(); ++Depth)
+		{
+			if (Bone == RootBoneIndex)
+			{
+				bBelowRoot = true;
+				break;
+			}
+			Bone = Bones[Bone].ParentIndex;
+		}
+		Body->SetInstanceSimulatePhysics(bBelowRoot);
+		bAnyDynamic |= Body->IsDynamic();
+	}
+	EndPhysicsTickFunction.SetTickFunctionEnable(bAnyDynamic);
+	bPendingKinematicTeleport = true;
+	return bAnyDynamic;
+}
+
 void USkeletalMeshComponent::OnTransformDirty(ETeleportType TeleportType)
 {
 	Super::OnTransformDirty(TeleportType);
@@ -256,12 +288,12 @@ void USkeletalMeshComponent::OnTransformDirty(ETeleportType TeleportType)
 	}
 }
 
-void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
+void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene, const UPhysicsAsset* OverrideAsset)
 {
 	USkeletalMesh* Mesh = GetSkeletalMesh();
-	UPhysicsAsset* Asset = Mesh ? Mesh->GetPhysicsAsset() : nullptr;
+	const UPhysicsAsset* Asset = OverrideAsset ? OverrideAsset : (Mesh ? Mesh->GetPhysicsAsset() : nullptr);
 	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
-	if (!Asset || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
+	if (!Mesh || !Asset || Asset->BodySetups.IsEmpty() || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
 	{
 		return;
 	}
@@ -331,6 +363,7 @@ void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene)
 
 void USkeletalMeshComponent::TermArticulated()
 {
+	bSimulatingBodiesBelow = false;
 	Constraints.Empty();
 	for (auto& Body : Bodies)
 	{
@@ -1255,7 +1288,11 @@ void USkeletalMeshComponent::OnDestroyPhysicsState()
 
 bool USkeletalMeshComponent::IsSimulatingRagdoll() const
 {
-	return Bodies.Num() > 0 && Bodies[0]->IsDynamic();
+	// 부분 시뮬레이션은 메시 전체를 이동시키지 않고 선택한 본들의 포즈만 갱신한다.
+	if (Bodies.IsEmpty() || bSimulatingBodiesBelow) return false;
+	for (const auto& Body : Bodies)
+		if (!Body->IsDynamic()) return false;
+	return true;
 }
 
 void USkeletalMeshComponent::UpdateComponentToRootBody()

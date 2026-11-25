@@ -86,6 +86,7 @@ private:
 	bool bOpenCreateBlendSpace = false;
 	bool bOpenCreateBlendSpace2D = false;
 	bool bOpenCreateAnimBlueprint = false;
+	bool bOpenCreatePhysicsAsset = false;
 	bool bOpenCreateAnimMontage = false;
 	bool bOpenCreateAimOffset = false;
 	bool bOpenCreateLevelSequence = false;

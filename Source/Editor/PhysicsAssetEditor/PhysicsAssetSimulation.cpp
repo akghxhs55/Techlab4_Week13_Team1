@@ -1,6 +1,7 @@
 #include "EnginePCH.h"
 #include "PhysicsAssetSimulation.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Physics/PhysicsAsset.h"
@@ -9,13 +10,9 @@
 #include "Physics/PhysScene.h"
 #include "Physics/PhysicsSettings.h"
 #include "Render/SkeletalMesh.h"
-#include "Render/LineBatcher.h"
 
 #include <PxPhysics.h>
 #include <PxScene.h>
-#include <PxRigidStatic.h>
-#include <extensions/PxSimpleFactory.h>
-#include <foundation/PxPlane.h>
 #include <cmath>
 
 namespace
@@ -87,7 +84,8 @@ FPhysicsAssetSimulation::~FPhysicsAssetSimulation()
 	Stop();
 }
 
-bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UPhysicsAsset& Asset, FString& OutError)
+bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UStaticMeshComponent& PreviewFloor, UPhysicsAsset& Asset, FString& OutError,
+	int32 RootBoneIndex)
 {
 	if (bActive) return true;
 	OutError.clear();
@@ -96,13 +94,24 @@ bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UPhysicsA
 	FPhysScene* Scene = World ? World->GetPhysicsScene() : nullptr;
 	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
 	physx::PxMaterial* Material = FPhysicsCore::GetDefaultMaterial();
-	if (!World || World->GetWorldType() != EWorldType::EditorPreview || !Mesh || Mesh->GetPhysicsAsset() != &Asset ||
-		!Scene || !Scene->GetPxScene() || !Physics || !Material)
+	if (!World || World->GetWorldType() != EWorldType::EditorPreview || !Mesh ||
+		!Scene || !Scene->GetPxScene() || !Physics || !Material || PreviewFloor.GetWorld() != World || !PreviewFloor.GetBodySetup())
 	{
-		OutError = "The preview physics scene or physics asset is unavailable.";
+		OutError = "The preview physics scene, collision floor or physics asset is unavailable.";
 		return false;
 	}
 	if (!ValidateSimulationAsset(Asset, *Mesh, OutError)) return false;
+	if (RootBoneIndex != INDEX_NONE)
+	{
+		bool bRootBodyFound = false;
+		for (const UBodySetup* Body : Asset.BodySetups)
+			bRootBodyFound |= Mesh->FindBoneIndex(Body->BoneName) == RootBoneIndex;
+		if (RootBoneIndex < 0 || RootBoneIndex >= Mesh->GetNumBones() || !bRootBodyFound)
+		{
+			OutError = "Select a physics body before starting selected-body simulation.";
+			return false;
+		}
+	}
 	const FVector Scale = Component.GetWorldScale3D();
 	if (!IsFiniteVector(Scale) || Scale.X <= 0.0f || Scale.Y <= 0.0f || Scale.Z <= 0.0f)
 	{
@@ -116,43 +125,40 @@ bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UPhysicsA
 		return false;
 	}
 	MeshComponent = &Component;
+	FloorComponent = &PreviewFloor;
 	PhysicsScene = Scene;
 	AActor* Owner = Component.GetOwner();
 	TransformTarget = Owner && Owner->GetRootComponent() ? Owner->GetRootComponent() : &Component;
 	SavedTargetTransform = TransformTarget->GetTransform();
 	SavedMeshTransform = Component.GetTransform();
 	SavedPose = Component.GetBoneSpaceTransforms();
-	const FBox Bounds = Component.CalcBounds();
-	if (!IsFiniteVector(Bounds.Min) || !IsFiniteVector(Bounds.Max) ||
-		Bounds.Min.X > Bounds.Max.X || Bounds.Min.Y > Bounds.Max.Y || Bounds.Min.Z > Bounds.Max.Z)
-	{
-		OutError = "The preview mesh bounds are invalid.";
-		Stop();
-		return false;
-	}
-	FloorCenter = FVector((Bounds.Min.X + Bounds.Max.X) * 0.5f, (Bounds.Min.Y + Bounds.Max.Y) * 0.5f, Bounds.Min.Z);
-	FloorHalfExtent = FMath::Max(1.0f, FMath::Max(Bounds.Max.Z - Bounds.Min.Z,
-		FMath::Max(Bounds.Max.X - Bounds.Min.X, Bounds.Max.Y - Bounds.Min.Y))) * 2.0f;
 	bool bCreated = false;
 	{
 		FPhysSceneWriteLock Lock(Scene);
 		Component.SetSimulatePhysics(false);
 		Component.TermArticulated();
+		PreviewFloor.BodyInstance.TermBody();
 		physx::PxScene* PxScene = Scene->GetPxScene();
 		const physx::PxU32 PreviousBodies = PxScene->getNbActors(physx::PxActorTypeFlag::eRIGID_DYNAMIC);
 		const physx::PxU32 PreviousConstraints = PxScene->getNbConstraints();
-		Component.InitArticulated(Scene);
+		Component.InitArticulated(Scene, &Asset);
 		bCreated = PxScene->getNbActors(physx::PxActorTypeFlag::eRIGID_DYNAMIC) == PreviousBodies + static_cast<physx::PxU32>(Asset.BodySetups.Num()) &&
 			PxScene->getNbConstraints() == PreviousConstraints + static_cast<physx::PxU32>(Asset.Constraints.Num());
 		if (bCreated)
 		{
-			Floor = physx::PxCreatePlane(*Physics, physx::PxPlane(0.0f, 0.0f, 1.0f, -FloorCenter.Z), *Material);
-			if (Floor)
+			// 프리뷰 월드는 게임용 물리 상태를 자동 생성하지 않으므로 바닥 메시의 바디를 직접 초기화합니다.
+			PreviewFloor.BodyInstance.bSimulatePhysics = false;
+			PreviewFloor.BodyInstance.bEnableGravity = false;
+			PreviewFloor.BodyInstance.CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
+			PreviewFloor.BodyInstance.InitBody(PreviewFloor.GetBodySetup(),
+				FTransform(PreviewFloor.GetWorldRotation(), PreviewFloor.GetWorldLocation(), PreviewFloor.GetWorldScale3D()),
+				&PreviewFloor, Scene);
+			bCreated = PreviewFloor.BodyInstance.IsValidBodyInstance();
+			if (bCreated)
 			{
-				PxScene->addActor(*Floor);
-				Component.SetSimulatePhysics(true);
+				if (RootBoneIndex == INDEX_NONE) Component.SetSimulatePhysics(true);
+				else bCreated = Component.SetSimulatePhysicsBelow(RootBoneIndex);
 			}
-			else bCreated = false;
 		}
 	}
 	if (!bCreated)
@@ -161,9 +167,6 @@ bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UPhysicsA
 		Stop();
 		return false;
 	}
-	ElapsedTime = 0.0f;
-	bPaused = false;
-	bStepRequested = false;
 	bActive = true;
 	return true;
 }
@@ -176,7 +179,7 @@ void FPhysicsAssetSimulation::Stop()
 			FPhysSceneWriteLock Lock(PhysicsScene);
 			MeshComponent->SetSimulatePhysics(false);
 			MeshComponent->TermArticulated();
-			if (Floor) { Floor->release(); Floor = nullptr; }
+			if (FloorComponent) FloorComponent->BodyInstance.TermBody();
 		}
 		if (TransformTarget) TransformTarget->SetTransform(SavedTargetTransform, ETeleportType::TeleportPhysics);
 		if (TransformTarget != MeshComponent) MeshComponent->SetTransform(SavedMeshTransform, ETeleportType::TeleportPhysics);
@@ -184,47 +187,30 @@ void FPhysicsAssetSimulation::Stop()
 		MeshComponent->RefreshBoneTransformsNow();
 	}
 	MeshComponent = nullptr;
+	FloorComponent = nullptr;
 	TransformTarget = nullptr;
 	PhysicsScene = nullptr;
 	SavedPose.Empty();
 	bActive = false;
-	bPaused = false;
-	bStepRequested = false;
-	ElapsedTime = 0.0f;
 }
 
 void FPhysicsAssetSimulation::Tick(float DeltaTime)
 {
 	if (!bActive || !MeshComponent || !PhysicsScene) return;
-	if ((!bPaused || bStepRequested) && std::isfinite(DeltaTime) && DeltaTime >= 0.0f)
+	if (std::isfinite(DeltaTime) && DeltaTime >= 0.0f)
 	{
 		FPhysicsSettings Settings;
 		Settings.bSubstepping = true;
 		Settings.MaxSubstepDeltaTime = 1.0f / 120.0f;
 		Settings.MaxSubsteps = 8;
-		const float StepTime = bStepRequested ? 1.0f / 60.0f : FMath::Min(DeltaTime, Settings.MaxSubstepDeltaTime * Settings.MaxSubsteps);
+		const float StepTime = FMath::Min(DeltaTime, Settings.MaxSubstepDeltaTime * Settings.MaxSubsteps);
 		if (StepTime > 0.0f)
 		{
 			PhysicsScene->SetUpForFrame(StepTime, Settings);
 			PhysicsScene->StartFrame();
 			PhysicsScene->EndFrame();
-			ElapsedTime += StepTime;
 		}
-		bStepRequested = false;
 	}
 	// 프리뷰 월드는 게임의 EndPhysics 틱 그룹을 실행하지 않으므로 여기서 한 번 반영합니다.
-	// 일시정지 중에도 바디 포즈를 반영해 일반 메시 틱이 덮어쓰는 것을 방지합니다.
 	MeshComponent->EndPhysicsTickComponent(DeltaTime);
-}
-
-void FPhysicsAssetSimulation::DrawFloor(FLineBatcher& Lines) const
-{
-	if (!bActive) return;
-	const FVector4 Color(0.35f, 0.4f, 0.45f, 1.0f);
-	for (int32 Index = -5; Index <= 5; ++Index)
-	{
-		const float Offset = FloorHalfExtent * Index / 5.0f;
-		Lines.AddLine(FloorCenter + FVector(-FloorHalfExtent, Offset, 0.0f), FloorCenter + FVector(FloorHalfExtent, Offset, 0.0f), Color);
-		Lines.AddLine(FloorCenter + FVector(Offset, -FloorHalfExtent, 0.0f), FloorCenter + FVector(Offset, FloorHalfExtent, 0.0f), Color);
-	}
 }
