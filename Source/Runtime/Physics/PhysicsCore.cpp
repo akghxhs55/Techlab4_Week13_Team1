@@ -3,6 +3,7 @@
 #include "ClothCore.h"
 
 #include "PxPhysicsAPI.h"
+#include "vehicle/PxVehicleAPI.h"
 
 using namespace physx;
 
@@ -66,6 +67,14 @@ bool FPhysicsCore::Init()
 	}
 	bExtensionInitialized = true;
 
+	if (!PxInitVehicleExtension(*Foundation))
+	{
+		KRS_LOG(Error, "[PhysX] Failed to initialize Vehicle Extension");
+		Shutdown();
+		return false;
+	}
+	bVehicleExtensionInitialized = true;
+
 	CpuDispatcher = PxDefaultCpuDispatcherCreate(2);
 	if (!CpuDispatcher)
 	{
@@ -97,6 +106,12 @@ void FPhysicsCore::Shutdown()
 	{
 		CpuDispatcher->release();
 		CpuDispatcher = nullptr;
+	}
+
+	if (bVehicleExtensionInitialized)
+	{
+		PxCloseVehicleExtension();
+		bVehicleExtensionInitialized = false;
 	}
 
 	if (bExtensionInitialized)

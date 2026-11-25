@@ -51,6 +51,7 @@ struct FObjMaterialInfo
 	FString MapKd; // 저장소 루트 기준
 	FString MapBump; // 저장소 루트 기준
 	float D = 1.0f;
+	bool bHasAlphaMap = false;
 };
 
 struct FObjInfo

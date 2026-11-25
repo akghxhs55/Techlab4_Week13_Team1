@@ -105,56 +105,95 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 		K2PVector(WorldTransform.Location),
 		K2PQuat(WorldTransform.Rotation.Normalized()),
 	};
-	PxRigidDynamic* Dynamic = Physics->createRigidDynamic(Pose);
-	if (!Dynamic)
+	if (bUseTriangleMesh && bSimulatePhysics)
 	{
-		KRS_LOG(Error, "[PhysX] createRigidDynamic failed");
-		return;
-	}
-	Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics); // 두번째 인자가 true면 물리에 의해 움직임, false면 게임 로직에 의해 움직임
-	if (BoneIndex != INDEX_NONE)
-	{
-		Dynamic->setSolverIterationCounts(12, 4);
-		Dynamic->setMaxDepenetrationVelocity(2.0f);
-		Dynamic->setMaxAngularVelocity(12.0f);
+		KRS_LOG(Warning, "[PhysX] bUseTriangleMesh is incompatible with bSimulatePhysics; falling back to simple bounds");
 	}
 
-	if (CreateShapes(*Dynamic, InBodySetup->AggGeom, WorldTransform.Scale, CollisionEnabled) == 0)
+	PxRigidActor* CreatedActor = nullptr;
+	if (bUseTriangleMesh && !bSimulatePhysics && InBodySetup->TriangleMesh)
 	{
-		Dynamic->release();
-		return;
-	}
+		PxRigidStatic* Static = Physics->createRigidStatic(Pose);
+		if (!Static)
+		{
+			KRS_LOG(Error, "[PhysX] createRigidStatic failed");
+			return;
+		}
 
-	if (MassInKgOverride > 0.0f)
-	{
-		PxRigidBodyExt::setMassAndUpdateInertia(*Dynamic, MassInKgOverride);
+		const FVector S = Abs(WorldTransform.Scale);
+		const PxMeshScale MeshScale(PxVec3(
+			std::max(S.X, 1e-4f),
+			std::max(S.Y, 1e-4f),
+			std::max(S.Z, 1e-4f)));
+		const PxTriangleMeshGeometry TriGeom(
+			InBodySetup->TriangleMesh,
+			MeshScale,
+			PxMeshGeometryFlag::eDOUBLE_SIDED);
+
+		PxShape* Shape = PxRigidActorExt::createExclusiveShape(*Static, TriGeom, *FPhysicsCore::GetDefaultMaterial());
+		if (!Shape)
+		{
+			Static->release();
+			KRS_LOG(Error, "[PhysX] createExclusiveShape failed for TriangleMesh");
+			return;
+		}
+		ApplyCollisionFlags(Shape, CollisionEnabled);
+		CreatedActor = Static;
 	}
 	else
 	{
-		PxRigidBodyExt::updateMassAndInertia(*Dynamic, DefaultDensity);
-		const float DensityMass = Dynamic->getMass();
-		if (DensityMass > 0.0f)
+		PxRigidDynamic* Dynamic = Physics->createRigidDynamic(Pose);
+		if (!Dynamic)
 		{
-			PxRigidBodyExt::setMassAndUpdateInertia(*Dynamic, std::pow(DensityMass, RaiseMassToPower));
+			KRS_LOG(Error, "[PhysX] createRigidDynamic failed");
+			return;
 		}
+		Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics); // 두번째 인자가 true면 물리에 의해 움직임, false면 게임 로직에 의해 움직임
+		if (BoneIndex != INDEX_NONE)
+		{
+			Dynamic->setSolverIterationCounts(12, 4);
+			Dynamic->setMaxDepenetrationVelocity(2.0f);
+			Dynamic->setMaxAngularVelocity(12.0f);
+		}
+
+		if (CreateShapes(*Dynamic, InBodySetup->AggGeom, WorldTransform.Scale, CollisionEnabled) == 0)
+		{
+			Dynamic->release();
+			return;
+		}
+
+		if (MassInKgOverride > 0.0f)
+		{
+			PxRigidBodyExt::setMassAndUpdateInertia(*Dynamic, MassInKgOverride);
+		}
+		else
+		{
+			PxRigidBodyExt::updateMassAndInertia(*Dynamic, DefaultDensity);
+			const float DensityMass = Dynamic->getMass();
+			if (DensityMass > 0.0f)
+			{
+				PxRigidBodyExt::setMassAndUpdateInertia(*Dynamic, std::pow(DensityMass, RaiseMassToPower));
+			}
+		}
+
+		Dynamic->setLinearDamping(LinearDamping); // 선속도 감쇠 계수
+		Dynamic->setAngularDamping(AngularDamping); // 각속도 감쇠 계수
+		Dynamic->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, !bEnableGravity);
+		CreatedActor = Dynamic;
 	}
 
-	Dynamic->setLinearDamping(LinearDamping); // 선속도 감쇠 계수
-	Dynamic->setAngularDamping(AngularDamping); // 각속도 감쇠 계수
-	Dynamic->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, !bEnableGravity);
-
-	Dynamic->userData = this;
+	CreatedActor->userData = this;
 
 	if (Aggregate)
 	{
-		Aggregate->addActor(*Dynamic);
+		Aggregate->addActor(*CreatedActor);
 	}
 	else
 	{
-		Scene->addActor(*Dynamic);
+		Scene->addActor(*CreatedActor);
 	}
 
-	RigidActor = Dynamic;
+	RigidActor = CreatedActor;
 	BodySetup = InBodySetup;
 	OwnerComponent = Owner;
 	PhysScene = InScene;
@@ -254,8 +293,7 @@ bool FBodyInstance::IsDynamic() const
 
 void FBodyInstance::SetBodyTransform(const FTransform& WorldTransform, ETeleportType TeleportType)
 {
-	PxRigidDynamic* Dynamic = GetPxRigidDynamic();
-	if (!Dynamic)
+	if (!RigidActor)
 	{
 		return;
 	}
@@ -264,6 +302,14 @@ void FBodyInstance::SetBodyTransform(const FTransform& WorldTransform, ETeleport
 		K2PVector(WorldTransform.Location),
 		K2PQuat(WorldTransform.Rotation.Normalized()),
 	};
+
+	PxRigidDynamic* Dynamic = GetPxRigidDynamic();
+	if (!Dynamic)
+	{
+		RigidActor->setGlobalPose(Pose);
+		return;
+	}
+
 	const bool bKinematic = Dynamic->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC;
 
 	if (bKinematic && TeleportType == ETeleportType::None)

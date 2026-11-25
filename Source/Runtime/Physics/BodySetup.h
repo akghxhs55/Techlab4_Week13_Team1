@@ -3,6 +3,11 @@
 #include "AggregateGeom.h"
 #include "BodySetup.generated.h"
 
+namespace physx
+{
+	class PxTriangleMesh;
+}
+
 UCLASS()
 class UBodySetup : public UObject
 {
@@ -15,4 +20,6 @@ public:
 
 	UPROPERTY(EditAnywhere)
 	FAggregateGeom AggGeom;
+
+	physx::PxTriangleMesh* TriangleMesh = nullptr;
 };

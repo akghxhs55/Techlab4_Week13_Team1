@@ -191,7 +191,7 @@ namespace
 		const bool bHasColor = Color && Color->GetResource() && Color->GetResource()->GetSRV();
 		Params.SurfaceParams = FVector4(
 			Material.bFlipNormalY ? 1.0f : 0.0f,
-			0.0f,
+			Material.bAlphaMasked ? 1.0f : 0.0f,
 			bHasColor ? 1.0f : 0.0f,
 			GetNormalEncoding(Normal));
 		Params.UVTransform = FVector4(0.0f, 0.0f, Material.UVTiling.X, Material.UVTiling.Y);
@@ -331,6 +331,11 @@ namespace
 
 			FMeshDrawCommand Cmd{};
 			Cmd.Pipeline = *Base;
+			if (Material.bAlphaMasked)
+			{
+				// 알파 마스크(나무 카드·철망 등)는 단면 폴리곤이 많으므로 양면 렌더링한다.
+				Cmd.Pipeline.RasterizerState = ERasterizerState::SolidNone;
+			}
 			Cmd.Pipeline.Shader = Shader;
 			Cmd.VertexFactory = VF;
 			Cmd.FirstIndex = Element.FirstIndex;
@@ -509,6 +514,14 @@ bool FDepthPassMeshProcessor::AddMeshBatch(const FMeshBatch& Batch, const FScene
 {
 	if (!Batch.IsOpaque() || Batch.bIsParticle)
 		return true;
+	if (Batch.Material)
+	{
+		if (const UMaterial* BaseMat = Batch.Material->GetBaseMaterial())
+		{
+			if (BaseMat->bAlphaMasked)
+				return true;
+		}
+	}
 
 	const FVertexFactory* VF = Batch.ResolveVertexFactory();
 	if (!VF || !VF->IsValid())
@@ -718,8 +731,16 @@ bool FTranslucencyPassMeshProcessor::AddMeshBatch(const FMeshBatch& Batch, const
 bool FShadowDepthMeshProcessor::AddMeshBatch(const FMeshBatch& Batch, const FSceneRenderOptions& Options,
 	const FMeshElementCollector* Collector, TArray<FMeshDrawCommand>& OutCommands) const
 {
-	if (!Batch.bCastShadow || Batch.bIsParticle || Batch.LODIndex != 0)
+	if (!Batch.bCastShadow || !Batch.IsOpaque() || Batch.bIsParticle || Batch.LODIndex != 0)
 		return true;
+	if (Batch.Material)
+	{
+		if (const UMaterial* BaseMat = Batch.Material->GetBaseMaterial())
+		{
+			if (BaseMat->bAlphaMasked)
+				return true;
+		}
+	}
 
 	const FVertexFactory* VF = Batch.ResolveVertexFactory();
 	if (!VF || !VF->IsValid())

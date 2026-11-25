@@ -13,6 +13,7 @@
 #include "Camera/CameraShakeBase.h"
 #include <cstring>
 #include "GameFramework/DefaultPawn.h"
+#include "GameFramework/Actor/WheeledVehiclePawn.h"
 
 APlayerController::APlayerController()
 	: ControlRotation(FRotator::Identitiy)
@@ -124,6 +125,21 @@ void APlayerController::InputKey(int32 Key, bool bDown)
 	{
 		if (ASwordCharacter* SwordCharacter = Cast<ASwordCharacter>(PossessedPawn))
 			SwordCharacter->CastBeam();
+	}
+	if (AWheeledVehiclePawn* Vehicle = Cast<AWheeledVehiclePawn>(PossessedPawn))
+	{
+		if (Key == static_cast<int32>(EKeyCode::Space))
+		{
+			Vehicle->SetHandbrakeInput(bDown);
+		}
+		else if (Key == static_cast<int32>(EKeyCode::E) && bJustPressed && bInputAllowed)
+		{
+			Vehicle->ToggleDRS();
+		}
+		else if (Key == static_cast<int32>(EKeyCode::Q) && bJustPressed && bInputAllowed)
+		{
+			Vehicle->ToggleTractionControl();
+		}
 	}
 	// Physics Asset이 있는 캐릭터의 바디를 물리 시뮬레이션으로 전환한다.
 	if (Key == static_cast<int32>(EKeyCode::F9) && bJustPressed && bInputAllowed && Character)
