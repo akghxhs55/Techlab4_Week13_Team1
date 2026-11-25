@@ -43,6 +43,7 @@
 #include "Render/Material.h"
 #include "Render/Texture2D.h"
 #include "Render/SkeletalMesh.h"
+#include "Physics/PhysicsAssetFile.h"
 #include "Text/Font.h"
 #include "UObject/UObjectIterator.h"
 #include "GameFramework/Actor.h"
@@ -3589,6 +3590,109 @@ namespace FPropertyEditor
 	}
 }
 
+void FDetailsPanel::RefreshPhysicsAssetCandidates(const USkeletalMesh& Mesh)
+{
+	auto& State = PhysicsAssetStates.FindOrAdd(&Mesh);
+	State.Candidates.clear();
+	const FString MeshFile = FAssetUtils::ResolveAssetFilePath(Mesh.GetPath());
+	const auto Scan = [&](const std::filesystem::path& Root)
+	{
+		std::error_code Error;
+		std::filesystem::recursive_directory_iterator It(Root, std::filesystem::directory_options::skip_permission_denied, Error), End;
+		for (; !Error && It != End; It.increment(Error))
+		{
+			std::error_code TypeError;
+			if (!It->is_regular_file(TypeError)) continue;
+			const FString Candidate = FPaths::ToUtf8(It->path());
+			if (!PhysicsAssetFile::IsPhysicsAssetPath(Candidate)) continue;
+			FString ReadError;
+			const FString PreviewMesh = PhysicsAssetFile::ResolvePreviewMeshPath(Candidate, ReadError);
+			if (!PreviewMesh.empty() && _wcsicmp(FPaths::FromUtf8(PreviewMesh).c_str(), FPaths::FromUtf8(MeshFile).c_str()) == 0)
+				State.Candidates.push_back(FAssetUtils::GetAssetKey(Candidate));
+		}
+	};
+	Scan(FPaths::ProjectContentDir());
+	if (Mesh.GetPath().starts_with(FPaths::EngineContentPrefix)) Scan(FPaths::EngineResourcesDir());
+	else if (FPaths::FromUtf8(Mesh.GetPath()).is_absolute() && !MeshFile.empty()) Scan(FPaths::FromUtf8(MeshFile).parent_path());
+	std::sort(State.Candidates.begin(), State.Candidates.end());
+	State.Candidates.erase(std::unique(State.Candidates.begin(), State.Candidates.end()), State.Candidates.end());
+}
+
+void FDetailsPanel::DrawPhysicsAssetSettings(USkeletalMesh& Mesh)
+{
+	auto& State = PhysicsAssetStates.FindOrAdd(&Mesh);
+	if (!ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		State.bPickerOpen = false;
+		return;
+	}
+	UPhysicsAsset* Current = Mesh.GetPhysicsAsset();
+	const FString CurrentPath = Current ? Current->GetAssetPath() : FString();
+	const FString CurrentName = Current ? (CurrentPath.empty() ? FString("Unsaved Physics Asset")
+		: FPaths::ToUtf8(FPaths::FromUtf8(CurrentPath).filename())) : FString("None");
+	ImGui::TextUnformatted("Physics Asset");
+	ImGui::TextWrapped("Mesh default: shared by all components using this skeletal mesh.");
+	ImGui::SetNextItemWidth(-1.0f);
+	const bool bPickerOpen = ImGui::BeginCombo("##DefaultPhysicsAsset", CurrentName.c_str());
+	if (bPickerOpen)
+	{
+		if (!State.bPickerOpen) RefreshPhysicsAssetCandidates(Mesh);
+		const auto Select = [&](const FString& Path)
+		{
+			FString Error;
+			if (Mesh.SetPhysicsAssetByPath(Path, Error))
+			{
+				State.bDirty = true;
+				State.bError = false;
+				State.Message.clear();
+			}
+			else
+			{
+				State.Message = Error;
+				State.bError = true;
+			}
+		};
+		if (ImGui::Selectable("None", !Current)) Select({});
+		for (const FString& Path : State.Candidates)
+		{
+			ImGui::PushID(Path.c_str());
+			const FString Name = FPaths::ToUtf8(FPaths::FromUtf8(Path).filename());
+			const bool bSelected = Path == CurrentPath;
+			if (ImGui::Selectable(Name.c_str(), bSelected)) Select(Path);
+			if (bSelected) ImGui::SetItemDefaultFocus();
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Path.c_str());
+			ImGui::PopID();
+		}
+		if (State.Candidates.empty()) ImGui::TextDisabled("No Physics Assets found for this mesh.");
+		ImGui::EndCombo();
+	}
+	State.bPickerOpen = bPickerOpen;
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("Default Physics Asset for this skeletal mesh. Only assets referencing this mesh are listed.");
+	if (ImGui::Button("Save Default"))
+	{
+		FString Error;
+		State.bError = !Mesh.SavePhysicsAssetReference(Error);
+		if (State.bError) State.Message = Error;
+		else
+		{
+			State.bDirty = false;
+			State.Message = "Default Physics Asset saved.";
+		}
+	}
+	ImGui::SameLine();
+	Current = Mesh.GetPhysicsAsset();
+	ImGui::BeginDisabled(!Current || Current->GetAssetPath().empty() || !OpenPhysicsAssetCallback);
+	if (ImGui::Button("Open Physics Asset")) OpenPhysicsAssetCallback(Current->GetAssetPath());
+	ImGui::EndDisabled();
+	if (State.bDirty) ImGui::TextDisabled("Unsaved Physics Asset selection");
+	if (!State.Message.empty())
+	{
+		ImGui::PushStyleColor(ImGuiCol_Text, EditorColor::ToVec4(State.bError ? EditorColor::Error : EditorColor::TextSecondary));
+		ImGui::TextWrapped("%s", State.Message.c_str());
+		ImGui::PopStyleColor();
+	}
+}
+
 bool FDetailsPanel::Init()
 {
 	ImGuiIO& io = ImGui::GetIO();
@@ -3867,6 +3971,19 @@ void FDetailsPanel::OnRender()
 				DrawMultiSkeletalMeshSlot(SkinnedComps);
 				EndPropertyGridTable();
 			}
+			if (!SkinnedComps.IsEmpty() && SkinnedComps.Num() == RootCompObjs.Num())
+			{
+				USkeletalMesh* CommonMesh = SkinnedComps[0]->GetSkeletalMesh();
+				bool bSameMesh = CommonMesh != nullptr;
+				for (const USkinnedMeshComponent* Component : SkinnedComps)
+					bSameMesh &= Component->GetSkeletalMesh() == CommonMesh;
+				if (bSameMesh) DrawPhysicsAssetSettings(*CommonMesh);
+				else
+				{
+					ImGui::SeparatorText("Physics");
+					ImGui::TextWrapped("Select components using the same skeletal mesh to edit their mesh's default Physics Asset.");
+				}
+			}
 			if (MeshComps.Num() == RootCompObjs.Num() && MinMaterialSlots > 0 && MinMaterialSlots != INT_MAX)
 			{
 				DrawMultiMaterialSlots(MeshComps, MinMaterialSlots);
@@ -3999,6 +4116,12 @@ void FDetailsPanel::OnRender()
 						}
 					}
 					EndPropertyGridTable();
+				}
+				if (USkeletalMesh* Mesh = Component->GetSkeletalMesh()) DrawPhysicsAssetSettings(*Mesh);
+				else
+				{
+					ImGui::SeparatorText("Physics");
+					ImGui::TextDisabled("Select a skeletal mesh to choose its Physics Asset.");
 				}
 			}
 			DrawShadowPreview();

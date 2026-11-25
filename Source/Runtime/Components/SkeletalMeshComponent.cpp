@@ -293,7 +293,7 @@ void USkeletalMeshComponent::InitArticulated(FPhysScene* PhysScene, const UPhysi
 	USkeletalMesh* Mesh = GetSkeletalMesh();
 	const UPhysicsAsset* Asset = OverrideAsset ? OverrideAsset : (Mesh ? Mesh->GetPhysicsAsset() : nullptr);
 	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
-	if (!Mesh || !Asset || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
+	if (!Mesh || !Asset || Asset->BodySetups.IsEmpty() || !PhysScene || !PhysScene->GetPxScene() || !Physics || Aggregate)
 	{
 		return;
 	}

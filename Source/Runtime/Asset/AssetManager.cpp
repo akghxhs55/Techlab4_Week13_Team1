@@ -31,10 +31,13 @@
 #include "Particles/ParticleSystemFile.h"
 #include "Asset/AssetUtils.h"
 #include "Physics/PhysicsAsset.h"
+#include "Physics/PhysicsAssetFile.h"
+#include "Physics/BodySetup.h"
 #include "Render/ImageLoader.h"
 #include "Asset/AssetLoadProfiler.h"
 #include "Core/Misc/Paths.h"
 #include <cctype>
+#include <limits>
 
 namespace
 {
@@ -52,7 +55,8 @@ namespace
 		for (char& Character : Lower) {
 			Character = static_cast<char>(std::tolower(static_cast<unsigned char>(Character)));
 		}
-		return Lower.ends_with(".physics.json") || Lower.ends_with(".fbx.bin.sockets.json");
+		return Lower.ends_with(".physics.json") || Lower.ends_with(".fbx.bin.sockets.json")
+			|| Lower.ends_with(".fbx.bin.physicsasset.json");
 	}
 
 	EAssetType GetAssetTypeFromPath(const FString& Path) {
@@ -525,6 +529,7 @@ void UAssetManager::CreateEditorArrowMaterial() {
 
 void UAssetManager::Shutdown()
 {
+	Get().PhysicsAssetMap.Empty();
 	Get().AssetMap.Empty();
 	Get().SoundMap.Empty();
 	Get().AnimSequenceMap.Empty();
@@ -681,24 +686,60 @@ URenderAsset* UAssetManager::LoadFbxMesh(const FString& Path, FString& OutError)
 		{
 			SkelMesh->LoadSocketsFromFile(ResolvedFile + ".sockets.json");
 
-			const FString PhysicsPath = ResolvedFile + ".physics.json";
-			if (std::filesystem::exists(PhysicsPath))
-			{
-				UPhysicsAsset* PhysicsAsset = NewObject<UPhysicsAsset>();
-				if (FJsonArchive::LoadObject(PhysicsAsset, PhysicsPath))
-				{
-					PhysicsAsset->Validate(*SkelMesh, Key);
-					SkelMesh->SetPhysicsAsset(PhysicsAsset);
-				}
-				else
-				{
-					KRS_LOG(Warning, "[PhysicsAsset] Failed to load {}", PhysicsPath);
-					delete PhysicsAsset;
-				}
-			}
+			FString PhysicsError;
+			if (!SkelMesh->LoadPhysicsAssetReference(PhysicsError))
+				KRS_LOG(Warning, "[PhysicsAsset] {}", PhysicsError);
 		}
 	}
 	return Asset;
+}
+
+UPhysicsAsset* UAssetManager::LoadPhysicsAsset(const FString& Path, FString& OutError)
+{
+	OutError.clear();
+	const FString Key = FAssetUtils::GetAssetKey(Path);
+	const FString FilePath = FAssetUtils::ResolveAssetFilePath(Key);
+	std::error_code Error;
+	const fs::path FileName = FPaths::FromUtf8(FilePath);
+	if (Key.empty() || !PhysicsAssetFile::IsPhysicsAssetPath(Key) || !fs::is_regular_file(FileName, Error))
+	{
+		OutError = "The Physics Asset file is missing or invalid: " + Path;
+		return nullptr;
+	}
+	const fs::file_time_type WriteTime = fs::last_write_time(FileName, Error);
+	if (Error) { OutError = "Cannot read the Physics Asset file timestamp: " + Path; return nullptr; }
+	if (const FLoadedPhysicsAsset* Cached = Get().PhysicsAssetMap.Find(Key))
+		if (Cached->LastWriteTime == WriteTime) return Cached->Asset;
+
+	std::ifstream File(FileName, std::ios::binary | std::ios::ate);
+	if (!File) { OutError = "Cannot open the Physics Asset: " + Path; return nullptr; }
+	const std::streamsize Size = File.tellg();
+	if (Size <= 0 || Size > std::numeric_limits<int32>::max())
+	{
+		OutError = "The Physics Asset file size is invalid: " + Path;
+		return nullptr;
+	}
+	TArray<uint8> Bytes;
+	Bytes.SetNum(static_cast<int32>(Size));
+	File.seekg(0);
+	if (!File.read(reinterpret_cast<char*>(Bytes.GetData()), Size))
+	{
+		OutError = "Cannot read the Physics Asset: " + Path;
+		return nullptr;
+	}
+	TUniquePtr<UPhysicsAsset> Asset(NewObject<UPhysicsAsset>());
+	if (!Asset) { OutError = "Cannot allocate the Physics Asset."; return nullptr; }
+	if (!FJsonArchive::LoadObjectFromBytes(Asset.get(), Bytes))
+	{
+		for (UBodySetup* Body : Asset->BodySetups) delete Body;
+		Asset->ClearBodies();
+		OutError = "Cannot deserialize the Physics Asset: " + Path;
+		return nullptr;
+	}
+	Asset->SetAssetPath(Key);
+	// 이전 버전은 이미 생성된 바디가 참조할 수 있어 UObject 일괄 정리 때까지 유지한다.
+	Get().PhysicsAssetMap[Key] = { Asset.get(), WriteTime };
+	return Asset.release();
 }
 
 UAnimSequence* UAssetManager::LoadAnimSequence(const FString& Path)
