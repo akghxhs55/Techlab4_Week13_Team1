@@ -20,6 +20,7 @@ struct FWheelSimulationState
 	float RotationAngle = 0.0f;                 // 바퀴 누적 회전각 (rad, 렌더링용)
 	float SlipRatio = 0.0f;                     // 종방향 슬립비 (휠 스핀 / 브레이크 락 지표)
 	float SlipAngleRad = 0.0f;                  // 횡방향 슬립각 (rad)
+	bool bOnGravel = false;                     // 코스 이탈 자갈/비포장 노면 접촉 여부
 	FTransform LocalPose = FTransform::Identity;// 차체 기준 휠 렌더링 로컬 트랜스폼
 	FVector ContactPoint = FVector::ZeroVector; // 지면 접점
 	FVector ContactNormal = FVector(0.0f, 0.0f, 1.0f); // 지면 법선
@@ -59,6 +60,8 @@ public:
 
 	void SetDRSRequested(bool bRequest) { bDRSRequested = bRequest; }
 	bool IsDRSActive() const { return bDRSActive; }
+	bool IsOnGravel() const { return GetGravelWheelCount() > 0; }
+	int32 GetGravelWheelCount() const;
 
 	const FVehicleParams& GetParams() const { return Params; }
 	void SetParams(const FVehicleParams& InParams);
@@ -81,6 +84,7 @@ private:
 	bool bTCActive = false;
 	bool bDRSRequested = false;
 	bool bDRSActive = false;
+	float GravelTime = 0.0f;
 
 	// PIMPL로 PhysX Vehicle SDK 내부 헤더 의존성 격리
 	struct FPhysXVehicleData* PhysXData = nullptr;

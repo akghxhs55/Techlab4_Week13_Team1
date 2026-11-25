@@ -162,6 +162,91 @@
                 },
                 {
                     "Class": "AStaticMeshActor",
+                    "Name": "Suzuka_Gravel",
+                    "ParentActor": "",
+                    "ParentComponent": "",
+                    "Properties": {
+                        "ScriptPath": "",
+                        "bActorEnableCollision": true
+                    },
+                    "RootComponentName": "DefaultSceneRoot",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "DefaultSubobjectName": "DefaultSceneRoot",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0.0,
+                                        "Y": 0.0,
+                                        "Z": 0.0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0.0,
+                                        "Roll": 0.0,
+                                        "Yaw": 0.0
+                                    },
+                                    "Scale": {
+                                        "X": 1.0,
+                                        "Y": 1.0,
+                                        "Z": 1.0
+                                    }
+                                },
+                                "bAutoActivate": true,
+                                "bHiddenInGame": false,
+                                "bVisible": true
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "DefaultSubobjectName": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "BodyInstance": {
+                                    "AngularDamping": 0.05,
+                                    "CollisionEnabled": "QueryAndPhysics",
+                                    "LinearDamping": 0.01,
+                                    "MassInKgOverride": 0.0,
+                                    "bEnableGravity": false,
+                                    "bSimulatePhysics": false,
+                                    "bUseTriangleMesh": true
+                                },
+                                "StaticMesh": "Meshes/Suzuka/Suzuka_Gravel.obj",
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0.0,
+                                        "Y": 0.0,
+                                        "Z": 0.0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0.0,
+                                        "Roll": 0.0,
+                                        "Yaw": 0.0
+                                    },
+                                    "Scale": {
+                                        "X": 1.0,
+                                        "Y": 1.0,
+                                        "Z": 1.0
+                                    }
+                                },
+                                "bAutoActivate": true,
+                                "bBlockComponent": true,
+                                "bCastShadow": true,
+                                "bGenerateOverlapEvents": true,
+                                "bHiddenInGame": false,
+                                "bReceiveShadow": true,
+                                "bReceivesDecals": true,
+                                "bVisible": true
+                            }
+                        }
+                    ]
+                },
+                {
+                    "Class": "AStaticMeshActor",
                     "Name": "Suzuka_Groove",
                     "ParentActor": "",
                     "ParentComponent": "",
@@ -348,28 +433,28 @@
                             "Parent": "",
                             "Properties": {
                                 "BodyInstance": {
-                                    "AngularDamping": 0.5,
+                                    "AngularDamping": 0.32,
                                     "CollisionEnabled": "QueryAndPhysics",
-                                    "LinearDamping": 0.15,
+                                    "LinearDamping": 0.01,
                                     "MassInKgOverride": 850.0,
                                     "bEnableGravity": true,
                                     "bSimulatePhysics": true
                                 },
                                 "BoxExtent": {
                                     "X": 2.76,
-                                    "Y": 0.98,
-                                    "Z": 0.55
+                                    "Y": 0.96,
+                                    "Z": 0.44
                                 },
                                 "Transform": {
                                     "Location": {
-                                        "X": 598.95,
-                                        "Y": -406.53,
-                                        "Z": 14.04
+                                        "X": -518.03,
+                                        "Y": 505.03,
+                                        "Z": -5.85
                                     },
                                     "Rotation": {
-                                        "Pitch": 1.78,
+                                        "Pitch": 1.9,
                                         "Roll": 0.0,
-                                        "Yaw": -30.0
+                                        "Yaw": 180.0
                                     },
                                     "Scale": {
                                         "X": 1.0,

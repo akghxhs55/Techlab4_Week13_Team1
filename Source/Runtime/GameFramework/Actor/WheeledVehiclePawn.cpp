@@ -18,6 +18,7 @@
 #include "Particles/Module/ParticleModuleSize.h"
 #include "Particles/Module/ParticleModuleVelocity.h"
 #include "Particles/Module/ParticleModuleColor.h"
+#include "Particles/Module/ParticleModuleSubUV.h"
 #include "Engine/World.h"
 #include "UI/UserWidget.h"
 #include "UI/PanelWidget.h"
@@ -25,13 +26,84 @@
 #include "UI/ProgressBar.h"
 #include "UI/Image.h"
 #include "Math/EngineMath.h"
+#include "Core/Misc/Paths.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace
 {
+	// "1:32.456" 형식. 기록이 없으면 자리표시
+	void FormatLapTime(float Seconds, char* Out, size_t OutSize)
+	{
+		if (Seconds <= 0.0f)
+		{
+			std::snprintf(Out, OutSize, "-:--.---");
+			return;
+		}
+		const int32 Millis = static_cast<int32>(Seconds * 1000.0f + 0.5f);
+		std::snprintf(Out, OutSize, "%d:%02d.%03d", Millis / 60000, (Millis / 1000) % 60, Millis % 1000);
+	}
+
+	std::filesystem::path GetLapRecordPath()
+	{
+		return (FPaths::HasProject() ? FPaths::ProjectDir() : FPaths::EngineDir()) / "Saved" / "LapTimes.csv";
+	}
+
+	// 같은 결승선(5 m 이내)에서 남긴 기록 중 가장 빠른 것. 없으면 0
+	float LoadBestLapTime(const FVector& LineOrigin)
+	{
+		std::ifstream File(GetLapRecordPath());
+		float Best = 0.0f;
+		std::string Line;
+		while (std::getline(File, Line))
+		{
+			const size_t Comma = Line.find(','); // 날짜 뒤부터 숫자
+			if (Comma == std::string::npos) continue;
+			float X = 0.0f, Y = 0.0f, Seconds = 0.0f;
+			int Lap = 0;
+			if (sscanf_s(Line.c_str() + Comma + 1, "%f,%f,%d,%f", &X, &Y, &Lap, &Seconds) != 4) continue;
+			if (std::abs(X - LineOrigin.X) > 5.0f || std::abs(Y - LineOrigin.Y) > 5.0f) continue;
+			if (Seconds > 0.0f && (Best <= 0.0f || Seconds < Best)) Best = Seconds;
+		}
+		return Best;
+	}
+
+	void AppendLapRecord(const FVector& LineOrigin, int32 Lap, float Seconds)
+	{
+		const std::filesystem::path Path = GetLapRecordPath();
+		std::error_code Error;
+		std::filesystem::create_directories(Path.parent_path(), Error);
+		const bool bNewFile = !std::filesystem::exists(Path, Error);
+
+		std::ofstream File(Path, std::ios::app);
+		if (!File)
+		{
+			KRS_LOG(Warning, "[Lap] cannot write lap record file");
+			return;
+		}
+		if (bNewFile)
+		{
+			File << "date,line_x,line_y,lap,seconds,time\n";
+		}
+
+		const std::time_t Now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+		std::tm Local{};
+		localtime_s(&Local, &Now);
+		char Date[32];
+		std::strftime(Date, sizeof(Date), "%Y-%m-%d %H:%M:%S", &Local);
+
+		char Time[32];
+		FormatLapTime(Seconds, Time, sizeof(Time));
+		File << Date << ',' << LineOrigin.X << ',' << LineOrigin.Y << ',' << Lap << ',' << Seconds << ',' << Time << '\n';
+	}
+
 	USoundWave* GetOrCreateF1EngineWave()
 	{
 		static USoundWave* CachedWave = nullptr;
@@ -109,19 +181,20 @@ namespace
 		CachedWave->PCMData.SetNum(NumFrames);
 
 		constexpr double TwoPi = 6.283185307179586;
-		uint32 Seed = 0x2468ACE1u;
-		float BandNoise = 0.0f;
+		// 타이어 "끼이익". 잡음을 섞으면 브레이크 바람 소리처럼 들리므로 음정이 있는 성분만 쓴다.
+		// 주파수가 모두 정수라 1초 루프의 이음새가 없다
 		for (uint32 i = 0; i < NumFrames; ++i)
 		{
 			const double t = static_cast<double>(i) / static_cast<double>(SampleRate);
-			Seed = Seed * 1664525u + 1013904223u;
-			const float White = (static_cast<float>(Seed >> 8) / 8388608.0f) - 1.0f;
-			BandNoise = BandNoise * 0.72f + White * 0.28f;
-			const double Squeal = 0.50 * std::sin(TwoPi * 920.0 * t) + 0.25 * std::sin(TwoPi * 1380.0 * t);
-			float Env = 1.0f;
-			if (i < 256) Env = static_cast<float>(i) / 256.0f;
-			else if (i > NumFrames - 256) Env = static_cast<float>(NumFrames - i) / 256.0f;
-			CachedWave->PCMData[i] = static_cast<float>((Squeal * 0.35 + BandNoise * 0.65) * 0.40 * Env);
+			// 음정을 살짝 떨어 고무가 붙었다 미끄러지는 느낌을 낸다
+			const double Vibrato = 2.5 * std::sin(TwoPi * 7.0 * t) + 0.8 * std::sin(TwoPi * 31.0 * t);
+			const double Phase = TwoPi * 920.0 * t + Vibrato;
+			const double Squeal = 0.60 * std::sin(Phase)
+				+ 0.25 * std::sin(2.0 * Phase)
+				+ 0.12 * std::sin(3.0 * Phase)
+				+ 0.20 * std::sin(TwoPi * 967.0 * t + Vibrato);
+			const double Flutter = 0.85 + 0.15 * std::sin(TwoPi * 23.0 * t);
+			CachedWave->PCMData[i] = static_cast<float>(Squeal * Flutter * 0.22);
 		}
 		return CachedWave;
 	}
@@ -136,7 +209,15 @@ namespace
 		UParticleLODLevel* LODLevel = NewObject<UParticleLODLevel>(Emitter);
 		LODLevel->SetLevel(0);
 
-		LODLevel->SetRequiredModule(NewObject<UParticleModuleRequired>(LODLevel));
+		// CloudAtlas는 8x8 아틀라스라 SubUV로 나눠야 한다. 파티클마다 칸 하나를 생성 때 한 번 뽑는다
+		auto* Required = NewObject<UParticleModuleRequired>(LODLevel);
+		Required->SetMaterial(UAssetManager::GetAssetByPath<UMaterial>("ParticleSmokeCloud"));
+		Required->SetSubUV(EParticleSubUVInterpMethod::Random, 8, 8, 1.0f);
+		LODLevel->SetRequiredModule(Required);
+
+		auto* SubUV = NewObject<UParticleModuleSubUV>(LODLevel);
+		SubUV->BakeDistributions();
+		LODLevel->AddModule(SubUV);
 
 		auto* Spawn = NewObject<UParticleModuleSpawn>(LODLevel);
 		Spawn->GetRate().Mode = EDistributionMode::Constant;
@@ -171,67 +252,10 @@ namespace
 
 		auto* Color = NewObject<UParticleModuleColor>(LODLevel);
 		Color->GetStartColor().Mode = EDistributionMode::Constant;
-		Color->GetStartColor().Constant = FVector(0.84f, 0.86f, 0.88f);
+		// 구름 텍스처가 중간 회색이라 1보다 크게 곱해 밝은 타이어 연기로 만든다
+		Color->GetStartColor().Constant = FVector(1.8f, 1.82f, 1.86f);
 		Color->GetStartAlpha().Mode = EDistributionMode::Constant;
-		Color->GetStartAlpha().Constant = 0.28f;
-		Color->BakeDistributions();
-		LODLevel->AddModule(Color);
-
-		LODLevel->UpdateModuleLists();
-		Emitter->AddLODLevel(LODLevel);
-		Emitter->Build();
-		CachedSys->AddEmitter(Emitter);
-		return CachedSys;
-	}
-
-	UParticleSystem* GetOrCreateFloorSparkTemplate()
-	{
-		static UParticleSystem* CachedSys = nullptr;
-		if (CachedSys) return CachedSys;
-
-		CachedSys = NewObject<UParticleSystem>(nullptr);
-		UParticleEmitter* Emitter = NewObject<UParticleEmitter>(CachedSys);
-		UParticleLODLevel* LODLevel = NewObject<UParticleLODLevel>(Emitter);
-		LODLevel->SetLevel(0);
-
-		LODLevel->SetRequiredModule(NewObject<UParticleModuleRequired>(LODLevel));
-
-		auto* Spawn = NewObject<UParticleModuleSpawn>(LODLevel);
-		Spawn->GetRate().Mode = EDistributionMode::Constant;
-		Spawn->GetRate().Constant = 75.0f;
-		Spawn->GetRateScale().Mode = EDistributionMode::Constant;
-		Spawn->GetRateScale().Constant = 1.0f;
-		Spawn->BakeDistributions();
-		LODLevel->SetSpawnModule(Spawn);
-
-		auto* Lifetime = NewObject<UParticleModuleLifetime>(LODLevel);
-		Lifetime->GetLifetime().Mode = EDistributionMode::Uniform;
-		Lifetime->GetLifetime().MinValue = 0.14f;
-		Lifetime->GetLifetime().MaxValue = 0.28f;
-		Lifetime->BakeDistributions();
-		LODLevel->AddModule(Lifetime);
-
-		auto* Size = NewObject<UParticleModuleSize>(LODLevel);
-		Size->GetStartSize().Mode = EDistributionMode::Uniform;
-		Size->GetStartSize().MinValue = FVector(0.06f, 0.06f, 0.06f);
-		Size->GetStartSize().MaxValue = FVector(0.13f, 0.13f, 0.13f);
-		Size->BakeDistributions();
-		LODLevel->AddModule(Size);
-
-		auto* Velocity = NewObject<UParticleModuleVelocity>(LODLevel);
-		Velocity->GetStartVelocity().Mode = EDistributionMode::Uniform;
-		Velocity->GetStartVelocity().MinValue = FVector(-14.0f, -2.5f, 0.8f);
-		Velocity->GetStartVelocity().MaxValue = FVector(-6.0f, 2.5f, 3.2f);
-		Velocity->GetStartVelocityRadial().Mode = EDistributionMode::Constant;
-		Velocity->GetStartVelocityRadial().Constant = 1.0f;
-		Velocity->BakeDistributions();
-		LODLevel->AddModule(Velocity);
-
-		auto* Color = NewObject<UParticleModuleColor>(LODLevel);
-		Color->GetStartColor().Mode = EDistributionMode::Constant;
-		Color->GetStartColor().Constant = FVector(1.0f, 0.65f, 0.16f);
-		Color->GetStartAlpha().Mode = EDistributionMode::Constant;
-		Color->GetStartAlpha().Constant = 0.95f;
+		Color->GetStartAlpha().Constant = 0.45f;
 		Color->BakeDistributions();
 		LODLevel->AddModule(Color);
 
@@ -250,13 +274,13 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	// 1. 차체 루트 충돌체 (스케일 1.0 유지 -> 자식 컴포넌트의 Shear 왜곡 방지)
 	ChassisCollision = CreateDefaultSubobject<UBoxComponent>("ChassisCollision");
 	SetRootComponent(ChassisCollision);
-	ChassisCollision->BoxExtent = FVector(2.76f, 0.98f, 0.55f); // 페라리 F1 실측: 5.53m x 1.96m x 1.1m의 로컬 반 크기
+	ChassisCollision->BoxExtent = FVector(2.76f, 0.96f, 0.44f); // 롤 관성(폭)은 유지하고 하부 높이만 올려 연석 걸림 방지
 	ChassisCollision->BodyInstance.bSimulatePhysics = true;
 	ChassisCollision->BodyInstance.bEnableGravity = true;
 	ChassisCollision->BodyInstance.CollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	ChassisCollision->BodyInstance.MassInKgOverride = 850.0f; // F1 레이싱 카 총중량
-	ChassisCollision->BodyInstance.LinearDamping = 0.15f;
-	ChassisCollision->BodyInstance.AngularDamping = 0.5f;
+	ChassisCollision->BodyInstance.LinearDamping = 0.01f;
+	ChassisCollision->BodyInstance.AngularDamping = 0.32f;
 
 	// 2. 차체 렌더링용 비주얼 메시 (ChassisCollision의 자식으로 붙이며, 자식을 갖지 않음)
 	MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>("Mesh");
@@ -361,6 +385,22 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 		}
 	}
 
+	// 타이어 고무의 번들거림을 줄인다. OBJ 임포터는 .mtl의 Ns/Ks를 읽지 않아 모든 슬롯이 기본 광택이므로 여기서 낮춘다
+	for (UStaticMesh* WheelAsset : { WheelMesh_FL_Asset, WheelMesh_FR_Asset, WheelMesh_RL_Asset, WheelMesh_RR_Asset })
+	{
+		if (!WheelAsset) continue;
+		const FStaticMeshData& Data = WheelAsset->GetMeshData();
+		for (int32 Slot = 0; Slot < Data.MaterialSlots.Num(); ++Slot)
+		{
+			if (Data.MaterialSlots[Slot].Name.find("tyre") == FString::npos) continue;
+			if (UMaterial* TyreMaterial = Cast<UMaterial>(WheelAsset->GetMaterial(Slot)))
+			{
+				TyreMaterial->SpecularColor = FVector(0.08f, 0.08f, 0.08f);
+				TyreMaterial->Shininess = 8.0f;
+			}
+		}
+	}
+
 	if (!WheelMesh_FL_Asset)
 	{
 		UStaticMesh* FallbackWheel = UAssetManager::GetAssetByPath<UStaticMesh>("Cylinder");
@@ -420,7 +460,7 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	TireAudioComponent->bLooping = true;
 	TireAudioComponent->SetAutoActivate(false);
 
-	// 7. 파티클 컴포넌트 (후륜 타이어 연기 / 차체 플로어 스파크)
+	// 7. 파티클 컴포넌트 (후륜 타이어 연기)
 	TireSmokeRL = CreateDefaultSubobject<UParticleSystemComponent>("TireSmoke_RL");
 	TireSmokeRL->SetupAttachment(ChassisCollision);
 	TireSmokeRL->SetAutoActivate(false);
@@ -428,11 +468,6 @@ AWheeledVehiclePawn::AWheeledVehiclePawn()
 	TireSmokeRR = CreateDefaultSubobject<UParticleSystemComponent>("TireSmoke_RR");
 	TireSmokeRR->SetupAttachment(ChassisCollision);
 	TireSmokeRR->SetAutoActivate(false);
-
-	FloorSparks = CreateDefaultSubobject<UParticleSystemComponent>("FloorSparks");
-	FloorSparks->SetupAttachment(ChassisCollision);
-	FloorSparks->SetRelativeLocation(FVector(-1.6f, 0.0f, -0.35f));
-	FloorSparks->SetAutoActivate(false);
 }
 
 AWheeledVehiclePawn::~AWheeledVehiclePawn()
@@ -453,6 +488,7 @@ void AWheeledVehiclePawn::BeginPlay()
 	{
 		BaseTargetArmLength = SpringArmComponent->TargetArmLength;
 		BaseSocketOffset = SpringArmComponent->SocketOffset;
+		SmoothedSocketOffset = BaseSocketOffset;
 		SpringArmComponent->bEnableCameraRotationLag = true;
 		SpringArmComponent->CameraRotationLagSpeed = 12.0f;
 		SpringArmComponent->bEnableCameraLag = true;
@@ -465,6 +501,10 @@ void AWheeledVehiclePawn::BeginPlay()
 
 	if (GetWorld() && GetWorld()->IsGameWorld())
 	{
+		if (bEnableLapTimer)
+		{
+			InitLapTimer();
+		}
 		if (bShowTelemetryHUD)
 		{
 			CreateTelemetryHUD();
@@ -551,18 +591,32 @@ void AWheeledVehiclePawn::Tick(float DeltaTime)
 
 			FVector TargetSocket = BaseSocketOffset;
 			TargetSocket.Y += FMath::Clamp(-LatG * 0.14f, -0.45f, 0.45f);
+			// 떨림은 보간한 값에 얹기만 한다. 떨림이 섞인 값을 다시 보간하면 누적돼 설정보다 몇 배 크게 흔들린다
+			SmoothedSocketOffset = FMath::VInterpTo(SmoothedSocketOffset, TargetSocket, DeltaTime, 10.0f);
+			FVector ShakenSocket = SmoothedSocketOffset;
 
 			const float BuffetAlpha = FMath::Clamp((SpeedKmH - 130.0f) / 170.0f, 0.0f, 1.0f);
-			if (BuffetAlpha > 0.01f)
+			const int32 GravelWheels = VehicleMovement->GetGravelWheelCount();
+			const float GravelAlpha = (GravelWheels > 0)
+				? (static_cast<float>(GravelWheels) / 4.0f) * FMath::Clamp(SpeedKmH / 30.0f, 0.0f, 1.0f)
+				: 0.0f;
+
+			if (BuffetAlpha > 0.01f || GravelAlpha > 0.01f)
 			{
-				BuffetingTime += DeltaTime * (18.0f + 16.0f * BuffetAlpha);
-				TargetSocket.Y += std::sin(BuffetingTime * 1.7f) * 0.010f * BuffetAlpha;
-				TargetSocket.Z += std::cos(BuffetingTime * 2.3f) * 0.008f * BuffetAlpha;
+				BuffetingTime += DeltaTime * (18.0f + 16.0f * BuffetAlpha + 36.0f * GravelAlpha);
+				const float ShakeY = 0.010f * BuffetAlpha + 0.018f * GravelAlpha;
+				const float ShakeZ = 0.008f * BuffetAlpha + 0.014f * GravelAlpha;
+				ShakenSocket.Y += std::sin(BuffetingTime * 1.7f) * ShakeY;
+				ShakenSocket.Z += std::cos(BuffetingTime * 2.3f) * ShakeZ;
 			}
 
-			SpringArmComponent->SocketOffset = FMath::VInterpTo(SpringArmComponent->SocketOffset, TargetSocket, DeltaTime, 10.0f);
+			SpringArmComponent->SocketOffset = ShakenSocket;
 		}
 
+		if (bEnableLapTimer && GetWorld() && GetWorld()->IsGameWorld())
+		{
+			UpdateLapTimer(DeltaTime);
+		}
 		UpdateTelemetryHUD(DeltaTime);
 		if (bEnableVehicleAudio)
 		{
@@ -570,7 +624,7 @@ void AWheeledVehiclePawn::Tick(float DeltaTime)
 		}
 		if (bEnableVehicleParticles)
 		{
-			UpdateVehicleParticles();
+			UpdateVehicleParticles(DeltaTime);
 		}
 	}
 }
@@ -739,6 +793,35 @@ void AWheeledVehiclePawn::CreateTelemetryHUD()
 	BrakeBar->SetPercent(0.0f);
 	RootCanvas->AddChild(BrakeBar);
 
+	// 우상단 랩타임 카드
+	if (bEnableLapTimer)
+	{
+		UImage* LapBg = NewObject<UImage>(nullptr);
+		LapBg->Anchors = FVector4(1.0f, 0.0f, 1.0f, 0.0f);
+		LapBg->AlignmentX = 1.0f;
+		LapBg->AlignmentY = 0.0f;
+		LapBg->Offsets = FVector4(-32.0f, 32.0f, 260.0f, 100.0f);
+		LapBg->ColorAndOpacity = FLinearColor(0.05f, 0.06f, 0.08f, 0.82f);
+		RootCanvas->AddChild(LapBg);
+
+		auto AddLapLine = [&](float Top, float Height, float FontSize, const FLinearColor& Color)
+		{
+			UTextBlock* Text = NewObject<UTextBlock>(nullptr);
+			Text->bAutoSize = false;
+			Text->Anchors = FVector4(1.0f, 0.0f, 1.0f, 0.0f);
+			Text->AlignmentX = 0.0f;
+			Text->AlignmentY = 0.0f;
+			Text->Offsets = FVector4(-278.0f, Top, 232.0f, Height);
+			Text->FontSize = FontSize;
+			Text->ColorAndOpacity = Color;
+			RootCanvas->AddChild(Text);
+			return Text;
+		};
+		LapText = AddLapLine(42.0f, 30.0f, 24.0f, FLinearColor(0.98f, 0.98f, 1.0f, 1.0f));
+		LastLapText = AddLapLine(78.0f, 22.0f, 15.0f, FLinearColor(0.82f, 0.86f, 0.92f, 1.0f));
+		BestLapText = AddLapLine(102.0f, 22.0f, 15.0f, FLinearColor(0.78f, 0.45f, 1.0f, 1.0f));
+	}
+
 	TelemetryWidget->OnDestroyed = [this]()
 	{
 		TelemetryWidget = nullptr;
@@ -751,6 +834,9 @@ void AWheeledVehiclePawn::CreateTelemetryHUD()
 		RPMBar = nullptr;
 		ThrottleBar = nullptr;
 		BrakeBar = nullptr;
+		LapText = nullptr;
+		LastLapText = nullptr;
+		BestLapText = nullptr;
 	};
 
 	TelemetryWidget->AddToViewport(50);
@@ -842,9 +928,37 @@ void AWheeledVehiclePawn::UpdateTelemetryHUD(float DeltaTime)
 		TimerText->SetText(Buf);
 	}
 
+	if (LapText && LastLapText && BestLapText)
+	{
+		char Time[32];
+		if (bLapRunning)
+		{
+			FormatLapTime(CurrentLapTime, Time, sizeof(Time));
+			std::snprintf(Buf, sizeof(Buf), "LAP %d   %s", CurrentLap, Time);
+		}
+		else
+		{
+			std::snprintf(Buf, sizeof(Buf), "LAP -   -:--.---");
+		}
+		LapText->SetText(Buf);
+
+		FormatLapTime(LastLapTime, Time, sizeof(Time));
+		std::snprintf(Buf, sizeof(Buf), "LAST  %s", Time);
+		LastLapText->SetText(Buf);
+
+		FormatLapTime(BestLapTime, Time, sizeof(Time));
+		std::snprintf(Buf, sizeof(Buf), "BEST  %s", Time);
+		BestLapText->SetText(Buf);
+	}
+
 	if (StatusText)
 	{
-		if (VehicleMovement->IsDRSActive())
+		if (VehicleMovement->IsOnGravel())
+		{
+			StatusText->SetText("GRAVEL");
+			StatusText->ColorAndOpacity = FLinearColor(0.95f, 0.62f, 0.22f, 1.0f);
+		}
+		else if (VehicleMovement->IsDRSActive())
 		{
 			StatusText->SetText("DRS OPEN");
 			StatusText->ColorAndOpacity = FLinearColor(0.15f, 0.90f, 1.0f, 1.0f);
@@ -951,7 +1065,8 @@ void AWheeledVehiclePawn::UpdateVehicleAudio(float DeltaTime)
 				{
 					const float LatSlip = FMath::Clamp((std::abs(WS.SlipAngleRad) - 0.10f) / 0.20f, 0.0f, 1.0f);
 					const float LongSlip = FMath::Clamp((std::abs(WS.SlipRatio) - 0.10f) / 0.25f, 0.0f, 1.0f);
-					MaxSlipMetric = std::max(MaxSlipMetric, std::max(LatSlip, LongSlip));
+					const float GravelScrub = WS.bOnGravel ? FMath::Clamp(SpeedKmH / 90.0f, 0.0f, 0.65f) : 0.0f;
+					MaxSlipMetric = std::max(MaxSlipMetric, std::max({ LatSlip, LongSlip, GravelScrub }));
 				}
 			}
 		}
@@ -970,7 +1085,6 @@ void AWheeledVehiclePawn::StopVehicleAudio()
 void AWheeledVehiclePawn::InitVehicleParticles()
 {
 	UParticleSystem* SmokeSys = GetOrCreateTireSmokeTemplate();
-	UParticleSystem* SparkSys = GetOrCreateFloorSparkTemplate();
 
 	if (TireSmokeRL && SmokeSys)
 	{
@@ -982,17 +1096,11 @@ void AWheeledVehiclePawn::InitVehicleParticles()
 		TireSmokeRR->InitializeSystem(SmokeSys);
 		TireSmokeRR->DeactivateSystem();
 	}
-	if (FloorSparks && SparkSys)
-	{
-		FloorSparks->InitializeSystem(SparkSys);
-		FloorSparks->DeactivateSystem();
-	}
 	bTireSmokeActiveRL = false;
 	bTireSmokeActiveRR = false;
-	bFloorSparksActive = false;
 }
 
-void AWheeledVehiclePawn::UpdateVehicleParticles()
+void AWheeledVehiclePawn::UpdateVehicleParticles(float DeltaTime)
 {
 	if (!VehicleMovement)
 	{
@@ -1011,41 +1119,103 @@ void AWheeledVehiclePawn::UpdateVehicleParticles()
 		ContactOffset.Z -= WheelRadius * 0.85f;
 		PSC->SetRelativeLocation(ContactOffset);
 
-		const bool bShouldSmoke = WS.bInContact && Speed > 5.0f &&
-			(std::abs(WS.SlipAngleRad) > 0.14f || std::abs(WS.SlipRatio) > 0.12f || VehicleMovement->GetHandbrakeInput());
+		const bool bShouldSmoke = WS.bInContact && Speed > 4.0f &&
+			(WS.bOnGravel || std::abs(WS.SlipAngleRad) > 0.14f || std::abs(WS.SlipRatio) > 0.12f || VehicleMovement->GetHandbrakeInput());
+		// AutoActivate를 끈 컴포넌트는 Tick도 꺼져 있다. ActivateSystem만 부르면 방출 플래그만 켜지므로 Activate를 쓴다.
+		// Deactivate는 방출만 멈추고 Tick은 유지해, 남은 파티클이 수명대로 사라진다.
 		if (bShouldSmoke && !bActiveFlag)
 		{
-			PSC->ActivateSystem(false);
+			PSC->Activate(false);
 			bActiveFlag = true;
 		}
 		else if (!bShouldSmoke && bActiveFlag)
 		{
-			PSC->DeactivateSystem();
+			PSC->Deactivate();
 			bActiveFlag = false;
 		}
 	};
 
 	UpdateWheelSmoke(TireSmokeRL, 2, bTireSmokeActiveRL);
 	UpdateWheelSmoke(TireSmokeRR, 3, bTireSmokeActiveRR);
+}
 
-	if (FloorSparks)
+void AWheeledVehiclePawn::InitLapTimer()
+{
+	constexpr float LineAhead = 5.0f; // 출발 위치에서 결승선까지의 거리 (m)
+
+	FVector Forward = GetActorRotation().Quaternion().GetForwardVector();
+	Forward.Z = 0.0f;
+	LapLineForward = Forward.Normalized();
+	LapLineOrigin = GetActorLocation() + LapLineForward * LineAhead;
+	LapPrevLocation = GetActorLocation();
+
+	bLapRunning = false;
+	CurrentLap = 0;
+	CurrentLapTime = 0.0f;
+	LapDistance = 0.0f;
+	LastLapTime = 0.0f;
+	BestLapTime = LoadBestLapTime(LapLineOrigin);
+}
+
+void AWheeledVehiclePawn::UpdateLapTimer(float DeltaTime)
+{
+	constexpr float LineHalfWidth = 15.0f;
+	constexpr float LineHalfHeight = 5.0f;  // 입체 교차로의 위아래 도로를 구분한다
+	constexpr float MaxJump = 20.0f;        // 한 프레임에 이보다 멀리 가면 순간이동으로 본다
+
+	const FVector Location = GetActorLocation();
+	const float Moved = (Location - LapPrevLocation).Size();
+	const float PrevAlong = FVector::Dot(LapPrevLocation - LapLineOrigin, LapLineForward);
+	LapPrevLocation = Location;
+
+	if (Moved > MaxJump)
 	{
-		const FWheelSimulationState& RL = VehicleMovement->GetWheelState(2);
-		const FWheelSimulationState& RR = VehicleMovement->GetWheelState(3);
-		const float RearTravel = std::max(Params.RearLeftWheel.SuspensionTravelDist, 0.05f);
-		const float RearCompression = 0.5f * (RL.SuspensionJounce + RR.SuspensionJounce) / RearTravel;
-		const bool bShouldSpark = (RL.bInContact || RR.bInContact) && Speed > 52.0f && RearCompression > 0.65f;
-		if (bShouldSpark && !bFloorSparksActive)
-		{
-			FloorSparks->ActivateSystem(false);
-			bFloorSparksActive = true;
-		}
-		else if (!bShouldSpark && bFloorSparksActive)
-		{
-			FloorSparks->DeactivateSystem();
-			bFloorSparksActive = false;
-		}
+		bLapRunning = false;
+		return;
 	}
+	if (bLapRunning)
+	{
+		CurrentLapTime += DeltaTime;
+		LapDistance += Moved;
+	}
+
+	// 결승선을 뒤에서 앞으로 넘었는지 확인
+	const FVector Offset = Location - LapLineOrigin;
+	const float Along = FVector::Dot(Offset, LapLineForward);
+	if (!(PrevAlong < 0.0f && Along >= 0.0f))
+	{
+		return;
+	}
+	const float Lateral = std::abs(Offset.X * LapLineForward.Y - Offset.Y * LapLineForward.X);
+	if (Lateral > LineHalfWidth || std::abs(Offset.Z) > LineHalfHeight)
+	{
+		return;
+	}
+
+	// 프레임 중간에 선을 넘은 시점까지 보간해 프레임 속도와 상관없이 기록한다
+	const float Overshoot = DeltaTime * Along / (Along - PrevAlong);
+	if (!bLapRunning)
+	{
+		bLapRunning = true;
+		CurrentLap = 1;
+	}
+	else if (LapDistance >= MinLapDistance)
+	{
+		LastLapTime = CurrentLapTime - Overshoot;
+		if (BestLapTime <= 0.0f || LastLapTime < BestLapTime)
+		{
+			BestLapTime = LastLapTime;
+		}
+		AppendLapRecord(LapLineOrigin, CurrentLap, LastLapTime);
+		KRS_LOG(Info, "[Lap] lap {} finished in {} s", CurrentLap, LastLapTime);
+		++CurrentLap;
+	}
+	else
+	{
+		return; // 한 바퀴를 돌지 않고 다시 넘은 것은 무시하고 계속 잰다
+	}
+	CurrentLapTime = Overshoot;
+	LapDistance = 0.0f;
 }
 
 UStaticMeshComponent* AWheeledVehiclePawn::GetWheelMesh(int32 Index) const

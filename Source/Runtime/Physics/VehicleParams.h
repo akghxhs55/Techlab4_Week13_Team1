@@ -63,20 +63,23 @@ struct FVehicleParams
 	float DRSDragScale = 0.72f;             // DRS 개방 시 공기저항 배율 (28% 감소)
 	float DRSDownforceScale = 0.88f;        // DRS 개방 시 다운포스 배율
 	float GroundEffectStrength = 0.25f;     // 차고 압축(그라운드 이펙트)에 따른 추가 다운포스 비율
-	float TireLateralFriction = 1.75f;      // 전륜 횡방향 타이어 마찰계수 (F1 슬릭)
-	float RearTireLateralFriction = 2.25f;  // 후륜 광폭 타이어 횡방향 마찰계수 (고속 오버스티어 억제)
-	float TireLongitudinalFriction = 1.85f; // 종방향 가감속 트랙션 마찰계수
+	float TireLateralFriction = 2.12f;      // 전륜 횡방향 타이어 마찰계수 (F1 슬릭)
+	float RearTireLateralFriction = 2.48f;  // 후륜 광폭 타이어 횡방향 마찰계수 (고속 오버스티어 억제)
+	float TireLongitudinalFriction = 1.90f; // 종방향 가감속 트랙션 마찰계수
 	float TireNominalLoad = 2800.0f;        // 타이어 기준 수직하중 (N, 하중 민감도 기준)
 	float TireLoadSensitivity = 0.12f;      // 하중 민감도 지수 (수직하중 증가 시 마찰계수 체감)
-	float PacejkaB = 9.0f;                  // 간이 Magic Formula 강성 인자
+	float PacejkaB = 10.8f;                 // 간이 Magic Formula 강성 인자
 	float PacejkaC = 1.40f;                 // 간이 Magic Formula 형상 인자 (피크 이후 완만한 감쇠)
 	float CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 참조치
-	float MinHighSpeedSteerScale = 0.12f;   // 고속 시 최대 조향각 배율 (32도 * 0.12 ≈ 3.8도)
-	float HighSpeedSteerRefSpeed = 18.0f;   // 고속 조향 감쇠 기준 속도 (m/s ≈ 65 km/h에서 50% 감쇠)
+	float MinHighSpeedSteerScale = 0.13f;   // 초고속 시 최대 조향각 배율 (32도 * 0.13 ≈ 4.16도)
+	float HighSpeedSteerRefSpeed = 24.0f;   // 고속 조향 감쇠 기준 속도 (m/s ≈ 86 km/h)
 
 	// 서스펜션 안티롤바 (좌우 롤 억제 및 언더/오버스티어 밸런싱)
-	float FrontAntiRollStiffness = 18000.0f;// 전륜 안티롤바 강성 (N/m)
-	float RearAntiRollStiffness = 14000.0f; // 후륜 안티롤바 강성 (N/m)
+	float FrontAntiRollStiffness = 36000.0f;// 전륜 안티롤바 강성 (N/m)
+	float RearAntiRollStiffness = 32000.0f; // 후륜 안티롤바 강성 (N/m)
+
+	// 타이어 횡력이 차체를 기울이는 정도. 1.0 = 휠 중심 높이에 인가(롤 최대), 0.0 = 무게중심 높이에 인가(횡력에 의한 롤 없음)
+	float LateralForceRollInfluence = 0.2f;
 
 	// 8단 시퀀셜 기어박스 & 파워유닛 RPM 세팅
 	static constexpr int32 MaxForwardGears = 8;

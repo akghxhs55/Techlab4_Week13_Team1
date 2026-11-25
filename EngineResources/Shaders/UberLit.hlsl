@@ -451,6 +451,17 @@ FUberOutput Uber_PS(VS_OUT Input)
         return Output;
     }
 
+    if (SurfaceParams.y > 0.5f)
+    {
+        // 양면 알파 마스크(식생 카드·철망)의 뒷면 법선을 카메라 쪽으로 뒤집고 상향 보정해 교차면 명암 꺾임을 완화한다.
+        const float3 ToCam = CameraPosition.xyz - Input.WorldPosition;
+        if (dot(ShadingNormal, ToCam) < 0.0f)
+        {
+            ShadingNormal = -ShadingNormal;
+        }
+        ShadingNormal = normalize(lerp(ShadingNormal, float3(0.0f, 0.0f, 1.0f), 0.35f));
+    }
+
     float4 ActiveSpecular = SpecularColorShininess;
     float3 ActiveEmissive = Emissive.rgb;
     float AmbientOcclusion = 1.0f;

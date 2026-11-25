@@ -5,10 +5,16 @@
 
 #include "PhysXConversion.h"
 #include "PhysicsCore.h"
+#include "BodyInstance.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/Actor.h"
 #include "Math/EngineMath.h"
 
 #include "PxPhysicsAPI.h"
 #include "vehicle/PxVehicleAPI.h"
+#include "vehicle/physxRoadGeometry/PxVehiclePhysXRoadGeometryState.h"
+#include "vehicle/physxRoadGeometry/PxVehiclePhysXRoadGeometryHelpers.h"
 #include "extensions/PxRigidBodyExt.h"
 
 using namespace physx;
@@ -27,6 +33,9 @@ struct FPhysXVehicleData
 	PxVehicleRoadGeometryState RoadGeomStates[4];
 	PxVehicleSuspensionState SuspStates[4];
 	PxVehicleSuspensionForce SuspForces[4];
+
+	PxConvexMesh* UnitCylinderSweepMesh = nullptr;
+	PxMaterial* ChassisSlideMaterial = nullptr;
 };
 
 FVehicleSimulationPipeline::FVehicleSimulationPipeline()
@@ -56,6 +65,16 @@ void FVehicleSimulationPipeline::CleanupPhysXData()
 {
 	if (PhysXData)
 	{
+		if (PhysXData->UnitCylinderSweepMesh)
+		{
+			PxVehicleUnitCylinderSweepMeshDestroy(PhysXData->UnitCylinderSweepMesh);
+			PhysXData->UnitCylinderSweepMesh = nullptr;
+		}
+		if (PhysXData->ChassisSlideMaterial)
+		{
+			PhysXData->ChassisSlideMaterial->release();
+			PhysXData->ChassisSlideMaterial = nullptr;
+		}
 		delete PhysXData;
 		PhysXData = nullptr;
 	}
@@ -66,6 +85,33 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 	CleanupPhysXData();
 	PhysXData = new FPhysXVehicleData();
 
+	if (PxPhysics* Physics = FPhysicsCore::GetPhysics())
+	{
+		const PxCookingParams CookParams(Physics->getTolerancesScale());
+		PhysXData->UnitCylinderSweepMesh = PxVehicleUnitCylinderSweepMeshCreate(GetKurisuVehicleFrame(), *Physics, CookParams);
+
+		// 연석/바닥과 닿아도 걸리거나 튀지 않는 초저마찰·무반발 스키드 머티리얼을 차체 충돌 셰이프에 적용
+		PhysXData->ChassisSlideMaterial = Physics->createMaterial(0.02f, 0.02f, 0.0f);
+		if (PhysXData->ChassisSlideMaterial)
+		{
+			PhysXData->ChassisSlideMaterial->setFrictionCombineMode(PxCombineMode::eMIN);
+			PhysXData->ChassisSlideMaterial->setRestitutionCombineMode(PxCombineMode::eMIN);
+			if (ChassisActor)
+			{
+				const PxU32 NbShapes = ChassisActor->getNbShapes();
+				for (PxU32 s = 0; s < NbShapes; ++s)
+				{
+					PxShape* Shape = nullptr;
+					ChassisActor->getShapes(&Shape, 1, s);
+					if (Shape)
+					{
+						Shape->setMaterials(&PhysXData->ChassisSlideMaterial, 1);
+					}
+				}
+			}
+		}
+	}
+
 	// 2개 액슬(전륜 0,1 / 후륜 2,3) 구성
 	PhysXData->AxleDescription.setToDefault();
 	const PxU32 frontWheels[2] = { 0, 1 };
@@ -73,8 +119,10 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 	const PxU32 rearWheels[2] = { 2, 3 };
 	PhysXData->AxleDescription.addAxle(2, rearWheels);
 
-	// 서스펜션 계산 설정
-	PhysXData->SuspCalcParams.suspensionJounceCalculationType = PxVehicleSuspensionJounceCalculationType::eRAYCAST;
+	// 서스펜션 계산 설정 (3D 원통 스윕 지원, 코너링 중 안쪽 바퀴 접지 유지를 위해 펴짐 속도 제한 비활성)
+	PhysXData->SuspCalcParams.suspensionJounceCalculationType = PhysXData->UnitCylinderSweepMesh
+		? PxVehicleSuspensionJounceCalculationType::eSWEEP
+		: PxVehicleSuspensionJounceCalculationType::eRAYCAST;
 	PhysXData->SuspCalcParams.limitSuspensionExpansionVelocity = false;
 
 	// 타이어 마찰 기본값 (단일 기본 마찰 1.0)
@@ -122,6 +170,7 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 		WheelStates[i].RotationAngle = 0.0f;
 		WheelStates[i].SlipRatio = 0.0f;
 		WheelStates[i].SlipAngleRad = 0.0f;
+		WheelStates[i].bOnGravel = false;
 		WheelStates[i].LocalPose = FTransform(FQuat::Identity(), Wheel.Offset);
 	}
 
@@ -134,6 +183,7 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 	bTCActive = false;
 	bDRSRequested = false;
 	bDRSActive = false;
+	GravelTime = 0.0f;
 }
 
 float FVehicleSimulationPipeline::EvaluateEngineTorqueScale(float InRPM) const
@@ -196,6 +246,19 @@ float FVehicleSimulationPipeline::GetAverageRearSlipRatio() const
 	return 0.5f * (std::abs(WheelStates[2].SlipRatio) + std::abs(WheelStates[3].SlipRatio));
 }
 
+int32 FVehicleSimulationPipeline::GetGravelWheelCount() const
+{
+	int32 Count = 0;
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (WheelStates[i].bInContact && WheelStates[i].bOnGravel)
+		{
+			++Count;
+		}
+	}
+	return Count;
+}
+
 void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float Throttle, float Steer, float Brake, bool bHandbrake)
 {
 	if (!ChassisActor || !Scene || !PhysXData || DeltaTime <= 0.0f)
@@ -229,7 +292,16 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 	UpdateDrivetrainAndShift(DeltaTime, CurrentForwardSpeed, Throttle);
 
 	const float SpeedRatio = std::abs(CurrentForwardSpeed) / std::max(Params.HighSpeedSteerRefSpeed, 1.0f);
-	const float SteerSpeedScale = std::max(Params.MinHighSpeedSteerScale, 1.0f / (1.0f + std::pow(SpeedRatio, 1.6f)));
+	const float SteerSpeedScale = std::max(Params.MinHighSpeedSteerScale, 1.0f / (1.0f + std::pow(SpeedRatio, 1.85f)));
+
+	// 고속 직진/코너링 요 진동 억제 (중속 턴인은 유지하고 180~320 km/h 요 흔들림만 감쇠)
+	const float HighSpeedYawRatio = FMath::Clamp(std::abs(CurrentForwardSpeed) / 75.0f, 0.0f, 1.0f);
+	const float YawRate = ChassisActor->getAngularVelocity().dot(UpDir);
+	if (HighSpeedYawRatio > 0.15f && std::abs(YawRate) > 1e-3f)
+	{
+		const float YawDampTorque = -YawRate * (900.0f * HighSpeedYawRatio * HighSpeedYawRatio);
+		ChassisActor->addTorque(UpDir * YawDampTorque, PxForceMode::eFORCE);
+	}
 
 	float SteerAngleRad[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	WheelStates[0].SteerAngle = Steer * Params.FrontLeftWheel.MaxSteerAngle * SteerSpeedScale;
@@ -319,29 +391,67 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 	QueryFilter.flags = PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER;
 
 	const PxVehicleFrame VehicleFrame = GetKurisuVehicleFrame();
+	GravelTime += DeltaTime;
+
+	const PxVehiclePhysXRoadGeometryQueryType::Enum RoadQueryType = PhysXData->UnitCylinderSweepMesh
+		? PxVehiclePhysXRoadGeometryQueryType::eSWEEP
+		: PxVehiclePhysXRoadGeometryQueryType::eRAYCAST;
 
 	for (int32 i = 0; i < 4; ++i)
 	{
+		PxVehiclePhysXRoadGeometryQueryState RoadQueryState;
+		RoadQueryState.setToDefault();
+
 		PxVehiclePhysXRoadGeometryQueryUpdate(
 			PhysXData->WheelParams[i],
 			PhysXData->SuspParams[i],
-			PxVehiclePhysXRoadGeometryQueryType::eRAYCAST,
+			RoadQueryType,
 			&FilterCallback,
 			QueryFilter,
 			PhysXData->MaterialFrictionParams,
 			SteerAngleRad[i],
 			PhysXData->RigidBodyState,
 			*Scene,
-			nullptr,
+			PhysXData->UnitCylinderSweepMesh,
 			VehicleFrame,
 			PhysXData->RoadGeomStates[i],
-			nullptr
+			&RoadQueryState
 		);
 
 		WheelStates[i].bInContact = PhysXData->RoadGeomStates[i].hitState;
+		WheelStates[i].bOnGravel = false;
 		if (WheelStates[i].bInContact)
 		{
+			// 연석 턱이나 뾰족한 삼각형 모서리의 가파른 경사 법선을 월드 수직(0,0,1) 기준으로 완화해 바디 롤에 의한 왜곡 방지
+			const PxVec3 WorldUp(0.0f, 0.0f, 1.0f);
+			PxVec3 HitN = PhysXData->RoadGeomStates[i].plane.n;
+			const float NDotUp = HitN.dot(WorldUp);
+			if (NDotUp > 0.40f && NDotUp < 0.94f)
+			{
+				const PxVec3 SmoothedN = (HitN * 0.30f + WorldUp * 0.70f).getNormalized();
+				PhysXData->RoadGeomStates[i].plane = PxPlane(RoadQueryState.hitPosition, SmoothedN);
+			}
+
 			WheelStates[i].ContactNormal = P2KVector(PhysXData->RoadGeomStates[i].plane.n);
+			if (RoadQueryState.actor && RoadQueryState.actor->userData)
+			{
+				const FBodyInstance* HitBody = static_cast<const FBodyInstance*>(RoadQueryState.actor->userData);
+				if (HitBody->OwnerComponent)
+				{
+					if (HitBody->OwnerComponent->GetOwner() &&
+						HitBody->OwnerComponent->GetOwner()->GetName().find("Gravel") != FString::npos)
+					{
+						WheelStates[i].bOnGravel = true;
+					}
+					else if (const UStaticMeshComponent* HitMeshComp = Cast<UStaticMeshComponent>(HitBody->OwnerComponent))
+					{
+						if (HitMeshComp->GetStaticMesh() && HitMeshComp->GetStaticMesh()->GetPath().find("Gravel") != FString::npos)
+						{
+							WheelStates[i].bOnGravel = true;
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -426,12 +536,19 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 			WheelStates[i].RotationAngle += WheelStates[i].RotationSpeed * DeltaTime;
 			WheelStates[i].SlipRatio = 0.0f;
 			WheelStates[i].SlipAngleRad = 0.0f;
+			WheelStates[i].bOnGravel = false;
 			WheelStates[i].LocalPose.Rotation = FRotator(FMath::RadiansToDegrees(WheelStates[i].RotationAngle), WheelStates[i].SteerAngle, 0.0f).Quaternion();
 			continue;
 		}
 
-		// (A) 서스펜션 상향 반발력 + 안티롤바 반력 인가
-		const PxVec3 SuspForce = PhysXData->SuspForces[i].force + UpDir * AntiRollAdjust[i];
+		// (A) 서스펜션 상향 반발력 + 안티롤바 반력 + 자갈밭 요철 서스펜션 채터링 (연석 단차 통과 시 비정상적 스파이크 상한 제한)
+		PxVec3 SuspForce = PhysXData->SuspForces[i].force + UpDir * AntiRollAdjust[i];
+		const float MaxWheelSuspForce = Params.ChassisMass * 9.81f * 2.2f;
+		const float SuspMag = SuspForce.magnitude();
+		if (SuspMag > MaxWheelSuspForce && SuspMag > 1e-4f)
+		{
+			SuspForce *= (MaxWheelSuspForce / SuspMag);
+		}
 		PxRigidBodyExt::addForceAtPos(*ChassisActor, SuspForce, WheelWorldPos, PxForceMode::eFORCE);
 
 		// (B) 휠 접촉점 선속도 및 조향 방향 벡터
@@ -444,14 +561,29 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		const float LongSpeed = WheelVel.dot(WheelForward);
 		const float LatSpeed = WheelVel.dot(WheelRight);
 
-		// (C) 종방향 추진력, 타이어 하중 민감도, 슬립비 및 트랙션 컨트롤(TCS)
 		const float NormalLoad = std::max(0.0f, SuspForce.dot(UpDir));
+		if (WheelStates[i].bOnGravel && std::abs(LongSpeed) > 1.0f)
+		{
+			const float SpeedFactor = FMath::Clamp(std::abs(LongSpeed) / 18.0f, 0.25f, 1.65f);
+			const float WheelPhase = GravelTime * (34.0f + static_cast<float>(i) * 8.1f) + WheelWorldPos.x * 2.1f + WheelWorldPos.z * 1.9f;
+			const float ChatterWave = 0.60f * std::sin(WheelPhase) + 0.40f * std::cos(WheelPhase * 1.87f);
+			PxRigidBodyExt::addForceAtPos(*ChassisActor, UpDir * (ChatterWave * NormalLoad * 0.25f * SpeedFactor), WheelWorldPos, PxForceMode::eFORCE);
+			if (i < 2)
+			{
+				// 전륜 자갈 조향 저항/떨림 (핸들이 자갈에 끌리는 느낌)
+				PxRigidBodyExt::addForceAtPos(*ChassisActor, RightDir * (std::sin(WheelPhase * 0.73f) * NormalLoad * 0.08f * SpeedFactor), WheelWorldPos, PxForceMode::eFORCE);
+			}
+			WheelStates[i].LocalPose.Location.Z += ChatterWave * 0.012f * SpeedFactor;
+		}
+
+		// (C) 종방향 추진력, 타이어 하중 민감도, 자갈 저항/그립 감쇠, 슬립비 및 TCS
 		const float LoadSensitivityFactor = FMath::Clamp(
 			std::pow(Params.TireNominalLoad / std::max(NormalLoad, 250.0f), Params.TireLoadSensitivity),
 			0.68f,
 			1.22f
 		);
-		const float MaxLongFriction = NormalLoad * Params.TireLongitudinalFriction * LoadSensitivityFactor;
+		const float GravelLongScale = WheelStates[i].bOnGravel ? 0.75f : 1.0f;
+		const float MaxLongFriction = NormalLoad * Params.TireLongitudinalFriction * GravelLongScale * LoadSensitivityFactor;
 
 		float WheelDriveForce = 0.0f;
 		if (i >= 2) // Rear wheels (2, 3)
@@ -479,6 +611,13 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 			// 스로틀을 뗐을 때 자연 감속 (엔진 브레이크 + 타이어 굴림 저항)
 			const float CoastResistance = FMath::Min(350.0f, std::abs(LongSpeed) * (Params.ChassisMass * 0.35f));
 			WheelDriveForce -= SignVal * CoastResistance;
+		}
+
+		if (WheelStates[i].bOnGravel && std::abs(LongSpeed) > 0.4f)
+		{
+			// 자갈/오프로드의 구름 저항. 네 바퀴 모두 올라가면 약 0.15~0.3g로 완만하게 감속한다
+			const float GravelDragForce = FMath::Min(NormalLoad * 0.10f + std::abs(LongSpeed) * 8.0f, NormalLoad * 0.20f);
+			WheelDriveForce -= SignVal * GravelDragForce;
 		}
 
 		// 종방향 슬립비 추정 및 TCS 개입
@@ -510,12 +649,13 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		const PxVec3 LongForce = WheelForward * WheelDriveForce;
 		PxRigidBodyExt::addForceAtPos(*ChassisActor, LongForce, WheelWorldPos, PxForceMode::eFORCE);
 
-		// (D) 횡방향 타이어 마찰력 (하중 민감도 + 간이 Pacejka 비선형 슬립 커브 + 마찰원)
-		const float LateralFrictionCoeff = (i < 2) ? Params.TireLateralFriction : Params.RearTireLateralFriction;
+		// (D) 횡방향 타이어 마찰력 (하중 민감도 + 자갈 그립 저하 + 간이 Pacejka + 마찰원)
+		const float GravelLatScale = WheelStates[i].bOnGravel ? 0.45f : 1.0f;
+		const float LateralFrictionCoeff = ((i < 2) ? Params.TireLateralFriction : Params.RearTireLateralFriction) * GravelLatScale;
 		const float MaxTotalLateral = NormalLoad * LateralFrictionCoeff * LoadSensitivityFactor;
 		const float UsedLongRatio = (MaxLongFriction > 1.0f) ? FMath::Clamp(std::abs(WheelDriveForce) / MaxLongFriction, 0.0f, 1.0f) : 0.0f;
 		const float EffectiveMaxLateral = MaxTotalLateral * std::sqrt(std::max(0.55f, 1.0f - 0.25f * UsedLongRatio * UsedLongRatio));
-		const float EffectiveLongSpeed = std::max(std::abs(LongSpeed), 8.0f);
+		const float EffectiveLongSpeed = std::max(std::abs(LongSpeed), 10.0f);
 		const float SlipAngleRad = std::atan2(LatSpeed, EffectiveLongSpeed);
 		WheelStates[i].SlipAngleRad = SlipAngleRad;
 
@@ -523,7 +663,11 @@ void FVehicleSimulationPipeline::Update(float DeltaTime, PxScene* Scene, float T
 		const float LatForceMag = FMath::Clamp(-PacejkaNorm * EffectiveMaxLateral, -EffectiveMaxLateral, EffectiveMaxLateral);
 
 		const PxVec3 LatForce = WheelRight * LatForceMag;
-		PxRigidBodyExt::addForceAtPos(*ChassisActor, LatForce, WheelWorldPos, PxForceMode::eFORCE);
+		// 횡력 작용점을 무게중심(액터 원점) 높이 쪽으로 올려 코너링 롤(좌우 쏠림)을 줄인다.
+		// 전후·좌우 위치는 그대로라 선회(요) 모멘트는 변하지 않는다
+		FVector LatApplyLocalPos = LocalWheelPos;
+		LatApplyLocalPos.Z *= Params.LateralForceRollInfluence;
+		PxRigidBodyExt::addForceAtPos(*ChassisActor, LatForce, ChassisPose.transform(K2PVector(LatApplyLocalPos)), PxForceMode::eFORCE);
 
 		// (E) 휠 롤링 회전 갱신 (슬립비 반영)
 		const float TargetWheelOmega = (LongSpeed * (1.0f + WheelStates[i].SlipRatio)) / Wheel.Radius;

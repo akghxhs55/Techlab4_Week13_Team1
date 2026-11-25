@@ -71,6 +71,14 @@ public:
 	UPROPERTY(EditAnywhere)
 	bool bEnableVehicleParticles = true;
 
+	// ---- 랩타임 ----
+	UPROPERTY(EditAnywhere)
+	bool bEnableLapTimer = true;
+
+	// 한 랩으로 인정하는 최소 주행 거리 (m). 결승선 근처를 왔다 갔다 하는 것을 랩으로 세지 않는다
+	UPROPERTY(EditAnywhere)
+	float MinLapDistance = 3000.0f;
+
 protected:
 	void CreateTelemetryHUD();
 	void UpdateTelemetryHUD(float DeltaTime);
@@ -79,11 +87,29 @@ protected:
 	void UpdateVehicleAudio(float DeltaTime);
 	void StopVehicleAudio();
 	void InitVehicleParticles();
-	void UpdateVehicleParticles();
+	void UpdateVehicleParticles(float DeltaTime);
+	void InitLapTimer();
+	void UpdateLapTimer(float DeltaTime);
+
+	// 결승선은 출발 위치 바로 앞에 진행 방향과 직각으로 놓인다
+	FVector LapLineOrigin = FVector::ZeroVector;
+	FVector LapLineForward = FVector(1.0f, 0.0f, 0.0f);
+	FVector LapPrevLocation = FVector::ZeroVector;
+	bool bLapRunning = false;
+	int32 CurrentLap = 0;
+	float CurrentLapTime = 0.0f;
+	float LapDistance = 0.0f;
+	float LastLapTime = 0.0f; // 0이면 기록 없음
+	float BestLapTime = 0.0f; // 0이면 기록 없음
+
+	UTextBlock* LapText = nullptr;
+	UTextBlock* LastLapText = nullptr;
+	UTextBlock* BestLapText = nullptr;
 
 	float BaseFieldOfView = 60.0f;
 	float BaseTargetArmLength = 7.0f;
 	FVector BaseSocketOffset = FVector::ZeroVector;
+	FVector SmoothedSocketOffset = FVector::ZeroVector; // 떨림을 뺀 카메라 소켓 위치
 	float BuffetingTime = 0.0f;
 	float ElapsedSessionTime = 0.0f;
 
@@ -140,10 +166,6 @@ protected:
 	UPROPERTY(VisibleAnywhere)
 	UParticleSystemComponent* TireSmokeRR = nullptr;
 
-	UPROPERTY(VisibleAnywhere)
-	UParticleSystemComponent* FloorSparks = nullptr;
-
 	bool bTireSmokeActiveRL = false;
 	bool bTireSmokeActiveRR = false;
-	bool bFloorSparksActive = false;
 };

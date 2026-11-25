@@ -379,6 +379,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd gbladesd.png
+map_d gbladesd.png
 
 newmtl 079
 Ns 32.0
@@ -399,6 +400,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd rdlt.png
+map_d rdlt.png
 
 newmtl 309
 Ns 32.0
@@ -609,6 +611,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 274a.png
+map_d 274a.png
 
 newmtl 292
 Ns 32.0
@@ -729,6 +732,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 341.png
+map_d 341.png
 
 newmtl 339
 Ns 32.0
@@ -759,6 +763,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 326.png
+map_d 326.png
 
 newmtl 352
 Ns 32.0
@@ -969,6 +974,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd rdlt.png
+map_d rdlt.png
 
 newmtl BLACKCASE
 Ns 32.0
@@ -1019,6 +1025,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd grlt.png
+map_d grlt.png
 
 newmtl RDLTB
 Ns 32.0
@@ -1029,6 +1036,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd rdlt.png
+map_d rdlt.png
 
 newmtl RDLTD
 Ns 32.0
@@ -1039,6 +1047,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd rdlt.png
+map_d rdlt.png
 
 newmtl GURDRC
 Ns 32.0
@@ -2109,6 +2118,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd rdlt.png
+map_d rdlt.png
 
 newmtl 280
 Ns 32.0
@@ -2561,121 +2571,147 @@ illum 2
 map_Kd flag_fujitv.png
 
 newmtl TREE09
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_row_strip.png
+map_d tree_row_strip.png
 
 newmtl TREE04
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_conifer_b.png
+map_d tree_conifer_b.png
 
 newmtl TREE03
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_conifer_a.png
+map_d tree_conifer_a.png
 
 newmtl TREE02
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_broadleaf_b.png
+map_d tree_broadleaf_b.png
 
 newmtl TREE01
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_broadleaf_a.png
+map_d tree_broadleaf_a.png
 
 newmtl TREE06
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_mixed_b.png
+map_d tree_mixed_b.png
 
 newmtl TREE05
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_mixed_a.png
+map_d tree_mixed_a.png
 
 newmtl SHRUB_THREE
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd shrub_b.png
+map_d shrub_b.png
 
 newmtl SHRUB_ONE
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd shrub_a.png
+map_d shrub_a.png
 
 newmtl SHRUB_FINE
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd shrub_fine.png
+map_d shrub_fine.png
 
 newmtl SHRUB_FOUR
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd shrub_a.png
+map_d shrub_a.png
 
 newmtl SHRUB_TWO
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd shrub_b.png
+map_d shrub_b.png
 
 newmtl TREE_SHADOW
-Ns 32.0
+Ns 8.0
 Ka 1.0 1.0 1.0
 Kd 1.0000 1.0000 1.0000
-Ks 0.1 0.1 0.1
+Ks 0.02 0.02 0.02
 Ni 1.5
 d 1.0
 illum 2
+map_Kd tree_shadow_canopy.png
+map_d tree_shadow_canopy.png
 
 newmtl POLE_LINE
 Ns 32.0
@@ -2686,6 +2722,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd pole_line.png
+map_d pole_line.png
 
 newmtl towerdisplay2
 Ns 32.0
@@ -2726,6 +2763,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 278.png
+map_d 278.png
 
 newmtl 276
 Ns 32.0
@@ -2736,6 +2774,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 276.png
+map_d 276.png
 
 newmtl 275
 Ns 32.0
@@ -2746,6 +2785,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 275.png
+map_d 275.png
 
 newmtl 230
 Ns 32.0
@@ -2756,6 +2796,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 230.png
+map_d 230.png
 
 newmtl 310
 Ns 32.0
@@ -2766,6 +2807,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 310.png
+map_d 310.png
 
 newmtl DIANXIAN
 Ns 32.0
@@ -2776,6 +2818,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 136.png
+map_d 136.png
 
 newmtl 331
 Ns 32.0
@@ -2786,6 +2829,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 331.png
+map_d 331.png
 
 newmtl 334
 Ns 32.0
@@ -2796,6 +2840,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 334.png
+map_d 334.png
 
 newmtl 340
 Ns 32.0
@@ -2806,6 +2851,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 340.png
+map_d 340.png
 
 newmtl 349
 Ns 32.0
@@ -2816,6 +2862,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 349.png
+map_d 349.png
 
 newmtl 343
 Ns 32.0
@@ -2826,6 +2873,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 343.png
+map_d 343.png
 
 newmtl 338
 Ns 32.0
@@ -2836,6 +2884,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 338.png
+map_d 338.png
 
 newmtl 362
 Ns 32.0
@@ -2846,6 +2895,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 362.png
+map_d 362.png
 
 newmtl 351
 Ns 32.0
@@ -2856,6 +2906,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 351.png
+map_d 351.png
 
 newmtl 365
 Ns 32.0
@@ -2866,6 +2917,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 365.png
+map_d 365.png
 
 newmtl 348
 Ns 32.0
@@ -2876,6 +2928,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 348.png
+map_d 348.png
 
 newmtl 147
 Ns 32.0
@@ -2886,6 +2939,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 147.png
+map_d 147.png
 
 newmtl 400
 Ns 32.0
@@ -2896,6 +2950,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 400.png
+map_d 400.png
 
 newmtl 399
 Ns 32.0
@@ -2916,6 +2971,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 402.png
+map_d 402.png
 
 newmtl 401
 Ns 32.0
@@ -2926,6 +2982,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 401.png
+map_d 401.png
 
 newmtl 069
 Ns 32.0
@@ -2936,6 +2993,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 069.png
+map_d 069.png
 
 newmtl 065
 Ns 32.0
@@ -2946,6 +3004,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 065.png
+map_d 065.png
 
 newmtl PITEXITLINE
 Ns 32.0
@@ -2956,6 +3015,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd lgedge.png
+map_d lgedge.png
 
 newmtl 336
 Ns 32.0
@@ -2966,6 +3026,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 336.png
+map_d 336.png
 
 newmtl 350
 Ns 32.0
@@ -2976,6 +3037,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 350.png
+map_d 350.png
 
 newmtl 360
 Ns 32.0
@@ -2986,6 +3048,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 360.png
+map_d 360.png
 
 newmtl 353
 Ns 32.0
@@ -2996,6 +3059,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 353.png
+map_d 353.png
 
 newmtl line4
 Ns 32.0
@@ -3006,6 +3070,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd line4.png
+map_d line4.png
 
 newmtl 282
 Ns 32.0
@@ -3016,6 +3081,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 282.png
+map_d 282.png
 
 newmtl 356
 Ns 32.0
@@ -3026,6 +3092,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 356.png
+map_d 356.png
 
 newmtl 378
 Ns 32.0
@@ -3036,6 +3103,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 378.png
+map_d 378.png
 
 newmtl 142
 Ns 32.0
@@ -3046,6 +3114,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 142.png
+map_d 142.png
 
 newmtl 141
 Ns 32.0
@@ -3056,6 +3125,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 141.png
+map_d 141.png
 
 newmtl GAOYADIANTA01
 Ns 32.0
@@ -3066,6 +3136,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd dianta.png
+map_d dianta.png
 
 newmtl logo_orange_grass
 Ns 32.0
@@ -3086,6 +3157,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 002.png
+map_d 002.png
 
 newmtl lapdisplay
 Ns 32.0
@@ -3106,6 +3178,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd horn01.png
+map_d horn01.png
 
 newmtl grid
 Ns 32.0
@@ -3116,6 +3189,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd grid1.png
+map_d grid1.png
 
 newmtl TIESIWANG01
 Ns 32.0
@@ -3126,6 +3200,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd tiesiwang01.png
+map_d tiesiwang01.png
 
 newmtl clockdisplay
 Ns 32.0
@@ -3146,6 +3221,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 047.png
+map_d 047.png
 
 newmtl 046
 Ns 32.0
@@ -3156,6 +3232,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 046.png
+map_d 046.png
 
 newmtl 001
 Ns 32.0
@@ -3166,6 +3243,7 @@ Ni 1.5
 d 1.0
 illum 2
 map_Kd 001.png
+map_d 001.png
 
 newmtl ROAD03
 Ns 32.0

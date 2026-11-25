@@ -381,6 +381,17 @@ void UAssetManager::CreateDefaultMeshes()
 	FStaticMeshData* CubeData = FGeometryGenerator::GetMeshData("Cube");
 	RegisterAsset("Cube", CreateStaticMesh(CubeData));
 
+	// 메시 파티클용 흰 큐브. 기본 Cube는 면마다 정점 색이 있어 파티클 색과 곱하면 노란색이 나오지 않는다
+	if (CubeData)
+	{
+		FStaticMeshData WhiteCube = *CubeData;
+		for (FVertex& Vertex : WhiteCube.Vertices)
+		{
+			Vertex.Color = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
+		}
+		RegisterAsset("ParticleSparkCube", CreateStaticMesh(&WhiteCube));
+	}
+
 	FStaticMeshData* ConeData = FGeometryGenerator::GetMeshData("Cone");
 	RegisterAsset("Cone", CreateStaticMesh(ConeData));
 
@@ -486,6 +497,20 @@ void UAssetManager::CreateParticleMaterial()
 		};
 	MakeSpriteMaterial(EPSOType::Particle_Additive, EBlendState::ParticleAdditive, "ParticleSpriteAdditive");
 	MakeSpriteMaterial(EPSOType::Particle_AlphaBlend, EBlendState::AlphaBlend, "ParticleSpriteAlphaBlend");
+
+	// 연기용. CloudAtlas는 8x8 아틀라스라 에미터에서 SubUV 8x8을 함께 설정해야 한다.
+	// 콘텐츠 스캔 뒤에 불리므로 프로젝트에 텍스처가 있을 때만 등록한다
+	if (UTexture2D* CloudAtlas = GetAssetByPath<UTexture2D>("Textures/Particles/CloudAtlas.png"))
+	{
+		UMaterial* SmokeMat = NewObject<UMaterial>();
+		SmokeMat->PSOType = EPSOType::Particle_AlphaBlend;
+		SmokeMat->Shader = FRenderResourceManager::GetShaderProgram("EngineResources/Shaders/ParticleSpriteShader.hlsl");
+		SmokeMat->Textures.Add(CloudAtlas);
+		SmokeMat->BlendState = EBlendState::AlphaBlend;
+		SmokeMat->DepthStencilState = EDepthStencilState::ReadOnly;
+		SmokeMat->SamplerState = ESamplerState::LinearClamp;
+		RegisterAsset("ParticleSmokeCloud", SmokeMat);
+	}
 
 	// 빔, 리본용. U(길이 방향)는 반복, V(폭 방향)는 가장자리가 번지지 않게 Clamp
 	// 셰이더는 스프라이트 것을 두어야 Trail 정점 타입일 때 Trail 셰이더로 바뀐다

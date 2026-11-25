@@ -304,6 +304,16 @@ bool UVehicleMovementComponent::IsDRSActive() const
 	return bVehicleInitialized ? SimulationPipeline.IsDRSActive() : false;
 }
 
+bool UVehicleMovementComponent::IsOnGravel() const
+{
+	return bVehicleInitialized ? SimulationPipeline.IsOnGravel() : false;
+}
+
+int32 UVehicleMovementComponent::GetGravelWheelCount() const
+{
+	return bVehicleInitialized ? SimulationPipeline.GetGravelWheelCount() : 0;
+}
+
 const FWheelSimulationState& UVehicleMovementComponent::GetWheelState(EVehicleWheelOrder Order) const
 {
 	return SimulationPipeline.GetWheelState(Order);

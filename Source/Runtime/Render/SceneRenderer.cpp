@@ -704,7 +704,8 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 				{ DBufferLit, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } },
 				{ DBufferNormal, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } }
 			};
-			if (!Graph.AddRasterPass(std::move(DBufferLitPass), [this, Renderer, Width, Height, &ProjectedDecals, bHasLitProjectedDecal]
+			// 패스는 이 함수가 끝난 뒤 Graph.Execute()에서 실행되므로 지역 목록은 참조가 아니라 복사로 넘긴다
+			if (!Graph.AddRasterPass(std::move(DBufferLitPass), [this, Renderer, Width, Height, ProjectedDecals, bHasLitProjectedDecal]
 			{
 				if (bHasLitProjectedDecal && Renderer->GetProjectedDecal())
 				{
@@ -719,7 +720,7 @@ bool FSceneRenderer::AddCorePasses(FRenderGraphBuilder& Graph, FRenderer* Render
 			DBufferUnlitPass.ColorAttachments = {
 				{ DBufferUnlit, ERenderGraphLoadAction::Clear, { 0.0f, 0.0f, 0.0f, 0.0f } }
 			};
-			if (!Graph.AddRasterPass(std::move(DBufferUnlitPass), [this, Renderer, Width, Height, &ProjectedDecals, bHasUnlitProjectedDecal]
+			if (!Graph.AddRasterPass(std::move(DBufferUnlitPass), [this, Renderer, Width, Height, ProjectedDecals, bHasUnlitProjectedDecal]
 			{
 				if (bHasUnlitProjectedDecal && Renderer->GetProjectedDecal())
 				{

@@ -331,6 +331,11 @@ namespace
 
 			FMeshDrawCommand Cmd{};
 			Cmd.Pipeline = *Base;
+			if (Material.bAlphaMasked)
+			{
+				// 알파 마스크(나무 카드·철망 등)는 단면 폴리곤이 많으므로 양면 렌더링한다.
+				Cmd.Pipeline.RasterizerState = ERasterizerState::SolidNone;
+			}
 			Cmd.Pipeline.Shader = Shader;
 			Cmd.VertexFactory = VF;
 			Cmd.FirstIndex = Element.FirstIndex;

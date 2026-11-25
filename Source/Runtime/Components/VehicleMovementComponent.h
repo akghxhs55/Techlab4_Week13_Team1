@@ -57,6 +57,8 @@ public:
 	void SetDRSRequested(bool bEnable);
 	bool IsDRSActive() const;
 	bool IsDRSRequested() const { return bDRSRequested; }
+	bool IsOnGravel() const;
+	int32 GetGravelWheelCount() const;
 
 	// 바퀴별 시뮬레이션 상태 및 트랜스폼 조회 (0: FL, 1: FR, 2: RL, 3: RR)
 	const FWheelSimulationState& GetWheelState(EVehicleWheelOrder Order) const;
