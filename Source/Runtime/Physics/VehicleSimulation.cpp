@@ -138,7 +138,8 @@ void FVehicleSimulationPipeline::SetupPhysXData()
 		// TireForceParams. 뒤 타이어는 마찰계수 비율만큼 코너링 강성도 키운다
 		const float StiffScale = (i < 2) ? 1.0f : Params.RearTireLateralFriction / std::max(Params.TireLateralFriction, 0.1f);
 		PxVehicleTireForceParams& Tire = PhysXData->TireForceParams[i];
-		Tire.latStiffX = 0.0f;	// 0 = 하중과 무관한 강성
+		// 횡강성은 하중이 클수록 커지고, 기준 하중의 latStiffX배에서 latStiffY(최댓값)에 도달한다
+		Tire.latStiffX = 6.0f;
 		Tire.latStiffY = Params.CorneringStiffness * StiffScale;
 		Tire.longStiff = Params.LongitudinalStiffness;
 		Tire.camberStiff = 0.0f;
@@ -242,7 +243,8 @@ void FVehicleSimulationPipeline::UpdateDrivetrainAndShift(float DeltaTime, float
 	const float ActiveGearRatio = (CurrentGear == -1)
 		? Params.ReverseGearRatio
 		: Params.GearRatios[FMath::Clamp(CurrentGear - 1, 0, FVehicleParams::MaxForwardGears - 1)];
-	const float TargetRPM = FMath::Clamp(Params.IdleRPM + WheelRPM * ActiveGearRatio * Params.FinalDriveRatio, Params.IdleRPM, Params.MaxRPM);
+	// 엔진 RPM = 바퀴 RPM x 총감속비. 저속에서는 아이들 RPM 아래로 내려가지 않는다
+	const float TargetRPM = FMath::Clamp(WheelRPM * ActiveGearRatio * Params.FinalDriveRatio, Params.IdleRPM, Params.MaxRPM);
 	EngineRPM = FMath::FInterpTo(EngineRPM, TargetRPM, DeltaTime, 14.0f);
 
 	if (CurrentGear >= 1 && ShiftCooldownTimer <= 0.0f)

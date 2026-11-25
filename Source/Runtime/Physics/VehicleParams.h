@@ -61,7 +61,7 @@ struct FVehicleParams
 	float TireNominalLoad = 2800.0f;        // 타이어 기준 수직하중 (N, 하중 민감도 기준)
 	float TireLoadSensitivity = 0.12f;      // 하중 민감도 지수 (수직하중 증가 시 마찰계수 체감)
 	float LongitudinalStiffness = 80000.0f;	// 종방향 타이어 강성 (N / 슬립비)
-	float CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 참조치
+	float CorneringStiffness = 200000.0f;   // 전륜 횡강성 최댓값 (N/rad, 평소 하중에서는 이보다 작게 적용)
 	float MinHighSpeedSteerScale = 0.13f;   // 초고속 시 최대 조향각 배율 (32도 * 0.13 ≈ 4.16도)
 	float HighSpeedSteerRefSpeed = 24.0f;   // 고속 조향 감쇠 기준 속도 (m/s ≈ 86 km/h)
 

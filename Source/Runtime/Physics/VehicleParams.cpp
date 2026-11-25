@@ -30,7 +30,7 @@ void FVehicleParams::SetupFerrariF1()
 	TireLongitudinalFriction = 1.90f; // 급가속·풀브레이킹 트랙션 한계
 	TireNominalLoad = 2800.0f;
 	TireLoadSensitivity = 0.12f;
-	CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 참조치
+	CorneringStiffness = 200000.0f;   // 횡강성 최댓값. 정지 시 약 87000, 200km/h에서 약 130000
 	MinHighSpeedSteerScale = 0.13f;   // 초고속 직선/130R에서 4.2도 내외 정밀 조향
 	HighSpeedSteerRefSpeed = 24.0f;   // 86km/h 기준 감쇠 (중속 코너링 ~14도 확보)
 	FrontAntiRollStiffness = 36000.0f;
@@ -87,7 +87,7 @@ void FVehicleParams::SetupKoenigseggGemera()
 	TireLongitudinalFriction = 1.35f;
 	TireNominalLoad = 4500.0f;
 	TireLoadSensitivity = 0.10f;
-	CorneringStiffness = 45000.0f;
+	CorneringStiffness = 93000.0f;    // 횡강성 최댓값. 정지 시 약 45000
 	MinHighSpeedSteerScale = 0.15f;
 	HighSpeedSteerRefSpeed = 20.0f;
 	FrontAntiRollStiffness = 14000.0f;
