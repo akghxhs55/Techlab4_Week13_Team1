@@ -4,6 +4,7 @@
 #include "Render/RenderCommand.h"
 
 #include "Engine/PrimitiveSceneProxy.h"
+#include "Engine/World.h"
 
 
 // StaticMesh 컴포넌트를 초기화한다.
@@ -21,12 +22,29 @@ UStaticMeshComponent::~UStaticMeshComponent()
 void UStaticMeshComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (IsPhysicsStateCreated() && PhysicsBodyMesh != StaticMesh)
+	{
+		OnDestroyPhysicsState();
+		OnCreatePhysicsState();
+	}
 }
 
 // 부모 컴포넌트의 프레임 갱신을 호출한다.
 void UStaticMeshComponent::TickComponent(float DeltaTime)
 {
 	Super::TickComponent(DeltaTime);
+}
+
+void UStaticMeshComponent::OnCreatePhysicsState()
+{
+	PhysicsBodyMesh = StaticMesh;
+	if (bUseComplexAsSimpleCollision && StaticMesh && !bEditorIcon && !BodyInstance.bSimulatePhysics)
+	{
+		BodyInstance.InitStaticTriangleMeshBody(StaticMesh->GetMeshData(), { GetWorldRotation(), GetWorldLocation(), GetWorldScale3D() }, this, GetWorld()->GetPhysicsScene());
+		return;
+	}
+	Super::OnCreatePhysicsState();
 }
 
 void UStaticMeshComponent::SetStaticMesh(UStaticMesh* InStaticMesh)

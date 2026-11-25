@@ -3,14 +3,43 @@
 
 #include "Core/EngineLog.h"
 #include <commdlg.h>
+#include <optional>
+#include <imgui.h>
 #include "Serialization/JsonArchive.h"
 #include "Core/Misc/Paths.h"
 #include "Editor/Asset/FbxImporter/FbxImporter.h"
  
 FString FEditorFileUtils::CurrentScenePath = "";
 
+namespace
+{
+	constexpr const char* FbxImportOptionsPopup = "FBX Import Options";
+
+	struct FPendingFbxImport
+	{
+		FString Path;
+		FFbxImportOptions Options;
+		bool bOpenRequested = true;
+	};
+	std::optional<FPendingFbxImport> PendingFbxImport;
+	bool bLastCreatePhysicsAsset = true;
+
+	void RunFbxImport(const FString& Path, const FFbxImportOptions& Options)
+	{
+		FFbxImportResult Result;
+		FString Error;
+		if (!FFbxImporter::ImportToAssets(Path, Options, Result, Error))
+		{
+			KRS_LOG(Error, "FBX Import failed: {}", Error);
+			MessageBoxW(GetActiveWindow(), L"Failed to import FBX. Check the Output Log for errors.", L"FBX Import", MB_OK | MB_ICONERROR);
+		}
+	}
+}
+
 void FEditorFileUtils::ImportFbx(EFbxImportMode Mode)
 {
+	if (PendingFbxImport) return;
+
 	wchar_t FilePath[32768] = {};
 	OPENFILENAMEW Dialog = {};
 	Dialog.lStructSize = sizeof(Dialog);
@@ -29,14 +58,62 @@ void FEditorFileUtils::ImportFbx(EFbxImportMode Mode)
 
 	// 파일 선택의 UTF-16 경로를 Importer가 받는 UTF-8로 변환한다.
 	const auto Utf8 = std::filesystem::path(FilePath).generic_u8string();
-	FFbxImportResult Result;
-	FString Error;
-	if (!FFbxImporter::ImportToAssets(FString(Utf8.begin(), Utf8.end()), Mode, Result, Error))
+	FFbxImportOptions Options;
+	Options.Mode = Mode;
+	Options.bCreatePhysicsAsset = bLastCreatePhysicsAsset;
+	const FString Path(Utf8.begin(), Utf8.end());
+
+	if (Mode != EFbxImportMode::Skeletal)
 	{
-		KRS_LOG(Error, "FBX Import failed: {}", Error);
-		MessageBoxW(Dialog.hwndOwner, L"Failed to import FBX. Check the Output Log for errors.", L"FBX Import", MB_OK | MB_ICONERROR);
+		RunFbxImport(Path, Options);
+		return;
 	}
-	// 성공·skip·경고는 Importer가 기록하므로 여기서 다시 출력하지 않는다.
+	PendingFbxImport = FPendingFbxImport{ Path, Options };
+}
+
+void FEditorFileUtils::DrawFbxImportOptions()
+{
+	if (!PendingFbxImport) return;
+	if (PendingFbxImport->bOpenRequested)
+	{
+		ImGui::OpenPopup(FbxImportOptionsPopup);
+		PendingFbxImport->bOpenRequested = false;
+	}
+
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::BeginPopupModal(FbxImportOptionsPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		if (!ImGui::IsPopupOpen(FbxImportOptionsPopup)) PendingFbxImport.reset();
+		return;
+	}
+
+	const auto FileName = std::filesystem::path(FPaths::FromUtf8(PendingFbxImport->Path)).filename().u8string();
+	ImGui::Text("File: %s", reinterpret_cast<const char*>(FileName.c_str()));
+	ImGui::Separator();
+
+	ImGui::Checkbox("Create Physics Asset", &PendingFbxImport->Options.bCreatePhysicsAsset);
+	ImGui::TextDisabled("Generates bodies and constraints only when no .physics.json exists.");
+	ImGui::Spacing();
+
+	bool bImport = ImGui::Button("Import", ImVec2(120.0f, 0.0f));
+	ImGui::SameLine();
+	const bool bCancel = ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+	if (bCancel) bImport = false;
+
+	std::optional<FPendingFbxImport> Accepted;
+	if (bImport || bCancel)
+	{
+		if (bImport)
+		{
+			bLastCreatePhysicsAsset = PendingFbxImport->Options.bCreatePhysicsAsset;
+			Accepted = std::move(PendingFbxImport);
+		}
+		PendingFbxImport.reset();
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndPopup();
+
+	if (Accepted) RunFbxImport(Accepted->Path, Accepted->Options);
 }
 
 bool FEditorFileUtils::NewScene(UWorld* World)

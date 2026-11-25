@@ -87,7 +87,7 @@ public:
 
 	virtual void SetSimulatePhysics(bool bSimulate);
 	bool IsSimulatingPhysics() const { return BodyInstance.bSimulatePhysics; }
-	void AddImpulse(const FVector& Impulse, bool bVelocityChange = false) { BodyInstance.AddImpulse(Impulse, bVelocityChange); }
+	virtual void AddImpulse(FVector Impulse, FName BoneName = NAME_None, bool bVelChange = false) { BodyInstance.AddImpulse(Impulse, bVelChange); }
 
 	void SyncComponentToRBPhysics();
 

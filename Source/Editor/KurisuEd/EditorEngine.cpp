@@ -1207,6 +1207,7 @@ void UEditorEngine::Tick(const float DeltaTime)
 		{
 			MaterialEditorPanel->OnRender();
 		}
+		FEditorFileUtils::DrawFbxImportOptions();
 		// NewFrame과 패널 배치 이후의 입력/좌표를 사용해야 클릭과 기즈모 피킹이 일치한다.
 		UpdateGizmoAndPicking();
 

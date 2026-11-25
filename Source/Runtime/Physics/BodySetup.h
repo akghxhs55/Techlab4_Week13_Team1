@@ -8,6 +8,8 @@ class UBodySetup : public UObject
 {
 	GENERATED_BODY()
 public:
+	virtual ~UBodySetup() override;
+
 	UPROPERTY(EditAnywhere)
 	FString BoneName;
 
