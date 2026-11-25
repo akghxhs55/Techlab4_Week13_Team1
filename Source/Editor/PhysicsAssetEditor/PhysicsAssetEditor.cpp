@@ -40,7 +40,6 @@ namespace
 	// 편집본은 이 에디터만 소유한다. UObject 목록의 일괄 정리 전에 자식도 함께 해제한다.
 	void ClearEditingBodies(UPhysicsAsset& Asset)
 	{
-		for (UBodySetup* Body : Asset.BodySetups) delete Body;
 		Asset.ClearBodies();
 	}
 
@@ -424,6 +423,8 @@ bool FPhysicsAssetEditor::Save()
 
 	// 저장할 때는 화면에 보이는 기즈모 편집을 확정합니다. 취소나 시뮬레이션 포즈는 저장하지 않습니다.
 	ShapeGizmo.EndDrag();
+	if (PhysicsAsset->PreviewMeshPath.empty() && Mesh)
+		PhysicsAsset->PreviewMeshPath = FAssetUtils::GetAssetKey(Mesh->GetPath());
 	TArray<uint8> Bytes;
 	if (!FJsonArchive::SaveObjectToBytes(PhysicsAsset, Bytes)) return Fail("Could not serialize the physics asset.");
 	const std::filesystem::path Target = FPaths::FromUtf8(PhysicsPath);
@@ -954,6 +955,11 @@ bool FPhysicsAssetEditor::GenerateBodies()
 	}
 
 	UPhysicsAsset* Generated = NewObject<UPhysicsAsset>();
+	// 생성 에셋 직렬화 시 프리뷰 메시 경로 유지
+	if (Generated)
+	{
+		Generated->PreviewMeshPath = PhysicsAsset->PreviewMeshPath;
+	}
 	TArray<FString> Warnings;
 	TArray<uint8> Bytes;
 	const bool bGenerated = Generated &&

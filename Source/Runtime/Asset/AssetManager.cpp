@@ -731,7 +731,6 @@ UPhysicsAsset* UAssetManager::LoadPhysicsAsset(const FString& Path, FString& Out
 	if (!Asset) { OutError = "Cannot allocate the Physics Asset."; return nullptr; }
 	if (!FJsonArchive::LoadObjectFromBytes(Asset.get(), Bytes))
 	{
-		for (UBodySetup* Body : Asset->BodySetups) delete Body;
 		Asset->ClearBodies();
 		OutError = "Cannot deserialize the Physics Asset: " + Path;
 		return nullptr;

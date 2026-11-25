@@ -418,7 +418,7 @@ bool FSkeletalMeshEditor::CreatePhysicsAsset(const FPhysAssetCreateParams& Param
 	}
 	auto DiscardAsset = [&]
 	{
-		for (UBodySetup* Setup : Asset->BodySetups) delete Setup;
+		Asset->ClearBodies();
 		delete Asset;
 	};
 	if (!bSaved) { DiscardAsset(); return false; }
