@@ -39,7 +39,7 @@ void FPhysicsAssetEditorTab::DrawMenuBar()
 	if (ImGui::BeginMenu("Simulation"))
 	{
 		const bool bSimulating = PhysicsEditor.IsSimulationActive();
-		if (ImGui::MenuItem("Simulate", nullptr, bSimulating, bSimulating || !PhysicsEditor.GetPreviewBodies().IsEmpty()))
+		if (ImGui::MenuItem("Simulate", nullptr, bSimulating, bSimulating || PhysicsEditor.CanStartSimulation()))
 			PhysicsEditor.ToggleSimulation();
 		ImGui::EndMenu();
 	}

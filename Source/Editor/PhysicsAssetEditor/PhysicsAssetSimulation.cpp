@@ -84,7 +84,8 @@ FPhysicsAssetSimulation::~FPhysicsAssetSimulation()
 	Stop();
 }
 
-bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UStaticMeshComponent& PreviewFloor, UPhysicsAsset& Asset, FString& OutError)
+bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UStaticMeshComponent& PreviewFloor, UPhysicsAsset& Asset, FString& OutError,
+	int32 RootBoneIndex)
 {
 	if (bActive) return true;
 	OutError.clear();
@@ -93,13 +94,24 @@ bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UStaticMe
 	FPhysScene* Scene = World ? World->GetPhysicsScene() : nullptr;
 	physx::PxPhysics* Physics = FPhysicsCore::GetPhysics();
 	physx::PxMaterial* Material = FPhysicsCore::GetDefaultMaterial();
-	if (!World || World->GetWorldType() != EWorldType::EditorPreview || !Mesh || Mesh->GetPhysicsAsset() != &Asset ||
+	if (!World || World->GetWorldType() != EWorldType::EditorPreview || !Mesh ||
 		!Scene || !Scene->GetPxScene() || !Physics || !Material || PreviewFloor.GetWorld() != World || !PreviewFloor.GetBodySetup())
 	{
 		OutError = "The preview physics scene, collision floor or physics asset is unavailable.";
 		return false;
 	}
 	if (!ValidateSimulationAsset(Asset, *Mesh, OutError)) return false;
+	if (RootBoneIndex != INDEX_NONE)
+	{
+		bool bRootBodyFound = false;
+		for (const UBodySetup* Body : Asset.BodySetups)
+			bRootBodyFound |= Mesh->FindBoneIndex(Body->BoneName) == RootBoneIndex;
+		if (RootBoneIndex < 0 || RootBoneIndex >= Mesh->GetNumBones() || !bRootBodyFound)
+		{
+			OutError = "Select a physics body before starting selected-body simulation.";
+			return false;
+		}
+	}
 	const FVector Scale = Component.GetWorldScale3D();
 	if (!IsFiniteVector(Scale) || Scale.X <= 0.0f || Scale.Y <= 0.0f || Scale.Z <= 0.0f)
 	{
@@ -129,7 +141,7 @@ bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UStaticMe
 		physx::PxScene* PxScene = Scene->GetPxScene();
 		const physx::PxU32 PreviousBodies = PxScene->getNbActors(physx::PxActorTypeFlag::eRIGID_DYNAMIC);
 		const physx::PxU32 PreviousConstraints = PxScene->getNbConstraints();
-		Component.InitArticulated(Scene);
+		Component.InitArticulated(Scene, &Asset);
 		bCreated = PxScene->getNbActors(physx::PxActorTypeFlag::eRIGID_DYNAMIC) == PreviousBodies + static_cast<physx::PxU32>(Asset.BodySetups.Num()) &&
 			PxScene->getNbConstraints() == PreviousConstraints + static_cast<physx::PxU32>(Asset.Constraints.Num());
 		if (bCreated)
@@ -142,7 +154,11 @@ bool FPhysicsAssetSimulation::Start(USkeletalMeshComponent& Component, UStaticMe
 				FTransform(PreviewFloor.GetWorldRotation(), PreviewFloor.GetWorldLocation(), PreviewFloor.GetWorldScale3D()),
 				&PreviewFloor, Scene);
 			bCreated = PreviewFloor.BodyInstance.IsValidBodyInstance();
-			if (bCreated) Component.SetSimulatePhysics(true);
+			if (bCreated)
+			{
+				if (RootBoneIndex == INDEX_NONE) Component.SetSimulatePhysics(true);
+				else bCreated = Component.SetSimulatePhysicsBelow(RootBoneIndex);
+			}
 		}
 	}
 	if (!bCreated)

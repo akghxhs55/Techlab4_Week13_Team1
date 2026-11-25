@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include "Core/Types.h"
 #include "Containers/Array.h"
 
 struct FPhysicsSettings;
@@ -24,6 +25,30 @@ struct FPendingTriggerEvent
 	UPrimitiveComponent* TriggerComp = nullptr;
 	UPrimitiveComponent* OtherComp = nullptr;
 	bool bIsBegin = true; // true: BeginOverlap, false: EndOverlap
+};
+
+// 월드별 마지막 완료 프레임. 카운터는 마지막 서브스텝, 시간은 모든 서브스텝의 합이다.
+struct FPhysicsSceneStats
+{
+	bool bHasSimulatedFrame = false;
+	uint32 StaticBodies = 0;
+	uint32 DynamicBodies = 0; // Sleep 포함, Kinematic 제외
+	uint32 ActiveDynamicBodies = 0;
+	uint32 KinematicBodies = 0;
+	uint32 ActiveKinematicBodies = 0;
+	uint32 Shapes = 0;
+	uint32 ActiveConstraints = 0;
+	uint32 ContactPairs = 0; // 접촉이 생성된 non-CCD Shape 쌍 (접촉점/Hit 이벤트 수가 아님)
+	int32 Substeps = 0;
+	float StepDeltaTimeMs = 0.0f;
+
+	// 호출 스레드에서 소비한 시간. Start/EndFrame 사이의 다른 게임 로직은 제외하며,
+	// PhysX worker들의 CPU 시간을 합산한 값은 아니다.
+	double SimulateCallsMs = 0.0;
+	double FetchResultsMs = 0.0; // 완료 대기와 PhysX 콜백 처리 포함
+	double SyncComponentsMs = 0.0;
+	double DispatchEventsMs = 0.0;
+	double GetTotalCallsMs() const { return SimulateCallsMs + FetchResultsMs + SyncComponentsMs + DispatchEventsMs; }
 };
 
 class FPhysScene;
@@ -69,6 +94,7 @@ public:
 
 	physx::PxScene* GetPxScene() const { return Scene; }
 	UWorld* GetOwningWorld() const { return Owner; }
+	const FPhysicsSceneStats& GetStats() const { return Stats; }
 
 	// ---- 멀티스레드 락 인터페이스 ----
 	void LockRead(const char* File = nullptr, uint32 Line = 0);
@@ -89,6 +115,8 @@ private:
 	float SubstepDeltaTime = 0.0f;
 	int32 NumSubsteps = 0;
 	bool bPhysXSceneExecuting = false;
+	uint64 SimulateCallCycles = 0;
+	FPhysicsSceneStats Stats;
 
 	// PhysX 콜백 수신기 (PIMPL로 헤더 의존성 최소화)
 	std::unique_ptr<physx::PxSimulationEventCallback> SimEventCallback;

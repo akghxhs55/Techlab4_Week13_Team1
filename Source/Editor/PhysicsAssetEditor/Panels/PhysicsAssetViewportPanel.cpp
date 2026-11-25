@@ -5,6 +5,8 @@
 #include "Render/Texture2D.h"
 #include "Editor/Viewports/ViewportToolbarWidgets.h"
 #include "Editor/EditorUI/EditorStyle.h"
+#include "Editor/Viewports/PhysicsStatOverlay.h"
+#include "Engine/World.h"
 
 FPhysicsAssetViewportPanel::FPhysicsAssetViewportPanel(FPhysicsAssetEditor& InEditor)
 	: FPhysicsAssetEditorPanel(InEditor, "Viewport")
@@ -17,15 +19,38 @@ void FPhysicsAssetViewportPanel::DrawContent()
 	ImGui::PushID("RagdollSimulation");
 	const bool bSimulating = Editor.IsSimulationActive();
 	EditorStyle::PushSelectedButton(bSimulating);
-	ImGui::BeginDisabled(!bSimulating && Editor.GetPreviewBodies().IsEmpty());
+	ImGui::BeginDisabled(!bSimulating && !Editor.CanStartSimulation());
 	if (ImGui::Button("Simulate")) Editor.ToggleSimulation();
 	ImGui::EndDisabled();
 	EditorStyle::PopSelectedButton(bSimulating);
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip(Editor.IsSimulationActive()
-			? "Stop simulation and restore the initial pose and position."
-			: "Start ragdoll simulation.");
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+	{
+		if (Editor.IsSimulationActive()) ImGui::SetTooltip("Stop simulation and restore the initial pose and position.");
+		else if (Editor.GetPreviewBodies().IsEmpty()) ImGui::SetTooltip("Add physics bodies before starting simulation.");
+		else if (Editor.GetSimulationMode() == FPhysicsAssetEditor::ESimulationMode::SelectedAndBelow)
+			ImGui::SetTooltip(Editor.GetSelectedBody() ? "Simulate the selected body and its descendants. Other bodies stay kinematic."
+				: "Select a physics body to simulate it and its descendants.");
+		else ImGui::SetTooltip("Simulate all physics bodies.");
+	}
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(EditorStyle::Scale(170.0f));
+	ImGui::BeginDisabled(bSimulating);
+	int SimulationMode = static_cast<int>(Editor.GetSimulationMode());
+	const char* SimulationModes[] = { "All Bodies", "Selected + Below" };
+	if (ImGui::Combo("##SimulationMode", &SimulationMode, SimulationModes, IM_ARRAYSIZE(SimulationModes)))
+		Editor.SetSimulationMode(static_cast<FPhysicsAssetEditor::ESimulationMode>(SimulationMode));
+	ImGui::EndDisabled();
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+		ImGui::SetTooltip(bSimulating ? "Stop simulation to change its mode."
+			: "All Bodies: full ragdoll. Selected + Below: selected body and all bodies below it in the skeleton.");
 	ImGui::PopID();
+	ImGui::SameLine();
+	bool bShowPhysicsStats = FStatOverlay::IsEnabled(EStatFlags::Physics);
+	if (ImGui::Checkbox("Physics Stats", &bShowPhysicsStats))
+	{
+		FString Message;
+		FStatOverlay::ExecCommand("stat physics", Message);
+	}
 	if (!Editor.GetSimulationError().empty())
 	{
 		ImGui::PushStyleColor(ImGuiCol_Text, EditorColor::ToVec4(EditorColor::Error));
@@ -119,4 +144,7 @@ void FPhysicsAssetViewportPanel::DrawContent()
 		static_cast<int>(Editor.GetGizmoMode()));
 	if (ClickedMode >= 0) Editor.SetGizmoMode(static_cast<EGizmoMode>(ClickedMode));
 	ImGui::EndDisabled();
+	const UWorld* PreviewWorld = Client->GetWorld();
+	PhysicsStatOverlay::DrawPreview(ImGui::GetWindowDrawList(), PreviewWorld ? PreviewWorld->GetPhysicsScene() : nullptr,
+		Origin, { Origin.x + Size.x, Origin.y + Size.y });
 }

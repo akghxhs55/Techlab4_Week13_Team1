@@ -27,6 +27,7 @@
 #include "Render/RenderResourceManager.h"
 #include "Render/SceneRenderer.h"
 #include "Render/SkeletalMesh.h"
+#include "Physics/PhysicsAssetFile.h"
 
 #include <algorithm>
 #include <cctype>
@@ -345,7 +346,8 @@ bool FMeshThumbnailRenderer::IsSupportedMeshFile(const fs::path& FilePath, const
 		|| FFbxMeshBake::IsBakedPath(Utf8Path)
 		|| AnimSequenceFile::IsAnimSequencePath(Utf8Path)
 		|| BlendSpaceFile::IsBlendSpacePath(Utf8Path)
-		|| AnimBlueprintFile::IsAnimBlueprintPath(Utf8Path);
+		|| AnimBlueprintFile::IsAnimBlueprintPath(Utf8Path)
+		|| PhysicsAssetFile::IsPhysicsAssetPath(Utf8Path);
 }
 
 ImTextureID FMeshThumbnailRenderer::GetOrRequestThumbnail(
@@ -353,6 +355,29 @@ ImTextureID FMeshThumbnailRenderer::GetOrRequestThumbnail(
 	const FString& Utf8Path,
 	fs::file_time_type LastWriteTime)
 {
+	if (PhysicsAssetFile::IsPhysicsAssetPath(Utf8Path))
+	{
+		// 참조 경로는 JSON이 바뀔 때만 다시 읽어 카드마다 파일을 읽지 않는다.
+		auto Source = PhysicsThumbnailSources.find(Utf8Path);
+		if (Source == PhysicsThumbnailSources.end() || Source->second.LastWriteTime != LastWriteTime)
+		{
+			FString Error;
+			PhysicsThumbnailSources[Utf8Path] = { PhysicsAssetFile::ResolvePreviewMeshPath(Utf8Path, Error), LastWriteTime };
+			Source = PhysicsThumbnailSources.find(Utf8Path);
+		}
+		const FString& PhysicsMeshPath = Source->second.MeshPath;
+		if (PhysicsMeshPath.empty()) return ImTextureID_Invalid;
+		// 메시와 같은 캐시 키/수정 시간을 사용해 텍스처와 렌더 요청을 공유한다.
+		const fs::path MeshFilePath = FPaths::FromUtf8(PhysicsMeshPath);
+		std::error_code Error;
+		if (!fs::is_regular_file(MeshFilePath, Error))
+		{
+			return ImTextureID_Invalid;
+		}
+		const fs::file_time_type MeshWriteTime = fs::last_write_time(MeshFilePath, Error);
+		return Error ? ImTextureID_Invalid : GetOrRequestThumbnail(MeshFilePath, PhysicsMeshPath, MeshWriteTime);
+	}
+
 	const auto It = Cache.find(Utf8Path);
 	if (It != Cache.end() && It->second.LastWriteTime == LastWriteTime)
 	{
@@ -596,6 +621,7 @@ void FMeshThumbnailRenderer::ClearPendingQueue()
 
 void FMeshThumbnailRenderer::InvalidatePath(const FString& Utf8Path)
 {
+	PhysicsThumbnailSources.erase(Utf8Path);
 	Cache.erase(Utf8Path);
 	PendingQueue.erase(
 		std::remove_if(PendingQueue.begin(), PendingQueue.end(),
@@ -636,6 +662,11 @@ void FMeshThumbnailRenderer::InvalidateDirectoryPrefix(const FString& Utf8DirPre
 		}
 	}
 
+	for (auto It = PhysicsThumbnailSources.begin(); It != PhysicsThumbnailSources.end();)
+	{
+		if (MatchesPrefix(It->first) || MatchesPrefix(It->second.MeshPath)) It = PhysicsThumbnailSources.erase(It);
+		else ++It;
+	}
 	PendingQueue.erase(
 		std::remove_if(PendingQueue.begin(), PendingQueue.end(),
 			[&MatchesPrefix](const FPendingRequest& Req) { return MatchesPrefix(Req.Utf8Path); }),
@@ -646,6 +677,7 @@ void FMeshThumbnailRenderer::Release()
 {
 	PendingQueue.clear();
 	Cache.clear();
+	PhysicsThumbnailSources.clear();
 	StaticMeshComp = nullptr;
 	SkeletalMeshComp = nullptr;
 	ViewportClient.reset();

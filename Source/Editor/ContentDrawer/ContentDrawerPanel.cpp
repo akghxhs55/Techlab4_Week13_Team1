@@ -20,6 +20,7 @@
 #include "Animation/BlendSpace2D.h"
 #include "Animation/BlendSpaceFile.h"
 #include "Animation/AnimBlueprintFile.h"
+#include "Physics/PhysicsAssetFile.h"
 #include "Animation/AnimMontageAsset.h"
 #include "LevelSequence/LevelSequence.h"
 #include "Particles/ParticleEmitter.h"
@@ -644,7 +645,7 @@ namespace
 		if (Ext == ".json")
 		{
 			const std::string FileName = ToLowerAscii(FPaths::ToUtf8(Path.filename()));
-			if (FileName.ends_with(".fbx.bin.physics.json"))
+			if (PhysicsAssetFile::IsPhysicsAssetPath(FileName))
 			{
 				return { "Physics Asset", IM_COL32(120, 200, 90, 255), true };
 			}
@@ -1118,6 +1119,13 @@ void FContentDrawerPanel::RenderContents()
 				SelectedSkeletalMeshIndex = 0;
 				bOpenCreateBlendSpace2D = true;
 			}
+			if (ImGui::MenuItem("Create Physics Asset"))
+			{
+				strcpy_s(NewAssetName, "NewPhysicsAsset");
+				RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+				SelectedSkeletalMeshIndex = 0;
+				bOpenCreatePhysicsAsset = true;
+			}
 			if (ImGui::MenuItem("Create Animation Blueprint"))
 			{
 				strcpy_s(NewAssetName, "NewAnimBlueprint");
@@ -1154,6 +1162,7 @@ void FContentDrawerPanel::RenderContents()
 		if (bOpenCreateBlendSpace) { ImGui::OpenPopup("Create BlendSpace 1D"); bOpenCreateBlendSpace = false; }
 		if (bOpenCreateBlendSpace2D) { ImGui::OpenPopup("Create BlendSpace 2D"); bOpenCreateBlendSpace2D = false; }
 		if (bOpenCreateAnimBlueprint) { ImGui::OpenPopup("Create Animation Blueprint"); bOpenCreateAnimBlueprint = false; }
+		if (bOpenCreatePhysicsAsset) { ImGui::OpenPopup("Create Physics Asset"); bOpenCreatePhysicsAsset = false; }
 		if (bOpenCreateAnimMontage) { ImGui::OpenPopup("Create AnimMontage"); bOpenCreateAnimMontage = false; }
 		if (bOpenCreateAimOffset) { ImGui::OpenPopup("Create AimOffset"); bOpenCreateAimOffset = false; }
 		if (bOpenCreateLevelSequence) { ImGui::OpenPopup("Create LevelSequence"); bOpenCreateLevelSequence = false; }
@@ -1324,6 +1333,22 @@ void FContentDrawerPanel::RenderContents()
 				{
 					OnOpenMesh(FPaths::ToUtf8(TargetPath));
 				}
+				return true;
+			});
+
+		DrawCreateAssetModal(
+			"Create Physics Asset",
+			".physics.json",
+			CurrentPath,
+			NewAssetName,
+			CreateAssetErrorMessage,
+			true,
+			SkeletalMeshCandidates,
+			SelectedSkeletalMeshIndex,
+			[this](const fs::path& TargetPath, const FString& PreviewMeshPath, FString& OutError)
+			{
+				if (!PhysicsAssetFile::CreateNew(TargetPath, PreviewMeshPath, OutError)) return false;
+				if (OnOpenMesh) OnOpenMesh(FPaths::ToUtf8(TargetPath));
 				return true;
 			});
 
@@ -1768,6 +1793,16 @@ void FContentDrawerPanel::RenderContents()
 								|| UAssetManager::GetUnloadedAssetType(PathString) == EAssetType::SkeletalMesh;
 							if (bSkeletalMesh)
 							{
+								if (ImGui::MenuItem("Create Physics Asset..."))
+								{
+									strcpy_s(NewAssetName, "NewPhysicsAsset");
+									RefreshSkeletalMeshCandidates(SkeletalMeshCandidates);
+									const FString MeshKey = FAssetUtils::GetAssetKey(PathString);
+									const auto Selected = std::find(SkeletalMeshCandidates.begin(), SkeletalMeshCandidates.end(), MeshKey);
+									SelectedSkeletalMeshIndex = Selected != SkeletalMeshCandidates.end()
+										? static_cast<int32>(Selected - SkeletalMeshCandidates.begin()) : 0;
+									bOpenCreatePhysicsAsset = true;
+								}
 								BlendSpaceCreator.DrawMenuItems(PathString, CurrentPath);
 								AnimBlueprintCreator.DrawMenuItems(PathString, CurrentPath);
 								ImGui::Separator();
@@ -1844,7 +1879,7 @@ void FContentDrawerPanel::RenderContents()
 						}
 
 						else if ((Path.extension() == ".obj" || FFbxMeshBake::IsBakedPath(PathString)
-							|| ToLowerAscii(PathString).ends_with(".fbx.bin.physics.json")
+							|| PhysicsAssetFile::IsPhysicsAssetPath(PathString)
 							|| AnimSequenceFile::IsAnimSequencePath(PathString)) && OnOpenMesh)
 						{
 							OnOpenMesh(PathString);

@@ -23,6 +23,7 @@
 #include "Editor/AnimBlueprintEditor/AnimBlueprintEditor.h"
 #include "Editor/ParticleSystemEditor/ParticleSystemEditor.h"
 #include "Particles/ParticleSystemFile.h"
+#include "Physics/PhysicsAssetFile.h"
 
 #include <filesystem>
 #include <cctype>
@@ -30,16 +31,6 @@
 
 namespace
 {
-	constexpr char PhysicsAssetSuffix[] = ".physics.json";
-
-	bool IsPhysicsAssetPath(const FString& Path)
-	{
-		FString Lower = Path;
-		for (char& Character : Lower)
-			Character = static_cast<char>(std::tolower(static_cast<unsigned char>(Character)));
-		return Lower.ends_with(".fbx.bin.physics.json");
-	}
-
 	constexpr int32 PhysicsAssetEditorLauncherIndex = 7;
 	struct FEditorLauncher
 	{
@@ -56,7 +47,7 @@ namespace
 		{ "Blend Space Editor...", L"Open Blend Space Editor", L"Blend Space (*.blendspace)\0*.blendspace\0" },
 		{ "UI Editor...", L"Open UI Editor", L"Widget (*.widget)\0*.widget\0" },
 		{ "Particle System Editor...", L"Open Particle System Editor", L"Particle System (*.particle)\0*.particle\0" },
-		{ "Physics Asset Editor...", L"Open Physics Asset Editor - Select Skeletal Mesh", L"Skeletal Mesh (*.fbx.bin)\0*.fbx.bin\0" },
+		{ "Physics Asset Editor...", L"Open Physics Asset or Select Mesh to Create New", L"Physics Asset / Skeletal Mesh\0*.physics.json;*.fbx.bin\0Physics Asset\0*.physics.json\0Skeletal Mesh\0*.fbx.bin\0" },
 	};
 }
 
@@ -104,7 +95,7 @@ void FEditorManager::ShowEditorAssetPicker(int32 EditorType)
 		(EditorType == 3 && AnimBlueprintFile::IsAnimBlueprintPath(Path)) ||
 		(EditorType == 4 && BlendSpaceFile::IsBlendSpacePath(Path)) ||
 		(EditorType == 5 && FUIEditor::IsWidgetPath(Path)) ||
-		(EditorType == PhysicsAssetEditorLauncherIndex && FFbxMeshBake::IsBakedPath(Path));
+		(EditorType == PhysicsAssetEditorLauncherIndex && (FFbxMeshBake::IsBakedPath(Path) || PhysicsAssetFile::IsPhysicsAssetPath(Path)));
 	if (!bMatchesType)
 	{
 		MessageBoxW(Dialog.hwndOwner, L"Select an asset matching the editor type.", Launcher.Title, MB_OK | MB_ICONWARNING);
@@ -147,7 +138,7 @@ void FEditorManager::OpenEditor(const FString& AssetPath)
 		return;
 	}
 
-	if (IsPhysicsAssetPath(Path))
+	if (PhysicsAssetFile::IsPhysicsAssetPath(Path))
 	{
 		OpenPhysicsAssetEditor(Path);
 		return;
@@ -559,10 +550,7 @@ void FEditorManager::CreateAnimBlueprintPreview(const FString& PreviewMeshPath)
 void FEditorManager::OpenPhysicsAssetEditor(const FString& AssetPath)
 {
 	if (bShuttingDown) return;
-	// Physics JSON은 같은 폴더의 <mesh>.fbx.bin.physics.json 규칙으로 원본 메시를 찾습니다.
-	const FString PreviewMeshPath = IsPhysicsAssetPath(AssetPath)
-		? AssetPath.substr(0, AssetPath.size() - (sizeof(PhysicsAssetSuffix) - 1)) : AssetPath;
-	const FString Path = FAssetUtils::GetAssetKey(PreviewMeshPath);
+	const FString Path = FAssetUtils::GetAssetKey(AssetPath);
 	if (Path.empty())
 	{
 		KRS_LOG(Warning, "Cannot open Physics Asset Editor for an empty or invalid mesh path.");
@@ -572,13 +560,27 @@ void FEditorManager::OpenPhysicsAssetEditor(const FString& AssetPath)
 	PendingPhysicsAssetOpens.Add(Path);
 }
 
-void FEditorManager::CreatePhysicsAssetEditor(const FString& PreviewMeshPath)
+void FEditorManager::CreatePhysicsAssetEditor(const FString& AssetPath)
 {
-	if (FAssetEditor* Existing = FindEditor(FPhysicsAssetEditor::MakePreviewDocumentKey(PreviewMeshPath)))
+	FString DocumentPath = AssetPath;
+	FString PreviewMeshPath;
+	FString Error;
+	if (PhysicsAssetFile::IsPhysicsAssetPath(AssetPath))
 	{
-		Existing->Activate();
-		return;
+		if (FAssetEditor* Existing = FindEditor(DocumentPath))
+		{
+			Existing->Activate();
+			return;
+		}
+		PreviewMeshPath = PhysicsAssetFile::ResolvePreviewMeshPath(AssetPath, Error);
+		if (PreviewMeshPath.empty())
+		{
+			KRS_LOG(Warning, "[PhysicsAssetEditor] {}", Error);
+			MessageBoxW(GetActiveWindow(), L"Cannot read the Physics Asset's skeletal mesh reference. See Output Log.", L"Open Physics Asset", MB_OK | MB_ICONERROR);
+			return;
+		}
 	}
+	else PreviewMeshPath = AssetPath;
 
 	USkeletalMesh* Mesh = UAssetManager::GetAssetByPath<USkeletalMesh>(PreviewMeshPath);
 	const FString FilePath = FAssetUtils::ResolveAssetFilePath(PreviewMeshPath);
@@ -586,7 +588,6 @@ void FEditorManager::CreatePhysicsAssetEditor(const FString& PreviewMeshPath)
 	{
 		Mesh = UAssetManager::GetAssetByPath<USkeletalMesh>(FilePath);
 	}
-	FString Error;
 	if (!Mesh && FFbxMeshBake::IsBakedPath(FilePath))
 	{
 		Mesh = Cast<USkeletalMesh>(UAssetManager::LoadFbxMesh(FilePath, Error));
@@ -598,7 +599,28 @@ void FEditorManager::CreatePhysicsAssetEditor(const FString& PreviewMeshPath)
 		return;
 	}
 
-	TUniquePtr<FAssetEditor> Editor = MakeUnique<FPhysicsAssetEditor>(EditorEngine, *this, PreviewMeshPath, *Mesh);
+	if (!PhysicsAssetFile::IsPhysicsAssetPath(AssetPath))
+	{
+		// 메시로 진입할 때는 기존 sidecar를 열지 않고 독립된 새 문서를 만든다.
+		const std::filesystem::path MeshFile = FPaths::FromUtf8(FilePath);
+		const std::wstring BaseName = MeshFile.stem().stem().wstring() + L"_Physics";
+		for (uint32 Index = 0; ; ++Index)
+		{
+			const std::wstring Suffix = Index == 0 ? L"" : L"_" + std::to_wstring(Index);
+			const std::filesystem::path Target = MeshFile.parent_path() / (BaseName + Suffix + L".physics.json");
+			DocumentPath = FAssetUtils::GetAssetKey(FPaths::ToUtf8(Target));
+			std::error_code FileError;
+			const bool bExists = std::filesystem::exists(Target, FileError);
+			if (FileError || DocumentPath.empty())
+			{
+				KRS_LOG(Warning, "Cannot choose a new Physics Asset path: {}", FPaths::ToUtf8(Target));
+				return;
+			}
+			if (!bExists && !FindEditor(DocumentPath)) break;
+		}
+	}
+
+	TUniquePtr<FAssetEditor> Editor = MakeUnique<FPhysicsAssetEditor>(EditorEngine, *this, DocumentPath, *Mesh);
 	if (!Editor->Initialize())
 	{
 		Editor->Shutdown();
@@ -607,5 +629,5 @@ void FEditorManager::CreatePhysicsAssetEditor(const FString& PreviewMeshPath)
 		return;
 	}
 	Editors.Add(std::move(Editor));
-	KRS_LOG(Info, "Opened Physics Asset Editor: {}", PreviewMeshPath);
+	KRS_LOG(Info, "Opened Physics Asset Editor: {} (mesh: {})", DocumentPath, PreviewMeshPath);
 }

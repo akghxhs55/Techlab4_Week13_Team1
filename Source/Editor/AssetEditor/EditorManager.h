@@ -42,7 +42,7 @@ public:
 	int32 GetEditorCount() const { return Editors.Num(); }
 
 	void OpenAnimBlueprintPreview(const FString& PreviewMeshPath);
-	// 스켈레탈 메시 또는 해당 메시의 .fbx.bin.physics.json 파일로 피직스 에셋 에디터를 엽니다.
+	// .physics.json은 해당 문서를 열고, 스켈레탈 메시는 독립된 새 Physics Asset 문서를 만듭니다.
 	void OpenPhysicsAssetEditor(const FString& AssetPath);
 
 	// 이 문서 키를 연 에디터. 기본 에디터의 문서 키는 에셋 경로입니다.
@@ -65,6 +65,6 @@ private:
 
 	void CreateAnimBlueprintPreview(const FString& PreviewMeshPath);
 	TArray<FString> PendingAnimBlueprintPreviews;
-	void CreatePhysicsAssetEditor(const FString& PreviewMeshPath);
+	void CreatePhysicsAssetEditor(const FString& AssetPath);
 	TArray<FString> PendingPhysicsAssetOpens;
 };

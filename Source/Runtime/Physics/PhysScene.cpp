@@ -5,12 +5,14 @@
 #include <PxScene.h>
 #include <PxSceneDesc.h>
 #include <PxSimulationEventCallback.h>
+#include <PxSimulationStatistics.h>
 #include <PxFiltering.h>
 
 #include "BodyInstance.h"
 #include "PhysicsCore.h"
 #include "PhysicsSettings.h"
 #include "Components/PrimitiveComponent.h"
+#include "Core/Windows/WindowsPlatformTime.h"
 
 using namespace physx;
 
@@ -212,7 +214,9 @@ void FPhysScene::StartFrame()
 		return;
 	}
 
+	const uint64 StartCycles = FPlatformTime::GetCycles64();
 	Scene->simulate(SubstepDeltaTime);
+	SimulateCallCycles = FPlatformTime::GetCycles64() - StartCycles;
 	bPhysXSceneExecuting = true;
 }
 
@@ -223,19 +227,51 @@ void FPhysScene::EndFrame()
 		return;
 	}
 
+	uint64 StartCycles = FPlatformTime::GetCycles64();
 	Scene->fetchResults(true);
+	uint64 FetchResultCycles = FPlatformTime::GetCycles64() - StartCycles;
 	for (int32 i = 1; i < NumSubsteps; ++i)
 	{
+		StartCycles = FPlatformTime::GetCycles64();
 		Scene->simulate(SubstepDeltaTime);
+		SimulateCallCycles += FPlatformTime::GetCycles64() - StartCycles;
+		StartCycles = FPlatformTime::GetCycles64();
 		Scene->fetchResults(true);
+		FetchResultCycles += FPlatformTime::GetCycles64() - StartCycles;
 	}
 	bPhysXSceneExecuting = false;
 
+	// PhysX 통계는 시뮬레이션 완료 후에만 조회한다. 서브스텝 카운터를 합산하지 않는다.
+	PxSimulationStatistics SimulationStats;
+	Scene->getSimulationStatistics(SimulationStats);
+	FPhysicsSceneStats FrameStats;
+	FrameStats.bHasSimulatedFrame = true;
+	FrameStats.StaticBodies = SimulationStats.nbStaticBodies;
+	FrameStats.DynamicBodies = SimulationStats.nbDynamicBodies;
+	FrameStats.ActiveDynamicBodies = SimulationStats.nbActiveDynamicBodies;
+	FrameStats.KinematicBodies = SimulationStats.nbKinematicBodies;
+	FrameStats.ActiveKinematicBodies = SimulationStats.nbActiveKinematicBodies;
+	for (PxU32 ShapeCount : SimulationStats.nbShapes)
+	{
+		FrameStats.Shapes += ShapeCount;
+	}
+	FrameStats.ActiveConstraints = SimulationStats.nbActiveConstraints;
+	FrameStats.ContactPairs = SimulationStats.nbDiscreteContactPairsWithContacts;
+	FrameStats.Substeps = NumSubsteps;
+	FrameStats.StepDeltaTimeMs = SubstepDeltaTime * 1000.0f;
+	FrameStats.SimulateCallsMs = FPlatformTime::ToMilliseconds64(SimulateCallCycles);
+	FrameStats.FetchResultsMs = FPlatformTime::ToMilliseconds64(FetchResultCycles);
+
 	// 1. 컴포넌트 위치 동기화
+	StartCycles = FPlatformTime::GetCycles64();
 	SyncComponentsToBodies();
+	FrameStats.SyncComponentsMs = FPlatformTime::ToMilliseconds64(FPlatformTime::GetCycles64() - StartCycles);
 
 	// 2. 누적된 충돌/오버랩 이벤트 디스패치
+	StartCycles = FPlatformTime::GetCycles64();
 	DispatchPendingEvents();
+	FrameStats.DispatchEventsMs = FPlatformTime::ToMilliseconds64(FPlatformTime::GetCycles64() - StartCycles);
+	Stats = FrameStats;
 }
 
 void FPhysScene::SyncComponentsToBodies()
