@@ -2381,20 +2381,18 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 					}
 
 					// 측면 실루엣 부근에서만 곡면 현 보정으로 허벅지 옆 피부 노출 차단
+					// 당김 주변 곡면 전 구간에서 접선 이동에 따른 현 관통을 최소 법선 띄움으로 차단
 					float FinalDeltaN = VertexDelta.Dot(SmoothN);
-					float CurvatureLift = 0.0f;
-					const float SilhouetteBlend = std::clamp((0.62f - RawAnchorFacing) / 0.42f, 0.0f, 1.0f);
-					if (SilhouetteBlend > 0.0f)
+					const FVector SideTan = VertexDelta - SmoothN * FinalDeltaN;
+					const float TanLen = SideTan.Size();
+					const float SafeLimbRadius = std::max(0.055f * ReferenceScale, 0.01f);
+					const float SkirtMask = std::clamp(1.0f - ConcaveProfile * 0.85f, 0.0f, 1.0f);
+					const float CurvatureLift = SkirtMask * ((TanLen * TanLen) / (1.2f * SafeLimbRadius) + TanLen * 0.18f)
+						+ Weight * (0.003f * ReferenceScale);
+					if (FinalDeltaN < CurvatureLift)
 					{
-						const FVector SideTan = VertexDelta - SmoothN * FinalDeltaN;
-						const float TanLen = SideTan.Size();
-						const float SafeLimbRadius = std::max(0.055f * ReferenceScale, 0.01f);
-						CurvatureLift = SilhouetteBlend * ((TanLen * TanLen) / (1.8f * SafeLimbRadius) + TanLen * 0.14f);
-						if (FinalDeltaN < CurvatureLift)
-						{
-							VertexDelta += SmoothN * (CurvatureLift - FinalDeltaN);
-							FinalDeltaN = CurvatureLift;
-						}
+						VertexDelta += SmoothN * (CurvatureLift - FinalDeltaN);
+						FinalDeltaN = CurvatureLift;
 					}
 
 					// 잡은 지점에서 방사형으로 퍼지는 장력 주름 능선과 골 생성
@@ -2411,8 +2409,7 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 						const float WrinkleScale = PullStrength * RingEnvelope * AnchorFacing;
 
 						// 능선은 바깥으로 솟고 골은 피부선 위까지만 낮춰 관통 방지
-						const float MaxDownDip = std::max(0.0f, (FinalDeltaN - CurvatureLift) * 0.25f);
-						const float RippleMag = std::max(-MaxDownDip, Wave * WrinkleAmplitude * WrinkleScale);
+						const float RippleMag = (0.5f + 0.5f * Wave) * WrinkleAmplitude * WrinkleScale;
 						VertexDelta += SmoothN * RippleMag;
 						CreaseSignal = Wave * WrinkleScale;
 					}
