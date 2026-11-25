@@ -215,6 +215,149 @@ namespace
 		InOutIndices = std::move(NewIndices);
 	}
 
+	// 긴 삼각형 변만 분할해 저폴리곤 구간에서도 매끄러운 단일 핀치 정점 밀도 확보
+	void SubdivideLongEdgesAdaptive(
+		TArray<FVertex>& InOutVertices,
+		TArray<FSkinWeight>& InOutWeights,
+		TArray<uint32>& InOutIndices,
+		float MaxEdgeLength,
+		int32 MaxPasses,
+		int32 MaxTriangles)
+	{
+		if (MaxEdgeLength <= 1e-5f || MaxPasses <= 0 || InOutIndices.Num() < 3)
+		{
+			return;
+		}
+
+		const float MaxEdgeSq = MaxEdgeLength * MaxEdgeLength;
+		for (int32 Pass = 0; Pass < MaxPasses; ++Pass)
+		{
+			const int32 CurrentTriCount = InOutIndices.Num() / 3;
+			if (CurrentTriCount >= MaxTriangles)
+			{
+				break;
+			}
+
+			std::unordered_map<uint64, uint32> EdgeMidpoints;
+			TArray<uint32> NewIndices;
+			NewIndices.Reserve(InOutIndices.Num() * 2);
+			bool bSplitAny = false;
+
+			const std::function<uint32(uint32, uint32)> GetOrCreateMidpoint = [&](uint32 IndexA, uint32 IndexB) -> uint32
+			{
+				const uint64 Key = MakeEdgeKey(IndexA, IndexB);
+				const std::unordered_map<uint64, uint32>::const_iterator Found = EdgeMidpoints.find(Key);
+				if (Found != EdgeMidpoints.end())
+				{
+					return Found->second;
+				}
+				const uint32 NewIndex = static_cast<uint32>(InOutVertices.Num());
+				InOutVertices.Add(InterpolateMidpointVertex(InOutVertices[IndexA], InOutVertices[IndexB]));
+				InOutWeights.Add(BlendSkinWeights(InOutWeights[IndexA], InOutWeights[IndexB]));
+				EdgeMidpoints.emplace(Key, NewIndex);
+				return NewIndex;
+			};
+
+			const std::function<void(uint32, uint32, uint32, uint32)> EmitSplitQuad =
+				[&](uint32 A, uint32 B, uint32 C, uint32 D)
+			{
+				const float DiagAC = (InOutVertices[A].Position - InOutVertices[C].Position).SizeSquared();
+				const float DiagBD = (InOutVertices[B].Position - InOutVertices[D].Position).SizeSquared();
+				if (DiagAC <= DiagBD)
+				{
+					NewIndices.Add(A); NewIndices.Add(B); NewIndices.Add(C);
+					NewIndices.Add(A); NewIndices.Add(C); NewIndices.Add(D);
+				}
+				else
+				{
+					NewIndices.Add(A); NewIndices.Add(B); NewIndices.Add(D);
+					NewIndices.Add(B); NewIndices.Add(C); NewIndices.Add(D);
+				}
+			};
+
+			for (int32 i = 0; i + 2 < InOutIndices.Num(); i += 3)
+			{
+				const uint32 I0 = InOutIndices[i];
+				const uint32 I1 = InOutIndices[i + 1];
+				const uint32 I2 = InOutIndices[i + 2];
+
+				const bool bSplit01 = (InOutVertices[I0].Position - InOutVertices[I1].Position).SizeSquared() > MaxEdgeSq;
+				const bool bSplit12 = (InOutVertices[I1].Position - InOutVertices[I2].Position).SizeSquared() > MaxEdgeSq;
+				const bool bSplit20 = (InOutVertices[I2].Position - InOutVertices[I0].Position).SizeSquared() > MaxEdgeSq;
+				const int32 SplitCount = (bSplit01 ? 1 : 0) + (bSplit12 ? 1 : 0) + (bSplit20 ? 1 : 0);
+
+				if (SplitCount == 0)
+				{
+					NewIndices.Add(I0); NewIndices.Add(I1); NewIndices.Add(I2);
+					continue;
+				}
+
+				bSplitAny = true;
+				if (SplitCount == 3)
+				{
+					const uint32 M01 = GetOrCreateMidpoint(I0, I1);
+					const uint32 M12 = GetOrCreateMidpoint(I1, I2);
+					const uint32 M20 = GetOrCreateMidpoint(I2, I0);
+					NewIndices.Add(I0); NewIndices.Add(M01); NewIndices.Add(M20);
+					NewIndices.Add(M01); NewIndices.Add(I1); NewIndices.Add(M12);
+					NewIndices.Add(M20); NewIndices.Add(M12); NewIndices.Add(I2);
+					NewIndices.Add(M01); NewIndices.Add(M12); NewIndices.Add(M20);
+				}
+				else if (SplitCount == 1)
+				{
+					if (bSplit01)
+					{
+						const uint32 M01 = GetOrCreateMidpoint(I0, I1);
+						NewIndices.Add(I0); NewIndices.Add(M01); NewIndices.Add(I2);
+						NewIndices.Add(M01); NewIndices.Add(I1); NewIndices.Add(I2);
+					}
+					else if (bSplit12)
+					{
+						const uint32 M12 = GetOrCreateMidpoint(I1, I2);
+						NewIndices.Add(I0); NewIndices.Add(I1); NewIndices.Add(M12);
+						NewIndices.Add(I0); NewIndices.Add(M12); NewIndices.Add(I2);
+					}
+					else
+					{
+						const uint32 M20 = GetOrCreateMidpoint(I2, I0);
+						NewIndices.Add(I0); NewIndices.Add(I1); NewIndices.Add(M20);
+						NewIndices.Add(M20); NewIndices.Add(I1); NewIndices.Add(I2);
+					}
+				}
+				else
+				{
+					if (!bSplit01)
+					{
+						const uint32 M12 = GetOrCreateMidpoint(I1, I2);
+						const uint32 M20 = GetOrCreateMidpoint(I2, I0);
+						NewIndices.Add(M20); NewIndices.Add(M12); NewIndices.Add(I2);
+						EmitSplitQuad(I0, I1, M12, M20);
+					}
+					else if (!bSplit12)
+					{
+						const uint32 M01 = GetOrCreateMidpoint(I0, I1);
+						const uint32 M20 = GetOrCreateMidpoint(I2, I0);
+						NewIndices.Add(I0); NewIndices.Add(M01); NewIndices.Add(M20);
+						EmitSplitQuad(M01, I1, I2, M20);
+					}
+					else
+					{
+						const uint32 M01 = GetOrCreateMidpoint(I0, I1);
+						const uint32 M12 = GetOrCreateMidpoint(I1, I2);
+						NewIndices.Add(M01); NewIndices.Add(I1); NewIndices.Add(M12);
+						EmitSplitQuad(I0, M01, M12, I2);
+					}
+				}
+			}
+
+			InOutIndices = std::move(NewIndices);
+			if (!bSplitAny)
+			{
+				break;
+			}
+		}
+	}
+
 	// 용접된 위치 기준으로 실제 열린 경계만 검출해 끝단 마스크와 높이 정규화 계산
 	void WriteStockingVertexMasks(TArray<FVertex>& Vertices, const TArray<uint32>& Indices, float FeatherDistance)
 	{
@@ -1787,6 +1930,12 @@ bool UStockingRegion::BuildStockingMesh(const USkeletalMesh& SourceMesh, USkelet
 	for (int32 Iter = 0; Iter < ClampedSubdiv; ++Iter)
 	{
 		SubdivideTrianglesOnce(SubVertices, SubWeights, SubIndices);
+	}
+	if (ClampedSubdiv > 0)
+	{
+		const float SourceRefScale = ComputeVerticesReferenceScale(SourceLOD.BindVertices);
+		const float TargetEdgeLen = (ClampedSubdiv >= 2 ? 0.0075f : 0.011f) * SourceRefScale;
+		SubdivideLongEdgesAdaptive(SubVertices, SubWeights, SubIndices, TargetEdgeLen, 3, 28000);
 	}
 
 	WriteStockingVertexMasks(SubVertices, SubIndices, BoundaryFeatherDistance);

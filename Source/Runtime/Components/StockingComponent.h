@@ -84,13 +84,13 @@ public:
 	float SurfaceOffset = 0.0025f;
 
 	UPROPERTY(EditAnywhere)
-	float PullRadius = 0.14f;
+	float PullRadius = 0.11f;
 
 	UPROPERTY(EditAnywhere)
-	float MaxPullDistance = 0.22f;
+	float MaxPullDistance = 0.075f;
 
 	UPROPERTY(EditAnywhere)
-	float PullFalloffExponent = 1.9f;
+	float PullFalloffExponent = 2.15f;
 
 	UPROPERTY(EditAnywhere)
 	float WrinkleAmplitude = 0.0085f;
@@ -152,7 +152,7 @@ public:
 	bool bEnableTearing = true;
 
 	UPROPERTY(EditAnywhere)
-	float TearStretchThreshold = 1.32f;
+	float TearStretchThreshold = 1.24f;
 
 	UPROPERTY(EditAnywhere)
 	float TearSpreadSpeed = 1.0f;
@@ -301,6 +301,7 @@ private:
 	bool bHasActiveClothWrinkles = false;
 	bool bHasActiveClothPull = false;
 	bool bClothAwakeLastFrame = false;
+	bool bPullTargetDirty = false;
 	float PullReleaseEnvelope = 0.0f;
 	float LastClothPullMag = 0.0f;
 	FVector LastClothPullDir = FVector(0.0f, 0.0f, 1.0f);

@@ -67,7 +67,7 @@ public:
 	uint32 SourceTriangleCount = 0;
 
 	UPROPERTY(EditAnywhere)
-	int32 SubdivisionIterations = 0;
+	int32 SubdivisionIterations = 1;
 
 	UPROPERTY(EditAnywhere)
 	float SurfaceOffset = 0.0025f;
@@ -83,9 +83,9 @@ public:
 	FStockingMaterialParams SavedMaterialParams;
 
 	bool bHasSavedPullParams = false;
-	float SavedPullRadius = 0.14f;
-	float SavedMaxPullDistance = 0.22f;
-	float SavedPullFalloffExponent = 1.9f;
+	float SavedPullRadius = 0.11f;
+	float SavedMaxPullDistance = 0.075f;
+	float SavedPullFalloffExponent = 2.15f;
 	float SavedWrinkleAmplitude = 0.0085f;
 	float SavedWrinkleFrequency = 7.0f;
 	float SavedSpringStiffness = 160.0f;

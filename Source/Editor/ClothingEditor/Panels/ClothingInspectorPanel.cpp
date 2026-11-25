@@ -151,8 +151,8 @@ void FClothingInspectorPanel::DrawStockingInspector(int32 LayerIndex, FClothingL
 
 	if (ImGui::CollapsingHeader("Pull & Wrinkles", ImGuiTreeNodeFlags_DefaultOpen))
 	{
-		ImGui::SliderFloat("Pull Radius", &Stocking->PullRadius, 0.02f * S, 0.50f * S, "%.3f");
-		ImGui::SliderFloat("Max Pull Distance", &Stocking->MaxPullDistance, 0.02f * S, 0.60f * S, "%.3f");
+		ImGui::SliderFloat("Pull Radius", &Stocking->PullRadius, 0.02f * S, 0.35f * S, "%.3f");
+		ImGui::SliderFloat("Max Pull Distance", &Stocking->MaxPullDistance, 0.01f * S, 0.25f * S, "%.3f");
 		ImGui::SliderFloat("Pinch Falloff", &Stocking->PullFalloffExponent, 0.5f, 4.0f, "%.2f");
 		ImGui::SliderFloat("Wrinkle Amplitude", &Stocking->WrinkleAmplitude, 0.0f, 0.03f * S, "%.4f");
 		ImGui::SliderFloat("Wrinkle Folds", &Stocking->WrinkleFrequency, 2.0f, 16.0f, "%.1f");

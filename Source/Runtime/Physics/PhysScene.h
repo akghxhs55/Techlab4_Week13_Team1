@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Containers/Array.h"
-#include "Core/Memory.h"
+#include "Core/Types.h"
 #include "Math/Vector.h"
 #include "ClothBridge.h"
 

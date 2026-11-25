@@ -193,9 +193,10 @@ void UStockingComponent::CalibrateParametersForScale(float InScale)
 {
 	ReferenceScale = std::max(InScale, 0.05f);
 	SurfaceOffset = 0.003f * ReferenceScale;
-	PullRadius = 0.14f * ReferenceScale;
-	MaxPullDistance = 0.22f * ReferenceScale;
-	WrinkleAmplitude = 0.0085f * ReferenceScale;
+	PullRadius = 0.11f * ReferenceScale;
+	MaxPullDistance = 0.075f * ReferenceScale;
+	PullFalloffExponent = 2.15f;
+	WrinkleAmplitude = 0.0075f * ReferenceScale;
 	BoundsPadding = 0.04f * ReferenceScale;
 	ClothJointWrinkleSlack = 0.0035f * ReferenceScale;
 	ClothBackstopRadius = 0.025f * ReferenceScale;
@@ -238,8 +239,8 @@ void UStockingComponent::ApplyNvClothParams()
 	Params.LinearInertia = { 0.15f, 0.15f, 0.15f };
 	Params.AngularInertia = { 0.1f, 0.1f, 0.1f };
 	Params.CentrifugalInertia = { 0.05f, 0.05f, 0.05f };
-	Params.SolverFrequency = 120.0f;
-	Params.StiffnessFrequency = 120.0f;
+	Params.SolverFrequency = 60.0f;
+	Params.StiffnessFrequency = 60.0f;
 	Params.StretchStiffness = std::clamp(ClothStretchStiffness, 0.05f, 1.0f);
 	Params.BendStiffness = std::clamp(ClothBendStiffness, 0.0f, 1.0f);
 	Params.ShearStiffness = std::clamp(ClothShearStiffness, 0.0f, 1.0f);
@@ -482,11 +483,6 @@ void UStockingComponent::BeginPull(uint32 TriangleIndex, const FVector& Barycent
 	PullVelocityLocal = FVector::ZeroVector;
 	bHasGrabAnchor = true;
 	bIsPulling = true;
-	if (bUseNvClothSimulation)
-	{
-		bHasActiveClothPull = true;
-		PullReleaseEnvelope = 1.0f;
-	}
 	ComputeGrabGeodesicDistances();
 	MarkBoneTransformsDirty();
 }
@@ -504,11 +500,6 @@ void UStockingComponent::UpdatePull(const FVector& TargetWorldPosition)
 void UStockingComponent::EndPull()
 {
 	bIsPulling = false;
-	if (bUseNvClothSimulation && bHasActiveClothPull)
-	{
-		CurrentPullOffsetLocal = FVector::ZeroVector;
-		PullVelocityLocal = FVector::ZeroVector;
-	}
 	MarkBoneTransformsDirty();
 }
 
@@ -1049,7 +1040,7 @@ void UStockingComponent::ComputeComponentUVTiles(const USkeletalMesh& Mesh)
 
 void UStockingComponent::EnsureTearMaskTexture()
 {
-	constexpr uint32 TearMaskSize = 1024u;
+	constexpr uint32 TearMaskSize = 512u;
 	if (TearMaskTexture && IsValid(TearMaskTexture) && TearMaskTexture->GetResource())
 	{
 		return;
@@ -1057,13 +1048,7 @@ void UStockingComponent::EnsureTearMaskTexture()
 
 	TearMaskPixels.SetNum(static_cast<int32>(TearMaskSize * TearMaskSize * 4u));
 	const int32 PixelCount = static_cast<int32>(TearMaskSize * TearMaskSize);
-	for (int32 i = 0; i < PixelCount; ++i)
-	{
-		TearMaskPixels[i * 4] = 0;
-		TearMaskPixels[i * 4 + 1] = 0;
-		TearMaskPixels[i * 4 + 2] = 128;
-		TearMaskPixels[i * 4 + 3] = 0;
-	}
+	std::fill_n(reinterpret_cast<uint32*>(TearMaskPixels.GetData()), PixelCount, 0x00800000u);
 	TearMaskTexture = UTexture2D::CreateDynamicTexture(TearMaskSize, TearMaskSize, TearMaskPixels.GetData());
 	SyncTearMaskBinding();
 	MarkRenderStateDirty();
@@ -1101,13 +1086,7 @@ void UStockingComponent::RepairAllTears()
 	if (TearMaskTexture && IsValid(TearMaskTexture) && !TearMaskPixels.IsEmpty())
 	{
 		const int32 PixelCount = TearMaskPixels.Num() / 4;
-		for (int32 i = 0; i < PixelCount; ++i)
-		{
-			TearMaskPixels[i * 4] = 0;
-			TearMaskPixels[i * 4 + 1] = 0;
-			TearMaskPixels[i * 4 + 2] = 128;
-			TearMaskPixels[i * 4 + 3] = 0;
-		}
+		std::fill_n(reinterpret_cast<uint32*>(TearMaskPixels.GetData()), PixelCount, 0x00800000u);
 		TearMaskTexture->UpdateDynamicPixels(TearMaskPixels.GetData(), TearMaskTexture->GetWidth() * 4u);
 	}
 
@@ -1607,17 +1586,11 @@ void UStockingComponent::RebuildTearMaskTexture()
 	}
 
 	const int32 PixelCount = Size * Size;
-	for (int32 i = 0; i < PixelCount; ++i)
-	{
-		TearMaskPixels[i * 4] = 0;
-		TearMaskPixels[i * 4 + 1] = 0;
-		TearMaskPixels[i * 4 + 2] = 128;
-		TearMaskPixels[i * 4 + 3] = 0;
-	}
+	std::fill_n(reinterpret_cast<uint32*>(TearMaskPixels.GetData()), PixelCount, 0x00800000u);
 
 	const float InvSize = 1.0f / static_cast<float>(Size);
-	const float EdgeBandUV = 0.0020f;
-	const float InnerShadowBandUV = 0.0022f;
+	const float EdgeBandUV = 0.0024f;
+	const float InnerShadowBandUV = 0.0024f;
 	const float MaxPushEncode = 0.075f;
 	const float NeedleColSpacing = 0.0024f;
 
@@ -1640,9 +1613,38 @@ void UStockingComponent::RebuildTearMaskTexture()
 		const int32 Y0 = std::clamp(static_cast<int32>(std::floor(MinV * static_cast<float>(Size))), 0, Size - 1);
 		const int32 Y1 = std::clamp(static_cast<int32>(std::ceil(MaxV * static_cast<float>(Size))), 0, Size - 1);
 
-		// 심 경계 래핑을 포함해 타일 전체 가로 범위 안에서 영향 픽셀만 래스터라이즈
-		const int32 TileX0 = std::clamp(static_cast<int32>(std::floor(Node.TileMinU * static_cast<float>(Size))), 0, Size - 1);
-		const int32 TileX1 = std::clamp(static_cast<int32>(std::ceil((Node.TileMinU + SafeW * 1.10f) * static_cast<float>(Size))), 0, Size - 1);
+		// 타일 전체 대신 구멍의 실제 가로 영향 구간만 순회해 CPU 부하 최소화
+		const float TileMaxU = Node.TileMinU + SafeW * 1.10f;
+		int32 SpanX0[3] = {};
+		int32 SpanX1[3] = {};
+		int32 SpanCount = 0;
+		const std::function<void(float, float)> AddXSpan = [&](float MinUVal, float MaxUVal)
+		{
+			const float ClampedMin = std::max(MinUVal, Node.TileMinU);
+			const float ClampedMax = std::min(MaxUVal, TileMaxU);
+			if (ClampedMin > ClampedMax || SpanCount >= 3)
+			{
+				return;
+			}
+			const int32 IX0 = std::clamp(static_cast<int32>(std::floor(ClampedMin * static_cast<float>(Size))), 0, Size - 1);
+			const int32 IX1 = std::clamp(static_cast<int32>(std::ceil(ClampedMax * static_cast<float>(Size))), 0, Size - 1);
+			if (IX0 <= IX1)
+			{
+				SpanX0[SpanCount] = IX0;
+				SpanX1[SpanCount] = IX1;
+				++SpanCount;
+			}
+		};
+
+		AddXSpan(Node.CenterUV.X - BoundU, Node.CenterUV.X + BoundU);
+		if (Node.CenterUV.X - BoundU < Node.TileMinU)
+		{
+			AddXSpan(Node.CenterUV.X + SafeW - BoundU, TileMaxU);
+		}
+		if (Node.CenterUV.X + BoundU > Node.TileMinU + SafeW)
+		{
+			AddXSpan(Node.TileMinU, Node.CenterUV.X - SafeW + BoundU);
+		}
 
 		for (int32 y = Y0; y <= Y1; ++y)
 		{
@@ -1654,110 +1656,113 @@ void UStockingComponent::RebuildTearMaskTexture()
 				: (Node.RunDownV > 1e-4f ? (-DV / Node.RunDownV) : 1.0f);
 			const float CurRunW = RunW * std::clamp(1.0f - RunFracV * 0.42f, 0.28f, 1.0f);
 
-			for (int32 x = TileX0; x <= TileX1; ++x)
+			for (int32 sp = 0; sp < SpanCount; ++sp)
 			{
-				const float U = (static_cast<float>(x) + 0.5f) * InvSize;
-				const float DU = ComputeWrappedDeltaU(U, Node.CenterUV.X, Node.TileMinU, SafeW);
-				if (std::fabs(DU) > BoundU)
+				for (int32 x = SpanX0[sp]; x <= SpanX1[sp]; ++x)
 				{
-					continue;
-				}
-
-				// 당김 방향으로 기울어지고 해당 측면이 더 길게 벌어지는 비대칭 타원 거리 계산
-				const float LX = DU * CosT + DV * SinT;
-				const float LY = -DU * SinT + DV * CosT;
-				const float RawNormX = LX / Ru;
-				const float RawNormY = LY / Rv;
-				const float RawEllipR = std::sqrt(RawNormX * RawNormX + RawNormY * RawNormY);
-				const float PullSideDot = (RawEllipR > 1e-4f)
-					? ((DU / Ru) * Node.PullBiasUV.X + (DV / Rv) * Node.PullBiasUV.Y) / RawEllipR
-					: 0.0f;
-				const float SideStretch = 1.0f + 0.28f * std::clamp(PullSideDot, -0.55f, 1.0f);
-				const float EllipR = RawEllipR / SideStretch;
-				const float MinAxis = std::min(Ru, Rv);
-				const float SignedDistUV = (EllipR - 1.0f) * MinAxis;
-
-				float HoleVal = 0.0f;
-				float InnerRimVal = 0.0f;
-				if (SignedDistUV < EdgeBandUV * 1.4f)
-				{
-					HoleVal = std::clamp(0.5f - SignedDistUV / (EdgeBandUV * 2.0f), 0.0f, 1.0f);
-
-					// 구멍 바로 안쪽 얇은 테두리에 방향성 피부 볼록 접촉 음영 생성
-					if (SignedDistUV < 0.0f && SignedDistUV > -InnerShadowBandUV)
+					const float U = (static_cast<float>(x) + 0.5f) * InvSize;
+					const float DU = ComputeWrappedDeltaU(U, Node.CenterUV.X, Node.TileMinU, SafeW);
+					if (std::fabs(DU) > BoundU)
 					{
-						const float DepthT = (-SignedDistUV) / InnerShadowBandUV;
-						const float DirBias = 0.42f + 0.58f * std::clamp(0.5f + 0.5f * (RawNormX * 0.72f - RawNormY * 0.69f), 0.0f, 1.0f);
-						InnerRimVal = (1.0f - DepthT) * (1.0f - DepthT) * DirBias;
+						continue;
 					}
-				}
 
-				// 구멍이 실을 위아래 곡선 경계와 당긴 기울기 방향으로 밀어내는 연속 변위 필드 누적
-				float PushDisp = 0.0f;
-				if (EllipR < 2.2f)
-				{
-					const float RadialDecay = (EllipR <= 1.0f)
-						? 1.0f
-						: std::exp(-(EllipR - 1.0f) * 2.35f);
-					const float LatEnvelope = std::exp(-(RawNormX * RawNormX) * 0.65f);
-					const float SmoothSignY = LY / std::sqrt(LY * LY + (Rv * 0.24f) * (Rv * 0.24f));
-					const float LocalTiltShear = -SinT * DU * 0.75f * RadialDecay * LatEnvelope;
-					PushDisp = SmoothSignY * (Rv * 0.92f) * RadialDecay * LatEnvelope + LocalTiltShear;
-				}
+					// 당김 방향으로 기울어지고 해당 측면이 더 길게 벌어지는 비대칭 타원 거리 계산
+					const float LX = DU * CosT + DV * SinT;
+					const float LY = -DU * SinT + DV * CosT;
+					const float RawNormX = LX / Ru;
+					const float RawNormY = LY / Rv;
+					const float RawEllipR = std::sqrt(RawNormX * RawNormX + RawNormY * RawNormY);
+					const float PullSideDot = (RawEllipR > 1e-4f)
+						? ((DU / Ru) * Node.PullBiasUV.X + (DV / Rv) * Node.PullBiasUV.Y) / RawEllipR
+						: 0.0f;
+					const float SideStretch = 1.0f + 0.28f * std::clamp(PullSideDot, -0.55f, 1.0f);
+					const float EllipR = RawEllipR / SideStretch;
+					const float MinAxis = std::min(Ru, Rv);
+					const float SignedDistUV = (EllipR - 1.0f) * MinAxis;
 
-				// 구멍들을 하나로 잇는 응집된 세로 올 풀림 리본과 상하 바늘형 끝단 생성
-				float RunVal = 0.0f;
-				if (bInRunV && std::fabs(DU) < CurRunW)
-				{
-					const float EdgeJitter = 0.0014f * std::sin(V * 240.0f + Node.Seed);
-					const float AbsDU = std::fabs(DU + EdgeJitter);
-					const float LatRatio = AbsDU / std::max(CurRunW, 1e-4f);
-					if (LatRatio < 1.0f)
+					float HoleVal = 0.0f;
+					float InnerRimVal = 0.0f;
+					if (SignedDistUV < EdgeBandUV * 1.4f)
 					{
-						const float RibbonMask = std::clamp((1.0f - LatRatio) / 0.14f, 0.0f, 1.0f);
-						// 상하 끝단으로 갈수록 여러 가닥 바늘처럼 갈라지며 자연스럽게 소멸
-						const float ColF = DU / NeedleColSpacing;
-						const float ColIdx = std::floor(ColF + 0.5f);
-						const float ColFrac = std::fabs(ColF - ColIdx) * 2.0f;
-						const float HashRaw = std::sin(ColIdx * 12.9898f + Node.Seed * 78.233f) * 43758.5453f;
-						const float ColHash = HashRaw - std::floor(HashRaw);
-						const float NeedleReach = std::clamp(0.32f + 0.68f * ColHash * std::exp(-LatRatio * LatRatio * 1.8f), 0.18f, 1.0f);
-						if (RunFracV < 0.28f)
+						HoleVal = std::clamp(0.5f - SignedDistUV / (EdgeBandUV * 2.0f), 0.0f, 1.0f);
+
+						// 구멍 바로 안쪽 얇은 테두리에 방향성 피부 볼록 접촉 음영 생성
+						if (SignedDistUV < 0.0f && SignedDistUV > -InnerShadowBandUV)
 						{
-							RunVal = RibbonMask;
-						}
-						else if (RunFracV < NeedleReach)
-						{
-							const float TipFade = std::clamp((NeedleReach - RunFracV) / std::max(NeedleReach * 0.25f, 0.05f), 0.0f, 1.0f);
-							const float NeedleBlend = std::clamp((RunFracV - 0.28f) / 0.22f, 0.0f, 1.0f);
-							const float WaleStrands = std::clamp((0.84f - ColFrac) / 0.22f, 0.0f, 1.0f);
-							RunVal = RibbonMask * TipFade * (1.0f - NeedleBlend + NeedleBlend * WaleStrands);
+							const float DepthT = (-SignedDistUV) / InnerShadowBandUV;
+							const float DirBias = 0.42f + 0.58f * std::clamp(0.5f + 0.5f * (RawNormX * 0.72f - RawNormY * 0.69f), 0.0f, 1.0f);
+							InnerRimVal = (1.0f - DepthT) * (1.0f - DepthT) * DirBias;
 						}
 					}
+
+					// 구멍이 실을 위아래 곡선 경계와 당긴 기울기 방향으로 밀어내는 연속 변위 필드 누적
+					float PushDisp = 0.0f;
+					if (EllipR < 2.2f)
+					{
+						const float RadialDecay = (EllipR <= 1.0f)
+							? 1.0f
+							: std::exp(-(EllipR - 1.0f) * 2.35f);
+						const float LatEnvelope = std::exp(-(RawNormX * RawNormX) * 0.65f);
+						const float SmoothSignY = LY / std::sqrt(LY * LY + (Rv * 0.24f) * (Rv * 0.24f));
+						const float LocalTiltShear = -SinT * DU * 0.75f * RadialDecay * LatEnvelope;
+						PushDisp = SmoothSignY * (Rv * 0.92f) * RadialDecay * LatEnvelope + LocalTiltShear;
+					}
+
+					// 구멍들을 하나로 잇는 응집된 세로 올 풀림 리본과 상하 바늘형 끝단 생성
+					float RunVal = 0.0f;
+					if (bInRunV && std::fabs(DU) < CurRunW)
+					{
+						const float EdgeJitter = 0.0014f * std::sin(V * 240.0f + Node.Seed);
+						const float AbsDU = std::fabs(DU + EdgeJitter);
+						const float LatRatio = AbsDU / std::max(CurRunW, 1e-4f);
+						if (LatRatio < 1.0f)
+						{
+							const float RibbonMask = std::clamp((1.0f - LatRatio) / 0.14f, 0.0f, 1.0f);
+							// 상하 끝단으로 갈수록 여러 가닥 바늘처럼 갈라지며 자연스럽게 소멸
+							const float ColF = DU / NeedleColSpacing;
+							const float ColIdx = std::floor(ColF + 0.5f);
+							const float ColFrac = std::fabs(ColF - ColIdx) * 2.0f;
+							const float HashRaw = std::sin(ColIdx * 12.9898f + Node.Seed * 78.233f) * 43758.5453f;
+							const float ColHash = HashRaw - std::floor(HashRaw);
+							const float NeedleReach = std::clamp(0.32f + 0.68f * ColHash * std::exp(-LatRatio * LatRatio * 1.8f), 0.18f, 1.0f);
+							if (RunFracV < 0.28f)
+							{
+								RunVal = RibbonMask;
+							}
+							else if (RunFracV < NeedleReach)
+							{
+								const float TipFade = std::clamp((NeedleReach - RunFracV) / std::max(NeedleReach * 0.25f, 0.05f), 0.0f, 1.0f);
+								const float NeedleBlend = std::clamp((RunFracV - 0.28f) / 0.22f, 0.0f, 1.0f);
+								const float WaleStrands = std::clamp((0.84f - ColFrac) / 0.22f, 0.0f, 1.0f);
+								RunVal = RibbonMask * TipFade * (1.0f - NeedleBlend + NeedleBlend * WaleStrands);
+							}
+						}
+					}
+
+					if (HoleVal <= 0.002f && RunVal <= 0.002f && InnerRimVal <= 0.002f && std::fabs(PushDisp) <= 1e-5f)
+					{
+						continue;
+					}
+
+					const int32 PixIdx = (y * Size + x) * 4;
+					const float PrevHole = static_cast<float>(TearMaskPixels[PixIdx]) / 255.0f;
+					const float PrevRun = static_cast<float>(TearMaskPixels[PixIdx + 1]) / 255.0f;
+					const float PrevPush = ((static_cast<float>(TearMaskPixels[PixIdx + 2]) / 255.0f) - 0.5f) * (2.0f * MaxPushEncode);
+					const float PrevInner = static_cast<float>(TearMaskPixels[PixIdx + 3]) / 255.0f;
+
+					const float MergedHole = std::max(PrevHole, HoleVal);
+					const float MergedRun = std::max(PrevRun, RunVal);
+					const float MergedPush = std::clamp(PrevPush + PushDisp, -MaxPushEncode, MaxPushEncode);
+					const float MergedInner = (MergedHole > 0.92f)
+						? std::min(PrevInner, InnerRimVal)
+						: std::max(PrevInner, InnerRimVal);
+
+					TearMaskPixels[PixIdx] = static_cast<uint8>(std::clamp(MergedHole * 255.0f, 0.0f, 255.0f));
+					TearMaskPixels[PixIdx + 1] = static_cast<uint8>(std::clamp(MergedRun * 255.0f, 0.0f, 255.0f));
+					TearMaskPixels[PixIdx + 2] = static_cast<uint8>(std::clamp((0.5f + MergedPush / (2.0f * MaxPushEncode)) * 255.0f, 0.0f, 255.0f));
+					TearMaskPixels[PixIdx + 3] = static_cast<uint8>(std::clamp(MergedInner * 255.0f, 0.0f, 255.0f));
 				}
-
-				if (HoleVal <= 0.002f && RunVal <= 0.002f && InnerRimVal <= 0.002f && std::fabs(PushDisp) <= 1e-5f)
-				{
-					continue;
-				}
-
-				const int32 PixIdx = (y * Size + x) * 4;
-				const float PrevHole = static_cast<float>(TearMaskPixels[PixIdx]) / 255.0f;
-				const float PrevRun = static_cast<float>(TearMaskPixels[PixIdx + 1]) / 255.0f;
-				const float PrevPush = ((static_cast<float>(TearMaskPixels[PixIdx + 2]) / 255.0f) - 0.5f) * (2.0f * MaxPushEncode);
-				const float PrevInner = static_cast<float>(TearMaskPixels[PixIdx + 3]) / 255.0f;
-
-				const float MergedHole = std::max(PrevHole, HoleVal);
-				const float MergedRun = std::max(PrevRun, RunVal);
-				const float MergedPush = std::clamp(PrevPush + PushDisp, -MaxPushEncode, MaxPushEncode);
-				const float MergedInner = (MergedHole > 0.92f)
-					? std::min(PrevInner, InnerRimVal)
-					: std::max(PrevInner, InnerRimVal);
-
-				TearMaskPixels[PixIdx] = static_cast<uint8>(std::clamp(MergedHole * 255.0f, 0.0f, 255.0f));
-				TearMaskPixels[PixIdx + 1] = static_cast<uint8>(std::clamp(MergedRun * 255.0f, 0.0f, 255.0f));
-				TearMaskPixels[PixIdx + 2] = static_cast<uint8>(std::clamp((0.5f + MergedPush / (2.0f * MaxPushEncode)) * 255.0f, 0.0f, 255.0f));
-				TearMaskPixels[PixIdx + 3] = static_cast<uint8>(std::clamp(MergedInner * 255.0f, 0.0f, 255.0f));
 			}
 		}
 	}
@@ -1793,7 +1798,7 @@ void UStockingComponent::RebuildTearMaskTexture()
 	}
 
 	bTearMaskDirty = false;
-	TearMaskUploadCooldown = 0.033f;
+	TearMaskUploadCooldown = 0.066f;
 }
 
 void UStockingComponent::DestroyNvClothResources()
@@ -1922,8 +1927,9 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	{
 		OutSimPos = CachedClothSimPos;
 		OutCompression = CachedClothCompression;
-		return bHasActiveClothWrinkles || bHasActiveClothPull;
+		return bHasActiveClothWrinkles;
 	}
+	bPullTargetDirty = false;
 
 	if (bNvClothParamsDirty)
 	{
@@ -1955,9 +1961,8 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 		PeakComp = std::max(PeakComp, RawComp[w]);
 	}
 
-	const bool bPullSimWanted = bIsPulling || bHasActiveClothPull;
-	// 관절이 펴진 상태이고 활성 주름과 당김이 모두 없으면 솔버 스텝을 생략해 프레임 확보
-	if (!bNeedsClothTeleport && PeakComp < 0.015f && !bHasActiveClothWrinkles && !bPullSimWanted)
+	// 관절이 펴진 상태이고 활성 주름이 없으면 솔버 스텝을 생략해 프레임 확보
+	if (!bNeedsClothTeleport && PeakComp < 0.015f && !bHasActiveClothWrinkles)
 	{
 		bClothAwakeLastFrame = false;
 		bClothSteppedThisFrame = true;
@@ -1985,6 +1990,7 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 		OutCompression[w] = Sum / Weight;
 	}
 
+	(void)AnchorNormal;
 	const float BackstopR = std::max(ClothBackstopRadius, 0.008f * ReferenceScale);
 	const float BaseSlack = 0.0002f * ReferenceScale;
 	const float SafeSlack = std::max(ClothJointWrinkleSlack, 0.0f);
@@ -1993,43 +1999,6 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	const float FoldCurveX = 18.0f / SafeScale;
 	const float FoldCurveY = 14.0f / SafeScale;
 	const float MaxTangentDrift = 0.0012f * SafeScale;
-
-	const float SafePullRadius = std::max(PullRadius, 0.005f * SafeScale);
-	const float SafeMaxPull = std::max(MaxPullDistance, 0.005f * SafeScale);
-	const float SafeExponent = std::max(PullFalloffExponent, 0.25f);
-	const float PinCoreRadius = SafePullRadius * 0.14f;
-	const bool bHasValidGeodesic = bHasGrabAnchor && GrabGeodesicDistances.Num() == WeldedCount;
-	const float CurPullMag = bIsPulling ? CurrentPullOffsetLocal.Size() : 0.0f;
-	if (bIsPulling && CurPullMag > 1e-5f)
-	{
-		LastClothPullMag = CurPullMag;
-		LastClothPullDir = CurrentPullOffsetLocal / CurPullMag;
-		PullReleaseEnvelope = 1.0f;
-	}
-	const float ActivePullMag = bIsPulling ? CurPullMag : (LastClothPullMag * PullReleaseEnvelope);
-	const FVector ActivePullDir = (bIsPulling && CurPullMag > 1e-5f) ? (CurrentPullOffsetLocal / CurPullMag) : LastClothPullDir;
-
-	// 잡은 삼각형 정점 인덱스 조회
-	int32 GrabW0 = -1;
-	int32 GrabW1 = -1;
-	int32 GrabW2 = -1;
-	if (bHasValidGeodesic)
-	{
-		const USkeletalMesh* Mesh = GetSkeletalMesh();
-		if (Mesh && !Mesh->GetRenderData().LODRenderData.IsEmpty())
-		{
-			const FSkeletalMeshLODRenderData& LOD = Mesh->GetRenderData().LODRenderData[0];
-			if (static_cast<int32>(GrabbedTriangleIndex) < LOD.Indices.Num() / 3)
-			{
-				GrabW0 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3]]);
-				GrabW1 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3 + 1]]);
-				GrabW2 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3 + 2]]);
-			}
-		}
-	}
-
-	TArray<float> PullZoneWeights;
-	PullZoneWeights.SetNum(WeldedCount);
 
 	bool bAnyCompressed = false;
 	for (int32 w = 0; w < WeldedCount; ++w)
@@ -2062,47 +2031,12 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 
 		const FVector SkinTarget = P + N * (SurfaceOffset + CreaseLift);
 
-		// 피부 밀착 백스톱 구로 당기거나 놓을 때도 다리 안쪽 관통을 차단
+		// 피부 밀착 백스톱 구와 타이트한 모션 제약 구로 붕뜸과 관통을 동시에 방지
 		const FVector BackstopCenter = P - N * BackstopR;
 		const float BackstopClearance = BackstopR + SurfaceOffset + CreaseLift + RidgeTargetH * 0.65f;
 		ClothSeparationConstraintsBuffer[w] = { BackstopCenter.X, BackstopCenter.Y, BackstopCenter.Z, BackstopClearance };
 
-		FVector MotionCenter = SkinTarget + N * RidgeTargetH;
-		float PullZoneWeight = 0.0f;
-
-		// 당김 반경 안쪽 정점은 모션 제약 반경을 열어 물리 인장과 스냅백으로 변형
-		if (bPullSimWanted && bHasValidGeodesic && ActivePullMag > 1e-5f)
-		{
-			const float SurfaceDist = GrabGeodesicDistances[w];
-			const bool bIsGrabTriVert = (w == GrabW0 || w == GrabW1 || w == GrabW2);
-			if (bIsGrabTriVert || SurfaceDist < SafePullRadius)
-			{
-				const float NormR = bIsGrabTriVert ? 0.0f : std::clamp(SurfaceDist / SafePullRadius, 0.0f, 1.0f);
-				const float InvR = 1.0f - NormR;
-				const float Envelope = std::pow(InvR, std::max(SafeExponent * 0.62f, 0.5f));
-				const float OutwardMask = bIsGrabTriVert ? 1.0f : std::sqrt(std::clamp(N.Dot(ActivePullDir), 0.0f, 1.0f));
-				const float AnchorFacing = bIsGrabTriVert ? 1.0f : std::clamp((N.Dot(AnchorNormal) + 0.18f) / 1.18f, 0.0f, 1.0f);
-				const float TearBoost = (w < WeldedTearFactor.Num()) ? (1.0f + 0.20f * WeldedTearFactor[w]) : 1.0f;
-				PullZoneWeight = std::min(Envelope * OutwardMask * AnchorFacing * TearBoost, 1.0f);
-
-				if (bIsPulling && (bIsGrabTriVert || SurfaceDist < PinCoreRadius))
-				{
-					// 손끝으로 집은 코어 영역은 커서 타깃 위치로 직접 모션 제약을 걸어 끌어당김
-					const float CoreT = bIsGrabTriVert ? 1.0f : std::clamp(1.0f - SurfaceDist / std::max(PinCoreRadius, 1e-5f), 0.0f, 1.0f);
-					const float CorePull = CoreT * CoreT;
-					MotionCenter = SkinTarget + CurrentPullOffsetLocal * (0.35f + 0.65f * CorePull);
-					AllowedRadius = bIsGrabTriVert ? 0.0f : (ActivePullMag * (1.0f - CorePull) * 0.35f);
-					PullZoneWeight = 1.0f;
-				}
-				else if (PullZoneWeight > 1e-4f)
-				{
-					// 주변 천은 피부 중심 모션 구 반경만 열어 실제 솔버 인장 전단 굽힘이 당겨오도록 위임
-					AllowedRadius = std::max(AllowedRadius, PullZoneWeight * ActivePullMag * 1.25f);
-				}
-			}
-		}
-
-		PullZoneWeights[w] = PullZoneWeight;
+		const FVector MotionCenter = SkinTarget + N * RidgeTargetH;
 		ClothMotionConstraintsBuffer[w] = { MotionCenter.X, MotionCenter.Y, MotionCenter.Z, AllowedRadius };
 	}
 
@@ -2127,7 +2061,6 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 
 	OutSimPos.SetNum(WeldedCount);
 	float MaxOutwardOffset = 0.0f;
-	float MaxPullResidual = 0.0f;
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
 		const float CompFactor = (WeldedEdgeMasks[w] >= 0.22f)
@@ -2136,7 +2069,6 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 		const float CreaseLift = CompFactor * (0.0022f * SafeScale);
 		const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * (SurfaceOffset + CreaseLift);
 		const FVector& N = SkinnedNormal[w];
-		const float PullW = PullZoneWeights[w];
 		FVector SimP(ClothParticlesBuffer[w].X, ClothParticlesBuffer[w].Y, ClothParticlesBuffer[w].Z);
 		if (!std::isfinite(SimP.X) || !std::isfinite(SimP.Y) || !std::isfinite(SimP.Z))
 		{
@@ -2144,43 +2076,25 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 		}
 		else
 		{
-			// 법선 바깥 여유와 접선 미끄러짐 한계를 제한하되 당김 구간은 물리 변형을 허용
+			// 법선 바깥 여유와 접선 미끄러짐 한계를 동시에 제한해 오목 관절 피부 노출 차단
 			const FVector Rel = SimP - SkinTarget;
 			const float RawNormalDist = Rel.Dot(N);
-			const float PullAllowance = PullW * SafeMaxPull * 1.25f;
-			const float MaxOutH = BaseSlack + CompFactor * SafeSlack * 1.15f + PullAllowance;
+			const float MaxOutH = BaseSlack + CompFactor * SafeSlack * 1.15f;
 			const float ClampedNormalDist = std::clamp(RawNormalDist, 0.0f, MaxOutH);
 			FVector TangentRel = Rel - N * RawNormalDist;
 			const float TanLenSq = TangentRel.SizeSquared();
-			const float LocalTanLimit = ((WeldedEdgeMasks[w] >= 0.22f) ? (MaxTangentDrift * (0.25f + 0.75f * CompFactor)) : 0.0f) + PullAllowance;
+			const float LocalTanLimit = (WeldedEdgeMasks[w] >= 0.22f) ? (MaxTangentDrift * (0.25f + 0.75f * CompFactor)) : 0.0f;
 			if (TanLenSq > LocalTanLimit * LocalTanLimit && TanLenSq > 1e-12f)
 			{
 				TangentRel = TangentRel * (LocalTanLimit / std::sqrt(TanLenSq));
 			}
 			SimP = SkinTarget + N * ClampedNormalDist + TangentRel;
-			if (PullW > 1e-4f)
-			{
-				MaxPullResidual = std::max(MaxPullResidual, (SimP - SkinTarget).Size());
-			}
-			else
-			{
-				MaxOutwardOffset = std::max(MaxOutwardOffset, ClampedNormalDist + CreaseLift);
-			}
+			MaxOutwardOffset = std::max(MaxOutwardOffset, ClampedNormalDist + CreaseLift);
 		}
 		OutSimPos[w] = SimP;
 	}
 
 	bHasActiveClothWrinkles = bAnyCompressed || (MaxOutwardOffset > 0.001f * SafeScale);
-	if (!bIsPulling && bHasActiveClothPull)
-	{
-		if (PullReleaseEnvelope <= 0.015f && MaxPullResidual <= 0.0012f * SafeScale)
-		{
-			bHasActiveClothPull = false;
-			PullReleaseEnvelope = 0.0f;
-			LastClothPullMag = 0.0f;
-			bHasGrabAnchor = false;
-		}
-	}
 	bClothAwakeLastFrame = true;
 	CachedClothSimPos = OutSimPos;
 	CachedClothCompression = OutCompression;
@@ -2264,23 +2178,6 @@ void UStockingComponent::StepPullState(float DeltaTime)
 {
 	if (DeltaTime <= 0.0f || !std::isfinite(DeltaTime))
 	{
-		return;
-	}
-
-	if (bUseNvClothSimulation && ClothSolver && ClothInstance)
-	{
-		if (!bIsPulling && bHasActiveClothPull)
-		{
-			// 놓은 직후 물리 스냅백 여유 반경을 복원 속도에 맞춰 부드럽게 수축
-			const float SafeDt = std::min(DeltaTime, 1.0f / 30.0f);
-			const float DecayRate = std::max(RestoreSpeed, 1.0f) * 0.65f;
-			PullReleaseEnvelope *= std::exp(-DecayRate * SafeDt);
-			if (PullReleaseEnvelope < 0.005f)
-			{
-				PullReleaseEnvelope = 0.0f;
-			}
-			MarkBoneTransformsDirty();
-		}
 		return;
 	}
 
@@ -2392,11 +2289,22 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 				DesiredOffset -= AnchorNormal * InwardDot;
 			}
 
-			const float Len = DesiredOffset.Size();
+			// 정면 화면 드래그 시에도 피부에서 최소한 들리면서 원래 마우스 방향은 유지
+			const float RawLen = DesiredOffset.Size();
 			const float SafeMaxPull = std::max(MaxPullDistance, 0.001f);
-			if (Len > SafeMaxPull)
+			if (RawLen > 1e-6f)
 			{
-				DesiredOffset = DesiredOffset * (SafeMaxPull / Len);
+				const float CurrentOutward = DesiredOffset.Dot(AnchorNormal);
+				const float MinOutwardLift = RawLen * 0.18f;
+				if (CurrentOutward < MinOutwardLift)
+				{
+					DesiredOffset += AnchorNormal * (MinOutwardLift - CurrentOutward);
+				}
+
+				// 방향을 왜곡하지 않는 등방성 점근 탄성 저항으로 최대 신장 제한
+				const float AdjustedLen = DesiredOffset.Size();
+				const float SmoothLen = SafeMaxPull * (1.0f - std::exp(-AdjustedLen / (SafeMaxPull * 0.90f)));
+				DesiredOffset = DesiredOffset * (SmoothLen / std::max(AdjustedLen, 1e-6f));
 			}
 			CurrentPullOffsetLocal = DesiredOffset;
 		}
@@ -2405,7 +2313,6 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 	const float PullMagSq = CurrentPullOffsetLocal.SizeSquared();
 	const bool bApplyPull = bHasGrabAnchor && PullMagSq > 1e-10f && GrabGeodesicDistances.Num() == WeldedCount;
 	const float PullMag = bApplyPull ? std::sqrt(PullMagSq) : 0.0f;
-	const FVector PullDir = bApplyPull ? (CurrentPullOffsetLocal / PullMag) : FVector::ZeroVector;
 	const float SafeRadius = std::max(PullRadius, 0.005f);
 	const float SafeExponent = std::max(PullFalloffExponent, 0.25f);
 	const float PullStrength = bApplyPull ? std::clamp(PullMag / std::max(MaxPullDistance, 0.01f), 0.0f, 1.0f) : 0.0f;
@@ -2416,11 +2323,10 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 	const FVector AnchorTangentU = FVector::Cross(RefUp, AnchorNormal).Normalized();
 	const FVector AnchorTangentV = FVector::Cross(AnchorNormal, AnchorTangentU).Normalized();
 
-	// 관절 접힘부 물리 주름과 인터랙티브 당기기를 단일 NvCloth 솔버로 시뮬레이션
+	// 관절 접힘부 물리 주름을 NvCloth 백스톱과 모션 제약으로 시뮬레이션
 	TArray<FVector> NvSimPos;
 	TArray<float> NvCompression;
 	const bool bUsedNvCloth = StepNvClothJointWrinkles(WeldedPos, WeldedNormal, AnchorNormal, NvSimPos, NvCompression);
-	const bool bApplyAnalyticPull = bApplyPull && !bUsedNvCloth;
 
 	TArray<FVector> DeformedWeldedPos;
 	TArray<float> WeldedCrease;
@@ -2442,7 +2348,7 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 		}
 		float CreaseSignal = 0.0f;
 
-		if (bApplyAnalyticPull)
+		if (bApplyPull)
 		{
 			const float SurfaceDist = GrabGeodesicDistances[w];
 			if (SurfaceDist < SafeRadius)
@@ -2453,15 +2359,43 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 				const float ConcaveProfile = std::pow(InvR, SafeExponent) * (0.65f + 0.35f * InvR * InvR);
 
 				// 당김 방향이 피부 바깥쪽을 향하는 면만 변형해 측면 관통 방지
-				const float RawOutward = std::clamp(SmoothN.Dot(PullDir), 0.0f, 1.0f);
-				const float OutwardMask = std::sqrt(RawOutward);
-				const float AnchorFacing = std::clamp((SmoothN.Dot(AnchorNormal) + 0.1f) / 1.1f, 0.0f, 1.0f);
+				// 당김 정점이 측면 실루엣으로 밀리지 않고 정확히 피킹된 앵커에 고정되도록 앵커 기준 가중치 사용
+				const float RawAnchorFacing = std::clamp(SmoothN.Dot(AnchorNormal), 0.0f, 1.0f);
+				const float AnchorFacing = RawAnchorFacing * RawAnchorFacing;
 				const float TearYieldBoost = (w < WeldedTearFactor.Num()) ? (1.0f + 0.18f * WeldedTearFactor[w]) : 1.0f;
-				const float Weight = std::min(ConcaveProfile * OutwardMask * AnchorFacing * TearYieldBoost, 1.0f);
+				const float Weight = std::min(ConcaveProfile * AnchorFacing * TearYieldBoost, 1.0f);
 
 				if (Weight > 1e-5f)
 				{
+					// 앵커 주변 정점은 마우스 당김 방향을 그대로 따르게 유지
 					FVector VertexDelta = CurrentPullOffsetLocal * Weight;
+					const float RawDeltaN = VertexDelta.Dot(SmoothN);
+					if (RawDeltaN < 0.0f)
+					{
+						// 피부 안쪽으로 밀리는 성분 제거 및 반대편 측면 미끄러짐 감쇠
+						const float RawDeltaLen = VertexDelta.Size();
+						const float SideSafe = (RawDeltaLen > 1e-6f)
+							? std::clamp(1.0f + RawDeltaN / RawDeltaLen, 0.0f, 1.0f)
+							: 0.0f;
+						VertexDelta = (VertexDelta - SmoothN * RawDeltaN) * (AnchorFacing * SideSafe);
+					}
+
+					// 측면 실루엣 부근에서만 곡면 현 보정으로 허벅지 옆 피부 노출 차단
+					float FinalDeltaN = VertexDelta.Dot(SmoothN);
+					float CurvatureLift = 0.0f;
+					const float SilhouetteBlend = std::clamp((0.62f - RawAnchorFacing) / 0.42f, 0.0f, 1.0f);
+					if (SilhouetteBlend > 0.0f)
+					{
+						const FVector SideTan = VertexDelta - SmoothN * FinalDeltaN;
+						const float TanLen = SideTan.Size();
+						const float SafeLimbRadius = std::max(0.055f * ReferenceScale, 0.01f);
+						CurvatureLift = SilhouetteBlend * ((TanLen * TanLen) / (1.8f * SafeLimbRadius) + TanLen * 0.14f);
+						if (FinalDeltaN < CurvatureLift)
+						{
+							VertexDelta += SmoothN * (CurvatureLift - FinalDeltaN);
+							FinalDeltaN = CurvatureLift;
+						}
+					}
 
 					// 잡은 지점에서 방사형으로 퍼지는 장력 주름 능선과 골 생성
 					if (WrinkleAmplitude > 1e-5f && NormR > 0.03f)
@@ -2474,10 +2408,11 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 						const float PrimaryWave = std::sin(Angle * WrinkleFrequency + NormR * 2.2f);
 						const float SecondaryWave = 0.45f * std::sin(Angle * WrinkleFrequency * 2.0f - NormR * 3.5f + 1.1f);
 						const float Wave = std::clamp((PrimaryWave + SecondaryWave) / 1.45f, -1.0f, 1.0f);
-						const float WrinkleScale = PullStrength * RingEnvelope * OutwardMask * AnchorFacing;
+						const float WrinkleScale = PullStrength * RingEnvelope * AnchorFacing;
 
 						// 능선은 바깥으로 솟고 골은 피부선 위까지만 낮춰 관통 방지
-						const float RippleMag = std::max(-VertexDelta.Dot(SmoothN) * 0.45f, Wave * WrinkleAmplitude * WrinkleScale);
+						const float MaxDownDip = std::max(0.0f, (FinalDeltaN - CurvatureLift) * 0.25f);
+						const float RippleMag = std::max(-MaxDownDip, Wave * WrinkleAmplitude * WrinkleScale);
 						VertexDelta += SmoothN * RippleMag;
 						CreaseSignal = Wave * WrinkleScale;
 					}

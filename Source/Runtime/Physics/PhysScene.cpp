@@ -89,8 +89,8 @@ public:
 			return;
 		}
 
-		physx::PxRigidActor* Actor0 = PairHeader.actors[0];
-		physx::PxRigidActor* Actor1 = PairHeader.actors[1];
+		physx::PxActor* Actor0 = PairHeader.actors[0];
+		physx::PxActor* Actor1 = PairHeader.actors[1];
 		if (!Actor0 || !Actor1)
 		{
 			return;
