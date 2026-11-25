@@ -46,6 +46,15 @@ public:
 	float GetForwardSpeedKmH() const;   // 전진 속도 (km/h)
 	bool IsInAir() const;               // 4륜 모두 체공 여부
 
+	// 파워트레인 & 텔레메트리 조회
+	int32 GetCurrentGear() const;       // 현재 기어 (-1: R, 1~8)
+	float GetEngineRPM() const;
+	float GetMaxRPM() const;
+	float GetLateralG() const;
+	float GetLongitudinalG() const;
+	float GetAverageRearSlipRatio() const;
+	bool IsTCActive() const;
+
 	// 바퀴별 시뮬레이션 상태 및 트랜스폼 조회 (0: FL, 1: FR, 2: RL, 3: RR)
 	const FWheelSimulationState& GetWheelState(EVehicleWheelOrder Order) const;
 	const FWheelSimulationState& GetWheelState(int32 WheelIndex) const;
@@ -85,6 +94,9 @@ public:
 
 	UPROPERTY(EditAnywhere)
 	float TireGripScale = 1.0f;         // 타이어 마찰력 배율 (1.0 = 기본 프리셋)
+
+	UPROPERTY(EditAnywhere)
+	bool bEnableTractionControl = true; // F1 트랙션 컨트롤(TCS) 활성화 여부
 
 protected:
 	bool TryInitVehicle();

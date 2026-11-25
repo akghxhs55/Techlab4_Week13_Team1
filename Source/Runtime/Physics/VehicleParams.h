@@ -60,12 +60,32 @@ struct FVehicleParams
 	// 공력(다운포스/항력) 및 타이어 그립·고속 조향 제원
 	float DownforceCoeff = 2.6f;            // 속도^2 비례 하향력 계수 (N / (m/s)^2)
 	float AeroDragCoeff = 1.6f;             // 속도^2 비례 공기저항 계수 (N / (m/s)^2)
+	float GroundEffectStrength = 0.25f;     // 차고 압축(그라운드 이펙트)에 따른 추가 다운포스 비율
 	float TireLateralFriction = 1.75f;      // 전륜 횡방향 타이어 마찰계수 (F1 슬릭)
 	float RearTireLateralFriction = 2.25f;  // 후륜 광폭 타이어 횡방향 마찰계수 (고속 오버스티어 억제)
 	float TireLongitudinalFriction = 1.85f; // 종방향 가감속 트랙션 마찰계수
-	float CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 (N / rad)
+	float TireNominalLoad = 2800.0f;        // 타이어 기준 수직하중 (N, 하중 민감도 기준)
+	float TireLoadSensitivity = 0.12f;      // 하중 민감도 지수 (수직하중 증가 시 마찰계수 체감)
+	float PacejkaB = 9.0f;                  // 간이 Magic Formula 강성 인자
+	float PacejkaC = 1.40f;                 // 간이 Magic Formula 형상 인자 (피크 이후 완만한 감쇠)
+	float CorneringStiffness = 62000.0f;    // 슬립각 기반 코너링 강성 참조치
 	float MinHighSpeedSteerScale = 0.12f;   // 고속 시 최대 조향각 배율 (32도 * 0.12 ≈ 3.8도)
 	float HighSpeedSteerRefSpeed = 18.0f;   // 고속 조향 감쇠 기준 속도 (m/s ≈ 65 km/h에서 50% 감쇠)
+
+	// 서스펜션 안티롤바 (좌우 롤 억제 및 언더/오버스티어 밸런싱)
+	float FrontAntiRollStiffness = 18000.0f;// 전륜 안티롤바 강성 (N/m)
+	float RearAntiRollStiffness = 14000.0f; // 후륜 안티롤바 강성 (N/m)
+
+	// 8단 시퀀셜 기어박스 & 파워유닛 RPM 세팅
+	static constexpr int32 MaxForwardGears = 8;
+	float GearRatios[MaxForwardGears] = { 4.80f, 3.85f, 3.15f, 2.62f, 2.20f, 1.88f, 1.62f, 1.42f };
+	float ReverseGearRatio = 3.80f;
+	float FinalDriveRatio = 3.80f;
+	float IdleRPM = 4200.0f;
+	float MaxRPM = 13500.0f;
+	float UpshiftRPM = 12600.0f;
+	float DownshiftRPM = 7800.0f;
+	float MaxTCSlipRatio = 0.14f;           // 트랙션 컨트롤 허용 슬립비 상한
 
 	// 4개 바퀴 설정 (0: FL, 1: FR, 2: RL, 3: RR)
 	FWheelConfig FrontLeftWheel;

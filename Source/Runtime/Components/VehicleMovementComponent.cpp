@@ -98,6 +98,7 @@ bool UVehicleMovementComponent::TryInitVehicle()
 				Wheel.Radius = WheelRadius;
 			}
 
+			SimulationPipeline.SetTractionControlEnabled(bEnableTractionControl);
 			SimulationPipeline.Initialize(VehicleParams, RigidDynamic);
 			bVehicleInitialized = true;
 			return true;
@@ -171,6 +172,7 @@ void UVehicleMovementComponent::TickComponent(float DeltaTime)
 	CurrentBrake = FMath::FInterpTo(CurrentBrake, RawBrakeInput, DeltaTime, 10.0f);
 
 	// 3. PhysX 시뮬레이션 파이프라인 구동
+	SimulationPipeline.SetTractionControlEnabled(bEnableTractionControl);
 	UWorld* World = GetWorld();
 	if (World && World->GetPhysicsScene())
 	{
@@ -246,6 +248,41 @@ bool UVehicleMovementComponent::IsInAir() const
 		}
 	}
 	return true;
+}
+
+int32 UVehicleMovementComponent::GetCurrentGear() const
+{
+	return bVehicleInitialized ? SimulationPipeline.GetCurrentGear() : 1;
+}
+
+float UVehicleMovementComponent::GetEngineRPM() const
+{
+	return bVehicleInitialized ? SimulationPipeline.GetEngineRPM() : VehicleParams.IdleRPM;
+}
+
+float UVehicleMovementComponent::GetMaxRPM() const
+{
+	return VehicleParams.MaxRPM;
+}
+
+float UVehicleMovementComponent::GetLateralG() const
+{
+	return bVehicleInitialized ? SimulationPipeline.GetLateralG() : 0.0f;
+}
+
+float UVehicleMovementComponent::GetLongitudinalG() const
+{
+	return bVehicleInitialized ? SimulationPipeline.GetLongitudinalG() : 0.0f;
+}
+
+float UVehicleMovementComponent::GetAverageRearSlipRatio() const
+{
+	return bVehicleInitialized ? SimulationPipeline.GetAverageRearSlipRatio() : 0.0f;
+}
+
+bool UVehicleMovementComponent::IsTCActive() const
+{
+	return bVehicleInitialized ? SimulationPipeline.IsTCActive() : false;
 }
 
 const FWheelSimulationState& UVehicleMovementComponent::GetWheelState(EVehicleWheelOrder Order) const
