@@ -8,9 +8,13 @@
 #include "Camera/CameraComponent.h"
 #include "WheeledVehiclePawn.generated.h"
 
+class UUserWidget;
+class UTextBlock;
+class UProgressBar;
+
 /**
  * 4륜 차량 기본 폰 (Unreal AWheeledVehiclePawn 대응)
- * 차체 충돌체/스태틱 메시, 4륜 무브먼트 컴포넌트, 3인칭 스프링암 및 카메라를 기본 제공합니다.
+ * 차체 충돌체/스태틱 메시, 4륜 무브먼트 컴포넌트, 3인칭 스프링암 및 카메라, F1 텔레메트리 HUD를 기본 제공합니다.
  */
 UCLASS()
 class AWheeledVehiclePawn : public APawn
@@ -19,9 +23,10 @@ class AWheeledVehiclePawn : public APawn
 
 public:
 	AWheeledVehiclePawn();
-	virtual ~AWheeledVehiclePawn() override = default;
+	virtual ~AWheeledVehiclePawn() override;
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay() override;
 	virtual void Tick(float DeltaTime) override;
 
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
@@ -43,7 +48,41 @@ public:
 	UPROPERTY(EditAnywhere)
 	FRotator WheelMeshRotationOffset = FRotator(0.0f, 0.0f, 0.0f);
 
+	// ---- 속도감 카메라 & F1 HUD 설정 ----
+	UPROPERTY(EditAnywhere)
+	bool bEnableDynamicFOV = true;
+
+	UPROPERTY(EditAnywhere)
+	float HighSpeedFOVBoost = 18.0f; // 300 km/h 기준 추가 시야각 (기본 60도 -> 78도)
+
+	UPROPERTY(EditAnywhere)
+	bool bEnableGForceCamera = true;
+
+	UPROPERTY(EditAnywhere)
+	bool bShowTelemetryHUD = true;
+
 protected:
+	void CreateTelemetryHUD();
+	void UpdateTelemetryHUD(float DeltaTime);
+	void DestroyTelemetryHUD();
+
+	float BaseFieldOfView = 60.0f;
+	float BaseTargetArmLength = 7.0f;
+	FVector BaseSocketOffset = FVector::ZeroVector;
+	float BuffetingTime = 0.0f;
+	float ElapsedSessionTime = 0.0f;
+
+	UUserWidget* TelemetryWidget = nullptr;
+	UTextBlock* SpeedText = nullptr;
+	UTextBlock* GearText = nullptr;
+	UTextBlock* RPMText = nullptr;
+	UTextBlock* GForceText = nullptr;
+	UTextBlock* TimerText = nullptr;
+	UTextBlock* StatusText = nullptr;
+	UProgressBar* RPMBar = nullptr;
+	UProgressBar* ThrottleBar = nullptr;
+	UProgressBar* BrakeBar = nullptr;
+
 	UPROPERTY(VisibleAnywhere)
 	UBoxComponent* ChassisCollision = nullptr;
 
