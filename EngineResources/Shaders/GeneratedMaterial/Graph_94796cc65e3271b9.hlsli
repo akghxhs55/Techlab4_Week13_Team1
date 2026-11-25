@@ -78,11 +78,23 @@ float EvaluateCustomNode_61(float A, float B)
 }
 float EvaluateCustomNode_88(float A, float B)
 {
-    return (saturate(1.0f - abs(A - 0.485f) * 24.0f) * saturate(A * 6.0f) * B);
+    return (saturate(1.0f - abs(A - 0.490f) * 34.0f) * saturate(A * 8.0f) * B);
 }
-float EvaluateCustomNode_96(float A, float B)
+float EvaluateCustomNode_82(float A, float B)
 {
-    return (clamp(1.0f - A * 0.44f - B * 0.18f, 0.44f, 1.0f));
+    return ((A - 0.5f) * 0.15f * B);
+}
+float EvaluateCustomNode_84(float2 A, float B)
+{
+    return ((A.y + A.x * 0.36f) - B + 0.0022f * sin(A.x * 68.0f + A.y * 19.0f));
+}
+float EvaluateCustomNode_85(float A, float B)
+{
+    return (saturate((pow(saturate(1.0f - abs(sin(A * 290.0f))), 4.5f) + 0.58f * pow(saturate(1.0f - abs(sin(A * 610.0f + 1.1f))), 6.0f)) * B));
+}
+float EvaluateCustomNode_97(float A, float B)
+{
+    return (clamp(1.0f - A * 0.42f - B * 0.14f, 0.48f, 1.0f));
 }
 float EvaluateCustomNode_89(float A, float B)
 {
@@ -90,29 +102,21 @@ float EvaluateCustomNode_89(float A, float B)
 }
 float EvaluateCustomNode_90(float A, float B)
 {
-    return (saturate(A * B * 0.22f));
+    return (saturate(A * B * 0.28f));
 }
-float3 EvaluateCustomNode_98(float3 A, float B)
+float3 EvaluateCustomNode_99(float3 A, float B)
 {
     return (A * 0.30f + float3(0.06f, 0.035f, 0.025f) * saturate(B + 1.0f));
 }
 float EvaluateCustomNode_86(float A, float2 B)
 {
-    return (smoothstep(0.495f, 0.528f, A + 0.014f * sin(B.y * 520.0f + sin(B.x * 110.0f) * 2.0f)));
-}
-float EvaluateCustomNode_83(float2 A, float B)
-{
-    return ((pow(saturate(0.5f + 0.5f * sin(A.y * 540.0f + sin(A.x * 75.0f + A.y * 22.0f) * 1.9f)), 24.0f) + 0.75f * pow(saturate(0.5f + 0.5f * sin(A.y * 860.0f - sin(A.x * 58.0f) * 1.4f)), 28.0f)) * B);
-}
-float EvaluateCustomNode_84(float A, float B)
-{
-    return (saturate(A * smoothstep(0.18f, 0.85f, B)));
+    return (smoothstep(0.495f, 0.516f, A + 0.004f * sin(B.y * 540.0f)));
 }
 float EvaluateCustomNode_87(float A, float B)
 {
-    return (saturate(1.0f - A * (1.0f - B * 0.88f)));
+    return (saturate(1.0f - A * saturate(B + 1.0f)));
 }
-float EvaluateCustomNode_99(float A, float B)
+float EvaluateCustomNode_100(float A, float B)
 {
     return (saturate(A * (1.0f - B)));
 }
@@ -128,17 +132,13 @@ float EvaluateCustomNode_71(float A, float B)
 {
     return (A + B * 0.14f);
 }
-float EvaluateCustomNode_85(float2 A, float B)
-{
-    return ((0.16f + 0.84f * pow(saturate(0.5f + 0.5f * sin(A.y * 920.0f + sin(A.x * 64.0f) * 0.7f)), 3.2f)) * B);
-}
 float EvaluateCustomNode_91(float A, float B)
 {
-    return (clamp(1.0f - A * 0.78f + B * 0.40f, 0.14f, 1.0f));
+    return (lerp(1.0f, clamp(0.10f + B * 1.15f, 0.08f, 1.35f), saturate(A)));
 }
 float EvaluateCustomNode_93(float A, float B)
 {
-    return (saturate(A + B * 0.14f));
+    return (saturate(A + B * 0.22f));
 }
 float EvaluateCustomNode_95(float A, float B)
 {
@@ -152,31 +152,31 @@ float EvaluateCustomNode_57(float3 A, float3 B)
 {
     return (saturate(dot(normalize(A), normalize(B))));
 }
-float EvaluateCustomNode_103(float A, float B)
+float EvaluateCustomNode_104(float A, float B)
 {
     return (A * (B + 0.08f));
 }
-float EvaluateCustomNode_102(float A, float B)
+float EvaluateCustomNode_103(float A, float B)
 {
     return (A * B * 2.2f);
 }
-float EvaluateCustomNode_104(float A, float B)
+float EvaluateCustomNode_105(float A, float B)
 {
     return (A * (1.0f + B * 3.5f));
 }
-float EvaluateCustomNode_105(float A, float B)
+float EvaluateCustomNode_106(float A, float B)
 {
     return ((A + B * 0.55f));
 }
-float EvaluateCustomNode_106(float A, float B)
+float EvaluateCustomNode_107(float A, float B)
 {
     return (A * clamp(0.85f + B * 0.35f, 0.55f, 1.35f));
 }
-float EvaluateCustomNode_107(float A, float B)
+float EvaluateCustomNode_108(float A, float B)
 {
     return (A * B);
 }
-float3 EvaluateCustomNode_108(float3 A, float B)
+float3 EvaluateCustomNode_109(float3 A, float B)
 {
     return ((A * 0.45f + float3(0.50f, 0.48f, 0.52f)) * B);
 }
@@ -248,25 +248,27 @@ FMaterialGraphOutput EvaluateMaterialGraph(float2 UV, float3 WorldPosition, floa
     float4 GraphNode_8 = GraphParameterValues[6];
     float GraphNode_26 = GraphNode_8.r;
     float GraphNode_88 = EvaluateCustomNode_88(GraphNode_80, GraphNode_26);
+    float GraphNode_78 = GraphNode_75.b;
+    float GraphNode_82 = EvaluateCustomNode_82(GraphNode_78, GraphNode_9);
+    float GraphNode_84 = EvaluateCustomNode_84(GraphNode_38, GraphNode_82);
+    float GraphNode_28 = GraphNode_8.b;
+    float GraphNode_85 = EvaluateCustomNode_85(GraphNode_84, GraphNode_28);
     float GraphNode_77 = GraphNode_75.g;
     float GraphNode_81 = GraphNode_77 * GraphNode_9;
-    float GraphNode_96 = EvaluateCustomNode_96(GraphNode_88, GraphNode_81);
-    float3 GraphNode_97 = GraphNode_63 * float3(GraphNode_96, GraphNode_96, GraphNode_96);
-    float GraphNode_78 = GraphNode_75.b;
-    float GraphNode_82 = GraphNode_78 * GraphNode_9;
+    float GraphNode_96 = GraphNode_85 * GraphNode_81;
+    float GraphNode_97 = EvaluateCustomNode_97(GraphNode_88, GraphNode_96);
+    float3 GraphNode_98 = GraphNode_63 * float3(GraphNode_97, GraphNode_97, GraphNode_97);
+    float GraphNode_79 = GraphNode_75.a;
+    float GraphNode_83 = GraphNode_79 * GraphNode_9;
     float GraphNode_33 = GraphNode_29.a;
     float GraphNode_27 = GraphNode_8.g;
     float GraphNode_89 = EvaluateCustomNode_89(GraphNode_33, GraphNode_27);
-    float GraphNode_90 = EvaluateCustomNode_90(GraphNode_82, GraphNode_89);
-    float3 GraphNode_98 = EvaluateCustomNode_98(GraphNode_10, GraphNode_90);
+    float GraphNode_90 = EvaluateCustomNode_90(GraphNode_83, GraphNode_89);
+    float3 GraphNode_99 = EvaluateCustomNode_99(GraphNode_10, GraphNode_90);
     float GraphNode_86 = EvaluateCustomNode_86(GraphNode_80, GraphNode_38);
-    float GraphNode_28 = GraphNode_8.b;
-    float GraphNode_83 = EvaluateCustomNode_83(GraphNode_38, GraphNode_28);
-    float GraphNode_79 = GraphNode_75.a;
-    float GraphNode_84 = EvaluateCustomNode_84(GraphNode_83, GraphNode_79);
-    float GraphNode_87 = EvaluateCustomNode_87(GraphNode_86, GraphNode_84);
-    float GraphNode_99 = EvaluateCustomNode_99(GraphNode_86, GraphNode_87);
-    float3 GraphNode_100 = lerp(GraphNode_97, GraphNode_98, GraphNode_99);
+    float GraphNode_87 = EvaluateCustomNode_87(GraphNode_86, GraphNode_9);
+    float GraphNode_100 = EvaluateCustomNode_100(GraphNode_86, GraphNode_87);
+    float3 GraphNode_101 = lerp(GraphNode_98, GraphNode_99, GraphNode_100);
     float4 GraphNode_4 = GraphParameterValues[2];
     float GraphNode_12 = GraphNode_4.r;
     float GraphNode_14 = GraphNode_4.b;
@@ -289,13 +291,12 @@ FMaterialGraphOutput EvaluateMaterialGraph(float2 UV, float3 WorldPosition, floa
     float GraphNode_72 = 0.960000f;
     float GraphNode_73 = clamp(GraphNode_71, GraphNode_15, GraphNode_72);
     float GraphNode_74 = GraphNode_73 * GraphNode_34;
-    float GraphNode_85 = EvaluateCustomNode_85(GraphNode_38, GraphNode_81);
     float GraphNode_91 = EvaluateCustomNode_91(GraphNode_81, GraphNode_85);
     float GraphNode_92 = GraphNode_74 * GraphNode_91;
     float GraphNode_93 = EvaluateCustomNode_93(GraphNode_92, GraphNode_88);
     float GraphNode_94 = GraphNode_93 * GraphNode_87;
     float GraphNode_95 = EvaluateCustomNode_95(GraphNode_94, GraphNode_90);
-    float4 GraphNode_101 = float4(GraphNode_100, GraphNode_95);
+    float4 GraphNode_102 = float4(GraphNode_101, GraphNode_95);
     float3 GraphNode_48 = CameraVectorWS;
     float3 GraphNode_56 = EvaluateCustomNode_56(GraphNode_51, GraphNode_48);
     float GraphNode_57 = EvaluateCustomNode_57(GraphNode_47, GraphNode_56);
@@ -304,13 +305,13 @@ FMaterialGraphOutput EvaluateMaterialGraph(float2 UV, float3 WorldPosition, floa
     float GraphNode_21 = GraphNode_6.g;
     float GraphNode_59 = GraphNode_58 * GraphNode_21;
     float GraphNode_24 = GraphNode_7.r;
-    float GraphNode_103 = EvaluateCustomNode_103(GraphNode_50, GraphNode_24);
-    float GraphNode_102 = EvaluateCustomNode_102(GraphNode_44, GraphNode_19);
-    float GraphNode_104 = EvaluateCustomNode_104(GraphNode_103, GraphNode_102);
-    float GraphNode_105 = EvaluateCustomNode_105(GraphNode_59, GraphNode_104);
-    float GraphNode_106 = EvaluateCustomNode_106(GraphNode_105, GraphNode_43);
-    float GraphNode_107 = EvaluateCustomNode_107(GraphNode_106, GraphNode_87);
-    float3 GraphNode_108 = EvaluateCustomNode_108(GraphNode_10, GraphNode_107);
+    float GraphNode_104 = EvaluateCustomNode_104(GraphNode_50, GraphNode_24);
+    float GraphNode_103 = EvaluateCustomNode_103(GraphNode_44, GraphNode_19);
+    float GraphNode_105 = EvaluateCustomNode_105(GraphNode_104, GraphNode_103);
+    float GraphNode_106 = EvaluateCustomNode_106(GraphNode_59, GraphNode_105);
+    float GraphNode_107 = EvaluateCustomNode_107(GraphNode_106, GraphNode_43);
+    float GraphNode_108 = EvaluateCustomNode_108(GraphNode_107, GraphNode_87);
+    float3 GraphNode_109 = EvaluateCustomNode_109(GraphNode_10, GraphNode_108);
     Result.BaseColor = float4(1, 1, 1, 1);
     Result.SpecularColor = float3(1, 1, 1);
     Result.Shininess = 32.0f;
@@ -322,9 +323,9 @@ FMaterialGraphOutput EvaluateMaterialGraph(float2 UV, float3 WorldPosition, floa
     Result.Normal = float3(0, 0, 1);
     Result.AmbientOcclusion = 1.0f;
 #define MATERIAL_GRAPH_HAS_BASE_COLOR 1
-    Result.BaseColor = GraphNode_101;
+    Result.BaseColor = GraphNode_102;
 #define MATERIAL_GRAPH_HAS_EMISSIVE_COLOR 1
-    Result.EmissiveColor = GraphNode_108;
+    Result.EmissiveColor = GraphNode_109;
     return Result;
 }
 FMaterialGraphOutput EvaluateMaterialGraph(float2 UV)

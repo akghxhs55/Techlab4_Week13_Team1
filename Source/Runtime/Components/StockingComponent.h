@@ -182,6 +182,7 @@ private:
 		float RunDownV = 0.06f;
 		float RunWidthU = 0.011f;
 		float OpenStrength = 0.65f;
+		float TiltAngle = 0.36f;
 		float Seed = 1.0f;
 		float TileMinU = 0.0f;
 		float TileWidthU = 1.0f;
