@@ -86,7 +86,7 @@ float EvaluateCustomNode_82(float A, float B)
 }
 float EvaluateCustomNode_84(float2 A, float B)
 {
-    return ((A.y + A.x * 0.36f) - B + 0.0022f * sin(A.x * 68.0f + A.y * 19.0f));
+    return (A.y - B + 0.0020f * sin(A.x * 68.0f + A.y * 19.0f));
 }
 float EvaluateCustomNode_85(float A, float B)
 {

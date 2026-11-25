@@ -53,6 +53,7 @@ public:
 
 	// 찢어짐 인터랙션 및 원클릭 복구 제어
 	void ApplyTearAtSurfaceHit(uint32 TriangleIndex, const FVector& Barycentric, const FVector& DragDirLocal, float Intensity = 1.0f);
+	bool ApplyWorldImpactTear(const FVector& WorldLocation, const FVector& WorldImpulse, const FVector& WorldSlideVelocity, int32 HitBoneIndex = -1);
 	void RepairAllTears();
 	void SyncTearMaskBinding();
 	int32 GetActiveTearCount() const { return TearNodes.Num(); }
@@ -162,6 +163,19 @@ public:
 	UPROPERTY(EditAnywhere)
 	float TearBrushRadiusUV = 0.014f;
 
+	// 래그돌 충돌 충격량 기반 찢어짐 파라미터
+	UPROPERTY(EditAnywhere)
+	bool bEnableRagdollImpactTearing = true;
+
+	UPROPERTY(EditAnywhere)
+	float ImpactTearImpulseThreshold = 6.0f;
+
+	UPROPERTY(EditAnywhere)
+	float ImpactScrapeSensitivity = 0.35f;
+
+	UPROPERTY(EditAnywhere)
+	float ImpactTearCooldownDuration = 0.14f;
+
 protected:
 	virtual void RefreshBoneTransforms() override;
 	virtual void OnMeshObjectCreated() override;
@@ -182,7 +196,8 @@ private:
 		float RunDownV = 0.06f;
 		float RunWidthU = 0.011f;
 		float OpenStrength = 0.65f;
-		float TiltAngle = 0.36f;
+		float TiltAngle = 0.0f;
+		FVector2 PullBiasUV = FVector2(0.0f, 0.0f);
 		float Seed = 1.0f;
 		float TileMinU = 0.0f;
 		float TileWidthU = 1.0f;
@@ -191,6 +206,15 @@ private:
 	};
 
 	void BuildRestAdjacency(const USkeletalMesh& Mesh);
+	void BuildCoveredBoneMask(const USkeletalMesh& Mesh);
+	void BindSourceImpactListener();
+	void UnbindSourceImpactListener();
+	void HandleSourcePhysicsImpact(const FSkeletalPhysicsImpact& Impact);
+	bool FindClosestTriangleToLocalPoint(
+		const FVector& LocalPoint,
+		float MaxSearchDist,
+		uint32& OutTriangleIndex,
+		FVector& OutBarycentric) const;
 	void ComputeComponentUVTiles(const USkeletalMesh& Mesh);
 	void EnsureTearMaskTexture();
 	void RebuildTearMaskTexture();
@@ -200,6 +224,12 @@ private:
 		FVector2& OutUV,
 		float& OutTileMinU,
 		float& OutTileWidthU) const;
+	bool ComputeTriangleUVPullVector(
+		uint32 TriangleIndex,
+		const FVector& LocalPullVector,
+		const TArray<FVector>* OptionalWeldedPositions,
+		FVector2& OutPullUVDir,
+		float& OutTangentialRatio) const;
 	float ComputeWrappedDeltaU(float U, float CenterU, float TileMinU, float TileWidthU) const;
 	int32 FindNearestTearIndex(const FVector2& UV, float TileMinU, float TileWidthU, float MaxNormalizedDist) const;
 	void AddOrExpandTearAtUV(
@@ -207,6 +237,7 @@ private:
 		float TileMinU,
 		float TileWidthU,
 		const FVector2& PullDirUV,
+		float TangentialRatio,
 		float SpreadAmount,
 		bool bAllowNewNode);
 	void UpdatePullTearing(
@@ -218,6 +249,7 @@ private:
 	bool StepNvClothJointWrinkles(
 		const TArray<FVector>& SkinnedPos,
 		const TArray<FVector>& SkinnedNormal,
+		const FVector& AnchorNormal,
 		TArray<FVector>& OutSimPos,
 		TArray<float>& OutCompression);
 	void ComputeGrabGeodesicDistances();
@@ -249,6 +281,9 @@ private:
 	bool bTearMaskDirty = false;
 	float TearMaskUploadCooldown = 0.0f;
 	float PullTearCooldown = 0.0f;
+	float ImpactTearCooldownTimer = 0.0f;
+	USkeletalMeshComponent* BoundImpactSource = nullptr;
+	TArray<uint8> CoveredBoneMask;
 
 	// 용접 시뮬레이션 메쉬용 NvCloth 핸들 및 작업 버퍼
 	FClothSolverHandle ClothSolver = nullptr;
@@ -264,6 +299,11 @@ private:
 	bool bNvClothParamsDirty = true;
 	bool bClothSteppedThisFrame = false;
 	bool bHasActiveClothWrinkles = false;
+	bool bHasActiveClothPull = false;
+	bool bClothAwakeLastFrame = false;
+	float PullReleaseEnvelope = 0.0f;
+	float LastClothPullMag = 0.0f;
+	FVector LastClothPullDir = FVector(0.0f, 0.0f, 1.0f);
 	float PendingClothDeltaTime = 1.0f / 60.0f;
 
 	bool bIsPulling = false;

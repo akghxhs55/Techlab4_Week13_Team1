@@ -435,9 +435,9 @@ UMaterial* FStockingMaterialLibrary::GetOrCreateStockingMasterMaterial()
 	ConnectGraphPins(*Mat, TearInnerRawId, TearInnerId, 0);
 	ConnectGraphPins(*Mat, TearMaskActiveId, TearInnerId, 1);
 
-	// 구멍 변위 필드로 단일 사선 실 좌표를 휘어 교차 석쇠 없이 구멍 윤곽을 따라 뭉치는 실 가닥 생성
+	// 구멍 변위 필드로 중립 가로 실 좌표를 휘어 각 구멍의 당김 방향에 맞춰 뭉치는 실 가닥 생성
 	const int32 WarpedThreadCoordId = AddCustomExprNode(*Mat, NextId,
-		"(A.y + A.x * 0.36f) - B + 0.0022f * sin(A.x * 68.0f + A.y * 19.0f)",
+		"A.y - B + 0.0020f * sin(A.x * 68.0f + A.y * 19.0f)",
 		EMaterialValueType::Scalar, FVector2(820.0f, 1380.0f));
 	ConnectGraphPins(*Mat, UvId, WarpedThreadCoordId, 0);
 	ConnectGraphPins(*Mat, TearPushDispId, WarpedThreadCoordId, 1);

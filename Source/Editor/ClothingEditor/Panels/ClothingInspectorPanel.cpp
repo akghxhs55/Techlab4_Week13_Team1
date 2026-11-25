@@ -207,6 +207,10 @@ void FClothingInspectorPanel::DrawStockingInspector(int32 LayerIndex, FClothingL
 		ImGui::SliderFloat("Tear Spread Speed", &Stocking->TearSpreadSpeed, 0.2f, 3.0f, "%.2f");
 		ImGui::SliderFloat("Ladder Run Length", &Stocking->TearRunLength, 0.05f, 0.70f, "%.2f");
 		ImGui::SliderFloat("Tear Brush Size", &Stocking->TearBrushRadiusUV, 0.005f, 0.050f, "%.3f");
+		ImGui::Checkbox("Ragdoll Impact Tear", &Stocking->bEnableRagdollImpactTearing);
+		ImGui::SliderFloat("Impact Impulse Threshold", &Stocking->ImpactTearImpulseThreshold, 0.5f, 50.0f, "%.1f");
+		ImGui::SliderFloat("Scrape Sensitivity", &Stocking->ImpactScrapeSensitivity, 0.0f, 2.0f, "%.2f");
+		ImGui::SliderFloat("Impact Tear Cooldown", &Stocking->ImpactTearCooldownDuration, 0.02f, 0.60f, "%.2f");
 		bTearMatChanged |= ImGui::SliderFloat("Tear Rim Strength", &TearMat.TearRimStrength, 0.0f, 1.5f, "%.2f");
 		bTearMatChanged |= ImGui::SliderFloat("Skin Contact Shadow", &TearMat.TearSkinContactStrength, 0.0f, 1.5f, "%.2f");
 		bTearMatChanged |= ImGui::SliderFloat("Ladder Rung Detail", &TearMat.TearRungStrength, 0.0f, 1.5f, "%.2f");

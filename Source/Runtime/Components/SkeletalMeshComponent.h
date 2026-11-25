@@ -3,6 +3,7 @@
 #include "SkinnedMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Serialization/StructuredArchive.h"
+#include <functional>
 #include "SkeletalMeshComponent.generated.h"
 
 class UAnimInstance;
@@ -23,6 +24,21 @@ namespace physx { class PxAggregate; }
 struct FConstraintInstance;
 struct FHitResult;
 struct FRay;
+struct FBodyInstance;
+struct FPhysicsContactImpact;
+
+struct FSkeletalPhysicsImpact
+{
+	int32 BoneIndex = -1;
+	FVector WorldLocation = FVector::ZeroVector;
+	FVector WorldNormal = FVector(0.0f, 0.0f, 1.0f);
+	FVector WorldImpulse = FVector::ZeroVector;
+	FVector WorldSlideVelocity = FVector::ZeroVector;
+	float ImpulseMagnitude = 0.0f;
+	bool bFromExternalImpulse = false;
+};
+
+using FSkeletalPhysicsImpactCallback = std::function<void(const FSkeletalPhysicsImpact&)>;
 
 UCLASS()
 class USkeletalMeshComponent : public USkinnedMeshComponent
@@ -55,6 +71,10 @@ public:
 	bool SetAllBodiesBelowSimulatePhysics(const FString& BoneName, bool bSimulate);
 	bool IsAnyBodySimulatingPhysics() const;
 	void SyncPhysicsToBones();
+	void AddPhysicsImpactListener(const void* ListenerKey, FSkeletalPhysicsImpactCallback Callback);
+	void RemovePhysicsImpactListener(const void* ListenerKey);
+	void NotifyPhysicsContactImpact(const FPhysicsContactImpact& ContactImpact);
+	int32 FindBoneIndexForBody(const FBodyInstance* Body) const;
 	bool RaycastPhysicsBodies(const FRay& WorldRay, FHitResult& OutHit) const;
 	bool SweepPhysicsBodies(const FRay& WorldRay, float MaxDistance, float Radius, FHitResult& OutHit) const;
 
@@ -135,6 +155,13 @@ private:
 	physx::PxAggregate* BodyAggregate = nullptr;
 	TArray<FConstraintInstance*> Constraints;
 	TArray<int32> BodyBoneIndices;
+	struct FPhysicsImpactListenerEntry
+	{
+		const void* Key = nullptr;
+		FSkeletalPhysicsImpactCallback Callback;
+	};
+
+	TArray<FPhysicsImpactListenerEntry> PhysicsImpactListeners;
 	bool bRagdollActive = false;
 	bool bLogNextRagdollStep = false;
 	FVector RagdollStartBodyPosition = FVector::ZeroVector;

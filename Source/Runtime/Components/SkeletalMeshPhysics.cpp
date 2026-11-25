@@ -212,8 +212,116 @@ FBodyInstance* USkeletalMeshComponent::GetBodyInstance(const FString& BoneName) 
 
 void USkeletalMeshComponent::AddImpulseToBone(const FString& BoneName, const FVector& Impulse, bool bVelocityChange)
 {
-	if (FBodyInstance* Body = FindArticulatedBody(BoneName))
-		Body->AddImpulse(Impulse, bVelocityChange);
+	FBodyInstance* Body = FindArticulatedBody(BoneName);
+	if (!Body)
+	{
+		return;
+	}
+
+	Body->AddImpulse(Impulse, bVelocityChange);
+
+	// 래그돌이나 물리 바디 시뮬레이션 중 외부 충격량이 들어오면 리스너로 전파
+	if ((bRagdollActive || IsAnyBodySimulatingPhysics()) && !PhysicsImpactListeners.IsEmpty())
+	{
+		const physx::PxRigidDynamic* Dyn = Body->GetPxRigidDynamic();
+		const float MassScale = (bVelocityChange && Dyn) ? Dyn->getMass() : 1.0f;
+		const FVector EffectiveImpulse = Impulse * MassScale;
+		const float ImpulseMag = EffectiveImpulse.Size();
+		if (ImpulseMag > 1e-4f)
+		{
+			FSkeletalPhysicsImpact Impact{};
+			Impact.BoneIndex = FindBoneIndexForBody(Body);
+			Impact.WorldLocation = Body->GetUnrealWorldTransform().Location;
+			Impact.WorldNormal = EffectiveImpulse / ImpulseMag;
+			Impact.WorldImpulse = EffectiveImpulse;
+			Impact.WorldSlideVelocity = EffectiveImpulse / std::max(MassScale, 1e-4f);
+			Impact.ImpulseMagnitude = ImpulseMag;
+			Impact.bFromExternalImpulse = true;
+
+			const TArray<FPhysicsImpactListenerEntry> Snapshot = PhysicsImpactListeners;
+			for (int32 i = 0; i < Snapshot.Num(); ++i)
+			{
+				if (Snapshot[i].Callback)
+				{
+					Snapshot[i].Callback(Impact);
+				}
+			}
+		}
+	}
+}
+
+int32 USkeletalMeshComponent::FindBoneIndexForBody(const FBodyInstance* Body) const
+{
+	if (!Body)
+	{
+		return -1;
+	}
+	for (int32 Index = 0; Index < Bodies.Num() && Index < BodyBoneIndices.Num(); ++Index)
+	{
+		if (Bodies[Index] == Body)
+		{
+			return BodyBoneIndices[Index];
+		}
+	}
+	return -1;
+}
+
+void USkeletalMeshComponent::AddPhysicsImpactListener(const void* ListenerKey, FSkeletalPhysicsImpactCallback Callback)
+{
+	if (!ListenerKey || !Callback)
+	{
+		return;
+	}
+	for (int32 i = 0; i < PhysicsImpactListeners.Num(); ++i)
+	{
+		if (PhysicsImpactListeners[i].Key == ListenerKey)
+		{
+			PhysicsImpactListeners[i].Callback = std::move(Callback);
+			return;
+		}
+	}
+	PhysicsImpactListeners.Add({ ListenerKey, std::move(Callback) });
+}
+
+void USkeletalMeshComponent::RemovePhysicsImpactListener(const void* ListenerKey)
+{
+	if (!ListenerKey)
+	{
+		return;
+	}
+	for (int32 i = PhysicsImpactListeners.Num() - 1; i >= 0; --i)
+	{
+		if (PhysicsImpactListeners[i].Key == ListenerKey)
+		{
+			PhysicsImpactListeners.RemoveAt(i, 1);
+		}
+	}
+}
+
+void USkeletalMeshComponent::NotifyPhysicsContactImpact(const FPhysicsContactImpact& ContactImpact)
+{
+	if (PhysicsImpactListeners.IsEmpty() || (!bRagdollActive && !IsAnyBodySimulatingPhysics()))
+	{
+		return;
+	}
+
+	FSkeletalPhysicsImpact Impact{};
+	Impact.BoneIndex = FindBoneIndexForBody(ContactImpact.HitBody);
+	Impact.WorldLocation = ContactImpact.WorldLocation;
+	Impact.WorldNormal = ContactImpact.WorldNormal;
+	Impact.WorldImpulse = ContactImpact.WorldImpulse;
+	Impact.WorldSlideVelocity = ContactImpact.WorldSlideVelocity;
+	Impact.ImpulseMagnitude = ContactImpact.ImpulseMagnitude;
+	Impact.bFromExternalImpulse = false;
+
+	const TArray<FPhysicsImpactListenerEntry> Snapshot = PhysicsImpactListeners;
+	for (int32 i = 0; i < Snapshot.Num(); ++i)
+	{
+		if (Snapshot[i].Callback)
+		{
+			Snapshot[i].Callback(Impact);
+		}
+	}
 }
 
 void USkeletalMeshComponent::SetRagdollLinearVelocity(const FVector& Velocity)

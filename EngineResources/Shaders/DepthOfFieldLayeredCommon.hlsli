@@ -62,9 +62,11 @@ float DOFSignedCoC(float Z)
 
 float DOFBladeScale(float Angle)
 {
-    float Sector = 6.2831853f / DiaphragmBladeCount;
-    float LocalAngle = frac((Angle + 3.14159265f) / Sector) * Sector - 0.5f * Sector;
-    float Polygon = cos(0.5f * Sector) / max(cos(LocalAngle), 0.01f);
-    float PolygonWeight = saturate((ApertureFStop - MinimumFStop) / max(MinimumFStop, 0.1f));
-    return lerp(1.0f, Polygon, PolygonWeight);
+	float Sector = 6.2831853f / max(DiaphragmBladeCount, 3.0f);
+	float LocalAngle = frac((Angle + 3.14159265f) / Sector) * Sector - 0.5f * Sector;
+	float Polygon = cos(0.5f * Sector) / max(cos(LocalAngle), 0.01f);
+	// 다각형 변과 꼭짓점 차이를 강조해 날 수 구분을 뚜렷하게 유지
+	float CrispPolygon = saturate(1.0f - (1.0f - Polygon) * 1.6f);
+	float PolygonWeight = saturate((ApertureFStop - MinimumFStop) / max(MinimumFStop, 0.1f));
+	return lerp(1.0f, CrispPolygon, PolygonWeight);
 }
