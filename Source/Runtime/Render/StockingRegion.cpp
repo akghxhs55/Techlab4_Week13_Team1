@@ -379,6 +379,232 @@ namespace
 			return;
 		}
 
+		// 골반으로 연결된 좌우 다리 한 덩어리를 감지해 각 다리 내부 중심선 기준의 독립 타일로 분리
+		TArray<int32> CompVertCount;
+		TArray<float> CompMinX;
+		TArray<float> CompMaxX;
+		TArray<float> CompMinY;
+		TArray<float> CompMaxY;
+		TArray<float> CompMinZ;
+		TArray<float> CompMaxZ;
+		CompVertCount.SetNum(CompCount);
+		CompMinX.SetNum(CompCount);
+		CompMaxX.SetNum(CompCount);
+		CompMinY.SetNum(CompCount);
+		CompMaxY.SetNum(CompCount);
+		CompMinZ.SetNum(CompCount);
+		CompMaxZ.SetNum(CompCount);
+		for (int32 c = 0; c < CompCount; ++c)
+		{
+			CompVertCount[c] = 0;
+			CompMinX[c] = FLT_MAX;
+			CompMaxX[c] = -FLT_MAX;
+			CompMinY[c] = FLT_MAX;
+			CompMaxY[c] = -FLT_MAX;
+			CompMinZ[c] = FLT_MAX;
+			CompMaxZ[c] = -FLT_MAX;
+		}
+
+		for (int32 v = 0; v < OrigVertCount; ++v)
+		{
+			const int32 Cid = WeldedComp[static_cast<int32>(WeldedIds[v])];
+			if (Cid < 0 || Cid >= CompCount)
+			{
+				continue;
+			}
+			const FVector& Pos = InOutVertices[v].Position;
+			CompVertCount[Cid] += 1;
+			CompMinX[Cid] = std::min(CompMinX[Cid], Pos.X);
+			CompMaxX[Cid] = std::max(CompMaxX[Cid], Pos.X);
+			CompMinY[Cid] = std::min(CompMinY[Cid], Pos.Y);
+			CompMaxY[Cid] = std::max(CompMaxY[Cid], Pos.Y);
+			CompMinZ[Cid] = std::min(CompMinZ[Cid], Pos.Z);
+			CompMaxZ[Cid] = std::max(CompMaxZ[Cid], Pos.Z);
+		}
+
+		TArray<int32> VertexTileId;
+		VertexTileId.SetNum(OrigVertCount);
+		int32 NextTileId = 0;
+		TArray<int32> CompBaseTile;
+		TArray<int32> CompRightTile;
+		TArray<int32> CompSplitAxis;
+		TArray<float> CompSplitCoord;
+		CompBaseTile.SetNum(CompCount);
+		CompRightTile.SetNum(CompCount);
+		CompSplitAxis.SetNum(CompCount);
+		CompSplitCoord.SetNum(CompCount);
+
+		for (int32 c = 0; c < CompCount; ++c)
+		{
+			CompBaseTile[c] = -1;
+			CompRightTile[c] = -1;
+			CompSplitAxis[c] = -1;
+			CompSplitCoord[c] = 0.0f;
+
+			if (CompVertCount[c] < 16)
+			{
+				continue;
+			}
+
+			const float SpanZ = CompMaxZ[c] - CompMinZ[c];
+			int32 BestAxis = -1;
+			float BestSplitVal = 0.0f;
+			float BestScore = -1.0f;
+
+			// 하부에서 중간 높이 구간에 중앙 빈 틈이 있는 수평 축을 자동 탐색해 좌우 다리로 분할
+			if (CompVertCount[c] >= 64 && SpanZ > 1e-4f)
+			{
+				const float LowZ = CompMinZ[c] + SpanZ * 0.12f;
+				const float HighZ = CompMinZ[c] + SpanZ * 0.68f;
+				const float AxisMin[2] = { CompMinX[c], CompMinY[c] };
+				const float AxisMax[2] = { CompMaxX[c], CompMaxY[c] };
+
+				for (int32 Axis = 0; Axis < 2; ++Axis)
+				{
+					const float Span = AxisMax[Axis] - AxisMin[Axis];
+					if (Span <= 1e-4f)
+					{
+						continue;
+					}
+					const float Mid = 0.5f * (AxisMin[Axis] + AxisMax[Axis]);
+					const float GapHalf = Span * 0.055f;
+					int32 LowerCount = 0;
+					int32 NegCount = 0;
+					int32 PosCount = 0;
+					int32 GapCount = 0;
+
+					for (int32 v = 0; v < OrigVertCount; ++v)
+					{
+						if (WeldedComp[static_cast<int32>(WeldedIds[v])] != c)
+						{
+							continue;
+						}
+						const FVector& Pos = InOutVertices[v].Position;
+						if (Pos.Z < LowZ || Pos.Z > HighZ)
+						{
+							continue;
+						}
+						const float Coord = (Axis == 0) ? Pos.X : Pos.Y;
+						LowerCount += 1;
+						if (std::fabs(Coord - Mid) <= GapHalf)
+						{
+							GapCount += 1;
+						}
+						else if (Coord < Mid)
+						{
+							NegCount += 1;
+						}
+						else
+						{
+							PosCount += 1;
+						}
+					}
+
+					if (LowerCount >= 24 && NegCount >= 8 && PosCount >= 8 &&
+						GapCount * 14 <= LowerCount)
+					{
+						const float EmptyRatio = 1.0f - static_cast<float>(GapCount) / static_cast<float>(LowerCount);
+						const float Score = EmptyRatio * Span;
+						if (Score > BestScore)
+						{
+							BestScore = Score;
+							BestAxis = Axis;
+							BestSplitVal = Mid;
+						}
+					}
+				}
+			}
+
+			CompBaseTile[c] = NextTileId++;
+			CompSplitAxis[c] = BestAxis;
+			CompSplitCoord[c] = BestSplitVal;
+			if (BestAxis >= 0)
+			{
+				CompRightTile[c] = NextTileId++;
+			}
+		}
+
+		// 모든 조각이 작아 타일이 비었으면 첫 조각에 기본 타일 할당
+		if (NextTileId == 0)
+		{
+			CompBaseTile[0] = NextTileId++;
+		}
+
+		for (int32 v = 0; v < OrigVertCount; ++v)
+		{
+			const int32 Cid = WeldedComp[static_cast<int32>(WeldedIds[v])];
+			if (Cid >= 0 && Cid < CompCount && CompBaseTile[Cid] >= 0)
+			{
+				const int32 Axis = CompSplitAxis[Cid];
+				const float Coord = (Axis == 0) ? InOutVertices[v].Position.X : InOutVertices[v].Position.Y;
+				if (CompRightTile[Cid] >= 0 && Axis >= 0 && Coord >= CompSplitCoord[Cid])
+				{
+					VertexTileId[v] = CompRightTile[Cid];
+				}
+				else
+				{
+					VertexTileId[v] = CompBaseTile[Cid];
+				}
+			}
+			else
+			{
+				VertexTileId[v] = 0;
+			}
+		}
+
+		// 좌우 분할 경계를 가로지르는 골반 연결 삼각형은 다수 쪽 타일로 복제해 타일 간 UV 늘어짐 차단
+		std::unordered_map<uint64, uint32> TileBoundaryDups;
+		for (int32 t = 0; t < TriCount; ++t)
+		{
+			const uint32 I0 = InOutIndices[t * 3];
+			const uint32 I1 = InOutIndices[t * 3 + 1];
+			const uint32 I2 = InOutIndices[t * 3 + 2];
+			const int32 T0 = VertexTileId[static_cast<int32>(I0)];
+			const int32 T1 = VertexTileId[static_cast<int32>(I1)];
+			const int32 T2 = VertexTileId[static_cast<int32>(I2)];
+			if (T0 == T1 && T1 == T2)
+			{
+				continue;
+			}
+
+			int32 TargetTile = T0;
+			if (T1 == T2)
+			{
+				TargetTile = T1;
+			}
+			else if (T0 == T2)
+			{
+				TargetTile = T0;
+			}
+
+			for (int32 c = 0; c < 3; ++c)
+			{
+				const uint32 OrigIdx = InOutIndices[t * 3 + c];
+				if (VertexTileId[static_cast<int32>(OrigIdx)] == TargetTile)
+				{
+					continue;
+				}
+				const uint64 DupKey = (static_cast<uint64>(OrigIdx) << 32) | static_cast<uint64>(static_cast<uint32>(TargetTile));
+				const std::unordered_map<uint64, uint32>::const_iterator Found = TileBoundaryDups.find(DupKey);
+				if (Found != TileBoundaryDups.end())
+				{
+					InOutIndices[t * 3 + c] = Found->second;
+				}
+				else
+				{
+					const uint32 NewIdx = static_cast<uint32>(InOutVertices.Num());
+					InOutVertices.Add(InOutVertices[static_cast<int32>(OrigIdx)]);
+					InOutWeights.Add(InOutWeights[static_cast<int32>(OrigIdx)]);
+					VertexTileId.Add(TargetTile);
+					TileBoundaryDups.emplace(DupKey, NewIdx);
+					InOutIndices[t * 3 + c] = NewIdx;
+				}
+			}
+		}
+
+		const int32 TileCount = NextTileId;
+		const int32 PostSplitVertCount = InOutVertices.Num();
+
 		constexpr int32 SliceCount = 24;
 		struct FCompStats
 		{
@@ -396,35 +622,35 @@ namespace
 		};
 
 		TArray<FCompStats> Stats;
-		Stats.SetNum(CompCount);
-		for (int32 c = 0; c < CompCount; ++c)
+		Stats.SetNum(TileCount);
+		for (int32 c = 0; c < TileCount; ++c)
 		{
 			Stats[c].OrigId = c;
 		}
 
-		for (int32 v = 0; v < OrigVertCount; ++v)
+		for (int32 v = 0; v < PostSplitVertCount; ++v)
 		{
-			const int32 Cid = WeldedComp[static_cast<int32>(WeldedIds[v])];
-			if (Cid < 0 || Cid >= CompCount)
+			const int32 Tid = VertexTileId[v];
+			if (Tid < 0 || Tid >= TileCount)
 			{
 				continue;
 			}
 			const FVector& Pos = InOutVertices[v].Position;
-			Stats[Cid].MinZ = std::min(Stats[Cid].MinZ, Pos.Z);
-			Stats[Cid].MaxZ = std::max(Stats[Cid].MaxZ, Pos.Z);
-			Stats[Cid].SumX += Pos.X;
-			Stats[Cid].SumY += Pos.Y;
-			Stats[Cid].Count += 1;
+			Stats[Tid].MinZ = std::min(Stats[Tid].MinZ, Pos.Z);
+			Stats[Tid].MaxZ = std::max(Stats[Tid].MaxZ, Pos.Z);
+			Stats[Tid].SumX += Pos.X;
+			Stats[Tid].SumY += Pos.Y;
+			Stats[Tid].Count += 1;
 		}
 
-		for (int32 v = 0; v < OrigVertCount; ++v)
+		for (int32 v = 0; v < PostSplitVertCount; ++v)
 		{
-			const int32 Cid = WeldedComp[static_cast<int32>(WeldedIds[v])];
-			if (Cid < 0 || Cid >= CompCount)
+			const int32 Tid = VertexTileId[v];
+			if (Tid < 0 || Tid >= TileCount)
 			{
 				continue;
 			}
-			FCompStats& S = Stats[Cid];
+			FCompStats& S = Stats[Tid];
 			const float SpanZ = std::max(S.MaxZ - S.MinZ, 1e-4f);
 			const float NormZ = std::clamp((InOutVertices[v].Position.Z - S.MinZ) / SpanZ, 0.0f, 1.0f);
 			const int32 Slice = std::clamp(static_cast<int32>(NormZ * static_cast<float>(SliceCount - 1)), 0, SliceCount - 1);
@@ -433,7 +659,7 @@ namespace
 			S.SliceCountArr[Slice] += 1;
 		}
 
-		for (int32 c = 0; c < CompCount; ++c)
+		for (int32 c = 0; c < TileCount; ++c)
 		{
 			FCompStats& S = Stats[c];
 			const float FallbackX = S.Count > 0 ? (S.SumX / static_cast<float>(S.Count)) : 0.0f;
@@ -482,8 +708,8 @@ namespace
 
 		// 조각 중심 좌표 기준으로 타일 순서를 고정해 좌우 다리 배치를 일정하게 유지
 		TArray<int32> SortedOrder;
-		SortedOrder.SetNum(CompCount);
-		for (int32 c = 0; c < CompCount; ++c)
+		SortedOrder.SetNum(TileCount);
+		for (int32 c = 0; c < TileCount; ++c)
 		{
 			SortedOrder[c] = c;
 		}
@@ -495,8 +721,8 @@ namespace
 		});
 
 		TArray<int32> CompToSlot;
-		CompToSlot.SetNum(CompCount);
-		for (int32 Slot = 0; Slot < CompCount; ++Slot)
+		CompToSlot.SetNum(TileCount);
+		for (int32 Slot = 0; Slot < TileCount; ++Slot)
 		{
 			CompToSlot[SortedOrder[Slot]] = Slot;
 		}
@@ -504,17 +730,17 @@ namespace
 		TArray<float> VertexLocalU;
 		TArray<float> VertexLocalV;
 		TArray<int32> VertexSlot;
-		VertexLocalU.SetNum(OrigVertCount);
-		VertexLocalV.SetNum(OrigVertCount);
-		VertexSlot.SetNum(OrigVertCount);
+		VertexLocalU.SetNum(PostSplitVertCount);
+		VertexLocalV.SetNum(PostSplitVertCount);
+		VertexSlot.SetNum(PostSplitVertCount);
 
 		constexpr float TwoPi = 6.283185307f;
 		constexpr float Pi = 3.1415926535f;
 
-		for (int32 v = 0; v < OrigVertCount; ++v)
+		for (int32 v = 0; v < PostSplitVertCount; ++v)
 		{
-			const int32 Cid = WeldedComp[static_cast<int32>(WeldedIds[v])];
-			const FCompStats& S = Stats[Cid];
+			const int32 Tid = VertexTileId[v];
+			const FCompStats& S = Stats[Tid];
 			const float SpanZ = std::max(S.MaxZ - S.MinZ, 1e-4f);
 			const float VCoord = std::clamp((InOutVertices[v].Position.Z - S.MinZ) / SpanZ, 0.0f, 1.0f);
 			const float SliceF = VCoord * static_cast<float>(SliceCount - 1);
@@ -527,7 +753,7 @@ namespace
 			const float Angle = std::atan2(InOutVertices[v].Position.Y - Cy, InOutVertices[v].Position.X - Cx);
 			VertexLocalU[v] = std::clamp((Angle + Pi) / TwoPi, 0.0f, 1.0f);
 			VertexLocalV[v] = VCoord;
-			VertexSlot[v] = CompToSlot[Cid];
+			VertexSlot[v] = CompToSlot[Tid];
 		}
 
 		// 원통 둘레 경계를 가로지르는 삼각형은 정점을 복제해 심 늘림 방지
@@ -537,6 +763,11 @@ namespace
 			const uint32 Idx0 = InOutIndices[t * 3];
 			const uint32 Idx1 = InOutIndices[t * 3 + 1];
 			const uint32 Idx2 = InOutIndices[t * 3 + 2];
+			if (VertexSlot[static_cast<int32>(Idx0)] != VertexSlot[static_cast<int32>(Idx1)] ||
+				VertexSlot[static_cast<int32>(Idx1)] != VertexSlot[static_cast<int32>(Idx2)])
+			{
+				continue;
+			}
 			const float U0 = VertexLocalU[static_cast<int32>(Idx0)];
 			const float U1 = VertexLocalU[static_cast<int32>(Idx1)];
 			const float U2 = VertexLocalU[static_cast<int32>(Idx2)];
@@ -573,7 +804,7 @@ namespace
 			}
 		}
 
-		const float TileSpan = 1.0f / static_cast<float>(CompCount);
+		const float TileSpan = 1.0f / static_cast<float>(TileCount);
 		const float TileWidth = TileSpan * 0.90f;
 		const float TileMargin = TileSpan * 0.02f;
 		const int32 FinalVertCount = InOutVertices.Num();

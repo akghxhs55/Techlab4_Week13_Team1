@@ -46,6 +46,8 @@ struct PS_INPUT
 
 Texture2D g_txColor : register(t0);
 SamplerState g_Sample : register(s0);
+// 머티리얼 그래프 텍스처 샘플러 이름 호환
+#define ColorSampler g_Sample
 
 #ifdef MATERIAL_GRAPH
 #include "GeneratedMaterial/Graph_94796cc65e3271b9.hlsli"

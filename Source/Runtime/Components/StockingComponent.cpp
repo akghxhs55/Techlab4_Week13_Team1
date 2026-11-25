@@ -651,7 +651,6 @@ void UStockingComponent::BuildRestAdjacency(const USkeletalMesh& Mesh)
 
 void UStockingComponent::ComputeComponentUVTiles(const USkeletalMesh& Mesh)
 {
-	(void)Mesh;
 	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
 	WeldedTileMinU.SetNum(WeldedCount);
 	WeldedTileWidthU.SetNum(WeldedCount);
@@ -663,62 +662,106 @@ void UStockingComponent::ComputeComponentUVTiles(const USkeletalMesh& Mesh)
 		WeldedTearFactor[w] = 0.0f;
 	}
 
-	if (WeldedCount == 0 || WeldedPrimaryUV.Num() != WeldedCount)
+	if (WeldedCount == 0 || WeldedPrimaryUV.Num() != WeldedCount || Mesh.GetRenderData().LODRenderData.IsEmpty())
 	{
 		return;
 	}
 
-	// 연결된 의상 조각별 타일 범위를 측정해 원통 심 경계에서도 찢김을 매끄럽게 감쌈
-	TArray<int32> CompId;
-	CompId.SetNum(WeldedCount);
+	// 아틀라스 가로 분포의 빈 구간을 기준으로 좌우 다리 타일 범위를 정확히 분리
+	constexpr int32 BinCount = 200;
+	int32 Hist[BinCount] = {};
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		CompId[w] = -1;
+		const int32 Bin = std::clamp(static_cast<int32>(WeldedPrimaryUV[w].X * static_cast<float>(BinCount)), 0, BinCount - 1);
+		Hist[Bin] += 1;
 	}
 
-	TArray<uint32> Queue;
-	for (int32 w = 0; w < WeldedCount; ++w)
+	struct FUVInterval
 	{
-		if (CompId[w] >= 0)
+		float MinU = 0.0f;
+		float MaxU = 1.0f;
+	};
+	TArray<FUVInterval> Intervals;
+	int32 b = 0;
+	while (b < BinCount)
+	{
+		if (Hist[b] == 0)
 		{
+			++b;
 			continue;
 		}
-		Queue.Reset();
-		CompId[w] = w;
-		Queue.Add(static_cast<uint32>(w));
-		float MinU = WeldedPrimaryUV[w].X;
-		float MaxU = WeldedPrimaryUV[w].X;
-
-		for (int32 Head = 0; Head < Queue.Num(); ++Head)
+		const int32 StartBin = b;
+		while (b < BinCount && Hist[b] > 0)
 		{
-			const int32 Cur = static_cast<int32>(Queue[Head]);
-			const TArray<FNeighborEdge>& Edges = WeldedAdjacency[Cur];
-			for (int32 e = 0; e < Edges.Num(); ++e)
+			++b;
+		}
+		const int32 EndBin = b;
+		const float MinU = static_cast<float>(StartBin) / static_cast<float>(BinCount);
+		const float MaxU = static_cast<float>(EndBin) / static_cast<float>(BinCount);
+		if ((MaxU - MinU) >= 0.04f)
+		{
+			Intervals.Add({ MinU, MaxU });
+		}
+	}
+
+	if (Intervals.IsEmpty())
+	{
+		Intervals.Add({ 0.0f, 1.0f });
+	}
+
+	// 각 타일 구간 내 정점들의 실제 최소 최대 가로 범위 기록
+	TArray<float> ExactMin;
+	TArray<float> ExactMax;
+	ExactMin.SetNum(Intervals.Num());
+	ExactMax.SetNum(Intervals.Num());
+	for (int32 i = 0; i < Intervals.Num(); ++i)
+	{
+		ExactMin[i] = FLT_MAX;
+		ExactMax[i] = -FLT_MAX;
+	}
+
+	TArray<int32> VertexInterval;
+	VertexInterval.SetNum(WeldedCount);
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		const float U = WeldedPrimaryUV[w].X;
+		int32 BestIdx = 0;
+		float BestDist = FLT_MAX;
+		for (int32 i = 0; i < Intervals.Num(); ++i)
+		{
+			float Dist = 0.0f;
+			if (U < Intervals[i].MinU)
 			{
-				const int32 Next = static_cast<int32>(Edges[e].NeighborVertex);
-				if (CompId[Next] < 0)
-				{
-					CompId[Next] = w;
-					Queue.Add(static_cast<uint32>(Next));
-					MinU = std::min(MinU, WeldedPrimaryUV[Next].X);
-					MaxU = std::max(MaxU, WeldedPrimaryUV[Next].X);
-				}
+				Dist = Intervals[i].MinU - U;
+			}
+			else if (U > Intervals[i].MaxU)
+			{
+				Dist = U - Intervals[i].MaxU;
+			}
+			if (Dist < BestDist)
+			{
+				BestDist = Dist;
+				BestIdx = i;
 			}
 		}
+		VertexInterval[w] = BestIdx;
+		ExactMin[BestIdx] = std::min(ExactMin[BestIdx], U);
+		ExactMax[BestIdx] = std::max(ExactMax[BestIdx], U);
+	}
 
-		const float SpanU = std::max(MaxU - MinU, 0.05f);
-		for (int32 q = 0; q < Queue.Num(); ++q)
-		{
-			const int32 Idx = static_cast<int32>(Queue[q]);
-			WeldedTileMinU[Idx] = MinU;
-			WeldedTileWidthU[Idx] = SpanU;
-		}
+	for (int32 w = 0; w < WeldedCount; ++w)
+	{
+		const int32 Idx = VertexInterval[w];
+		const float TileMin = (ExactMin[Idx] < ExactMax[Idx]) ? ExactMin[Idx] : Intervals[Idx].MinU;
+		const float TileMax = (ExactMin[Idx] < ExactMax[Idx]) ? ExactMax[Idx] : Intervals[Idx].MaxU;
+		WeldedTileMinU[w] = TileMin;
+		WeldedTileWidthU[w] = std::max(TileMax - TileMin, 0.05f);
 	}
 }
 
 void UStockingComponent::EnsureTearMaskTexture()
 {
-	constexpr uint32 TearMaskSize = 512u;
+	constexpr uint32 TearMaskSize = 1024u;
 	if (TearMaskTexture && IsValid(TearMaskTexture) && TearMaskTexture->GetResource())
 	{
 		return;
@@ -909,16 +952,16 @@ void UStockingComponent::AddOrExpandTearAtUV(
 	if (NearestIdx >= 0)
 	{
 		FStockingTearNode& Node = TearNodes[NearestIdx];
-		const float DirWeightU = 0.65f + 0.55f * std::fabs(PullDirUV.X);
-		const float DirWeightV = 0.75f + 0.55f * std::fabs(PullDirUV.Y);
-		Node.RadiusU = std::min(Node.RadiusU + SafeSpread * 0.011f * DirWeightU, SafeW * 0.17f);
-		Node.RadiusV = std::min(Node.RadiusV + SafeSpread * 0.025f * DirWeightV, 0.14f);
+		const float DirWeightU = 0.55f + 0.45f * std::fabs(PullDirUV.X);
+		const float DirWeightV = 0.85f + 0.65f * std::fabs(PullDirUV.Y);
+		Node.RadiusU = std::min(Node.RadiusU + SafeSpread * 0.0085f * DirWeightU, SafeW * 0.095f);
+		Node.RadiusV = std::min(Node.RadiusV + SafeSpread * 0.028f * DirWeightV, 0.14f);
 		Node.OpenStrength = std::min(Node.OpenStrength + SafeSpread * 0.24f, 1.32f);
 
 		// 가장자리 당김 방향으로 구멍 중심을 미세하게 이동해 찢어짐 전파 표현
 		const float DeltaU = ComputeWrappedDeltaU(UV.X, Node.CenterUV.X, TileMinU, TileWidthU);
 		const float DeltaV = UV.Y - Node.CenterUV.Y;
-		float NextRelU = (Node.CenterUV.X - TileMinU) + DeltaU * (0.12f * SafeSpread) + PullDirUV.X * (0.004f * SafeSpread);
+		float NextRelU = (Node.CenterUV.X - TileMinU) + DeltaU * (0.10f * SafeSpread) + PullDirUV.X * (0.003f * SafeSpread);
 		while (NextRelU >= SafeW)
 		{
 			NextRelU -= SafeW;
@@ -930,43 +973,45 @@ void UStockingComponent::AddOrExpandTearAtUV(
 		Node.CenterUV.X = TileMinU + NextRelU;
 		Node.CenterUV.Y = std::clamp(Node.CenterUV.Y + DeltaV * (0.14f * SafeSpread) + PullDirUV.Y * (0.008f * SafeSpread), 0.03f, 0.97f);
 
-		Node.RunUpV = std::min(Node.RunUpV + SafeSpread * 0.075f, SafeMaxRun);
-		Node.RunDownV = std::min(Node.RunDownV + SafeSpread * 0.075f, SafeMaxRun);
-		Node.RunWidthU = std::max(Node.RunWidthU, Node.RadiusU * 0.95f);
+		Node.RunUpV = std::min(Node.RunUpV + SafeSpread * 0.14f, SafeMaxRun);
+		Node.RunDownV = std::min(Node.RunDownV + SafeSpread * 0.14f, SafeMaxRun);
+		Node.RunWidthU = std::max(Node.RunWidthU, Node.RadiusU * 1.18f);
 
 		// 세로 올 풀림 줄기가 충분히 길어지면 위아래에 보조 타원 구멍을 연쇄 생성
-		if (!Node.bSpawnedUpperSubTear && Node.RunUpV > 0.11f && TearNodes.Num() < MaxTearNodes)
+		if (!Node.bSpawnedUpperSubTear && Node.RunUpV > 0.16f && TearNodes.Num() < MaxTearNodes)
 		{
 			Node.bSpawnedUpperSubTear = true;
+			const float OffsetV = std::max(Node.RadiusV * 1.55f, Node.RunUpV * 0.42f);
 			FStockingTearNode Sub{};
 			Sub.CenterUV = FVector2(
 				Node.CenterUV.X,
-				std::clamp(Node.CenterUV.Y + Node.RunUpV * 0.56f, 0.04f, 0.96f));
-			Sub.RadiusU = std::max(Node.RadiusU * 0.46f, 0.005f);
-			Sub.RadiusV = std::max(Node.RadiusV * 0.62f, 0.014f);
-			Sub.RunUpV = SafeMaxRun * 0.35f;
-			Sub.RunDownV = SafeMaxRun * 0.25f;
-			Sub.RunWidthU = Sub.RadiusU * 1.15f;
-			Sub.OpenStrength = 0.64f;
+				std::clamp(Node.CenterUV.Y + OffsetV, 0.04f, 0.96f));
+			Sub.RadiusU = std::max(Node.RadiusU * 0.58f, 0.0055f);
+			Sub.RadiusV = std::max(Node.RadiusV * 0.56f, 0.020f);
+			Sub.RunUpV = SafeMaxRun * 0.65f;
+			Sub.RunDownV = SafeMaxRun * 0.35f;
+			Sub.RunWidthU = Sub.RadiusU * 1.25f;
+			Sub.OpenStrength = 0.62f;
 			Sub.Seed = Node.Seed + 2.39996f;
 			Sub.TileMinU = TileMinU;
 			Sub.TileWidthU = SafeW;
 			Sub.bSpawnedLowerSubTear = true;
 			TearNodes.Add(Sub);
 		}
-		if (!Node.bSpawnedLowerSubTear && Node.RunDownV > 0.11f && TearNodes.Num() < MaxTearNodes)
+		if (!Node.bSpawnedLowerSubTear && Node.RunDownV > 0.16f && TearNodes.Num() < MaxTearNodes)
 		{
 			Node.bSpawnedLowerSubTear = true;
+			const float OffsetV = std::max(Node.RadiusV * 1.55f, Node.RunDownV * 0.42f);
 			FStockingTearNode Sub{};
 			Sub.CenterUV = FVector2(
 				Node.CenterUV.X,
-				std::clamp(Node.CenterUV.Y - Node.RunDownV * 0.56f, 0.04f, 0.96f));
-			Sub.RadiusU = std::max(Node.RadiusU * 0.46f, 0.005f);
-			Sub.RadiusV = std::max(Node.RadiusV * 0.62f, 0.014f);
-			Sub.RunUpV = SafeMaxRun * 0.25f;
-			Sub.RunDownV = SafeMaxRun * 0.35f;
-			Sub.RunWidthU = Sub.RadiusU * 1.15f;
-			Sub.OpenStrength = 0.64f;
+				std::clamp(Node.CenterUV.Y - OffsetV, 0.04f, 0.96f));
+			Sub.RadiusU = std::max(Node.RadiusU * 0.58f, 0.0055f);
+			Sub.RadiusV = std::max(Node.RadiusV * 0.56f, 0.020f);
+			Sub.RunUpV = SafeMaxRun * 0.35f;
+			Sub.RunDownV = SafeMaxRun * 0.65f;
+			Sub.RunWidthU = Sub.RadiusU * 1.25f;
+			Sub.OpenStrength = 0.62f;
 			Sub.Seed = Node.Seed + 4.79992f;
 			Sub.TileMinU = TileMinU;
 			Sub.TileWidthU = SafeW;
@@ -980,13 +1025,13 @@ void UStockingComponent::AddOrExpandTearAtUV(
 	{
 		FStockingTearNode NewNode{};
 		NewNode.CenterUV = FVector2(UV.X, std::clamp(UV.Y, 0.03f, 0.97f));
-		const float InitRu = std::clamp(TearBrushRadiusUV * 0.52f * SafeSpread, 0.0055f, SafeW * 0.075f);
+		const float InitRu = std::clamp(TearBrushRadiusUV * 0.55f * SafeSpread, 0.006f, SafeW * 0.055f);
 		NewNode.RadiusU = InitRu;
-		NewNode.RadiusV = std::min(InitRu * 2.35f, 0.065f);
-		NewNode.RunUpV = SafeMaxRun * 0.30f;
-		NewNode.RunDownV = SafeMaxRun * 0.30f;
-		NewNode.RunWidthU = InitRu * 1.25f;
-		NewNode.OpenStrength = 0.66f;
+		NewNode.RadiusV = std::min(InitRu * 3.15f, 0.075f);
+		NewNode.RunUpV = SafeMaxRun * 0.65f;
+		NewNode.RunDownV = SafeMaxRun * 0.65f;
+		NewNode.RunWidthU = InitRu * 1.35f;
+		NewNode.OpenStrength = 0.68f;
 		NewNode.Seed = 1.7f + static_cast<float>(TearNodes.Num()) * 2.39996f;
 		NewNode.TileMinU = TileMinU;
 		NewNode.TileWidthU = SafeW;
@@ -1126,36 +1171,48 @@ void UStockingComponent::RebuildTearMaskTexture()
 	std::memset(TearMaskPixels.GetData(), 0, static_cast<size_t>(TearMaskPixels.Num()));
 
 	const float InvSize = 1.0f / static_cast<float>(Size);
+	const float EdgeBandUV = 0.0026f;
+	const float InnerShadowBandUV = 0.0020f;
+	const float BridgeMaxHalfWidthUV = 0.0135f;
+	const float LadderColSpacing = 0.0022f;
+
 	for (int32 n = 0; n < TearNodes.Num(); ++n)
 	{
 		const FStockingTearNode& Node = TearNodes[n];
 		const float SafeW = std::max(Node.TileWidthU, 0.05f);
 		const float Ru = std::max(Node.RadiusU, 0.003f);
-		const float Rv = std::max(Node.RadiusV, 0.006f);
-		const float RunW = std::max(Node.RunWidthU, Ru * 0.85f);
-		const float BoundU = std::max(Ru * 1.75f, RunW * 1.4f);
+		const float Rv = std::max(Node.RadiusV, 0.010f);
+		const float RunW = std::max(Node.RunWidthU, Ru * 1.20f);
+		const float BoundU = std::max(Ru * 1.30f + EdgeBandUV * 2.0f, RunW * 1.35f);
 
-		const float MinV = std::clamp(Node.CenterUV.Y - std::max(Rv * 1.65f, Node.RunDownV), 0.0f, 1.0f);
-		const float MaxV = std::clamp(Node.CenterUV.Y + std::max(Rv * 1.65f, Node.RunUpV), 0.0f, 1.0f);
+		const float MinV = std::clamp(Node.CenterUV.Y - std::max(Rv + EdgeBandUV * 2.0f, Node.RunDownV), 0.0f, 1.0f);
+		const float MaxV = std::clamp(Node.CenterUV.Y + std::max(Rv + EdgeBandUV * 2.0f, Node.RunUpV), 0.0f, 1.0f);
 		const int32 Y0 = std::clamp(static_cast<int32>(std::floor(MinV * static_cast<float>(Size))), 0, Size - 1);
 		const int32 Y1 = std::clamp(static_cast<int32>(std::ceil(MaxV * static_cast<float>(Size))), 0, Size - 1);
 
 		// 심 경계 래핑을 포함해 타일 전체 가로 범위 안에서 영향 픽셀만 래스터라이즈
 		const int32 TileX0 = std::clamp(static_cast<int32>(std::floor(Node.TileMinU * static_cast<float>(Size))), 0, Size - 1);
-		const int32 TileX1 = std::clamp(static_cast<int32>(std::ceil((Node.TileMinU + SafeW * 1.12f) * static_cast<float>(Size))), 0, Size - 1);
-
-		const float OpenProg = std::clamp((Node.OpenStrength - 0.52f) / 0.65f, 0.0f, 1.0f);
+		const int32 TileX1 = std::clamp(static_cast<int32>(std::ceil((Node.TileMinU + SafeW * 1.10f) * static_cast<float>(Size))), 0, Size - 1);
 
 		for (int32 y = Y0; y <= Y1; ++y)
 		{
 			const float V = (static_cast<float>(y) + 0.5f) * InvSize;
 			const float DV = V - Node.CenterUV.Y;
+			const float AbsDV = std::fabs(DV);
 			const bool bInRunV = (DV >= -Node.RunDownV && DV <= Node.RunUpV);
 			const float RunFracV = (DV >= 0.0f)
 				? (Node.RunUpV > 1e-4f ? (DV / Node.RunUpV) : 1.0f)
 				: (Node.RunDownV > 1e-4f ? (-DV / Node.RunDownV) : 1.0f);
-			const float RunTaper = bInRunV ? std::clamp(1.0f - RunFracV * 0.42f, 0.25f, 1.0f) : 0.0f;
-			const float CurRunW = RunW * RunTaper;
+			const float CurRunW = RunW * std::clamp(1.0f - RunFracV * 0.48f, 0.22f, 1.0f);
+
+			// 위아래 끝단이 매끄럽게 모이는 세로 렌즈형 구멍 윤곽 계산
+			const float Ny = std::clamp(DV / Rv, -1.0f, 1.0f);
+			const float OneMinusNySq = std::max(0.0f, 1.0f - Ny * Ny);
+			const float AlmondHalfW = (AbsDV < Rv)
+				? (Ru * std::pow(OneMinusNySq, 0.62f))
+				: 0.0f;
+			const float AsymShift = Ru * 0.14f * std::sin(Ny * 2.2f + Node.Seed);
+			const float TipDistV = std::max(0.0f, AbsDV - Rv);
 
 			for (int32 x = TileX0; x <= TileX1; ++x)
 			{
@@ -1166,40 +1223,61 @@ void UStockingComponent::RebuildTearMaskTexture()
 					continue;
 				}
 
-				const float NormU = DU / Ru;
-				const float NormV = DV / Rv;
-				const float BaseDist = std::sqrt(NormU * NormU + NormV * NormV);
-				const float Angle = std::atan2(NormV, NormU);
-				const float Wobble = 0.075f * std::sin(Angle * 3.0f + Node.Seed)
-					+ 0.045f * std::cos(DV * 42.0f + Node.Seed * 1.9f);
-				const float EDist = BaseDist + Wobble;
+				const float ShiftedAbsDU = std::fabs(DU - AsymShift);
+				float SignedDistUV = 0.0f;
+				if (AbsDV < Rv)
+				{
+					SignedDistUV = ShiftedAbsDU - AlmondHalfW;
+				}
+				else
+				{
+					SignedDistUV = std::sqrt(ShiftedAbsDU * ShiftedAbsDU + TipDistV * TipDistV);
+				}
 
 				float HoleVal = 0.0f;
 				float InnerRimVal = 0.0f;
-				if (EDist < 1.55f)
+				float BridgeAllow = 0.0f;
+				if (SignedDistUV < EdgeBandUV * 1.4f)
 				{
-					HoleVal = std::clamp((1.36f - EDist) / 0.86f, 0.0f, 1.0f) * std::clamp(Node.OpenStrength, 0.55f, 1.35f);
-					HoleVal = std::clamp(HoleVal, 0.0f, 1.0f);
+					HoleVal = std::clamp(0.5f - SignedDistUV / (EdgeBandUV * 2.0f), 0.0f, 1.0f);
 
-					// 구멍 바로 안쪽 테두리에 피부 볼록 접촉 음영 띠 생성
-					if (EDist >= 0.52f && EDist <= 1.04f)
+					// 구멍 바로 안쪽 얇은 띠에만 피부 접촉 음영 배치해 중앙 맨살은 깨끗하게 유지
+					if (SignedDistUV < 0.0f && SignedDistUV > -InnerShadowBandUV)
 					{
-						const float PeakDist = std::fabs(EDist - 0.86f) / 0.22f;
-						InnerRimVal = std::clamp(1.0f - PeakDist, 0.0f, 1.0f);
-						InnerRimVal = InnerRimVal * InnerRimVal;
+						const float DepthT = (-SignedDistUV) / InnerShadowBandUV;
+						InnerRimVal = (1.0f - DepthT) * (1.0f - DepthT);
+					}
+
+					// 큰 구멍 중앙은 깨끗하게 뚫고 좁은 슬릿과 상하 끝단에만 사선 실 가닥 허용
+					if (SignedDistUV < EdgeBandUV * 0.2f && AlmondHalfW < BridgeMaxHalfWidthUV)
+					{
+						const float NarrowFactor = std::clamp(1.0f - (AlmondHalfW / BridgeMaxHalfWidthUV), 0.0f, 1.0f);
+						const float SnapFactor = std::clamp(1.30f - Node.OpenStrength * 0.50f, 0.28f, 1.0f);
+						BridgeAllow = std::clamp(NarrowFactor * SnapFactor * 1.45f, 0.0f, 1.0f);
 					}
 				}
 
+				// 중앙은 길고 외곽은 짧게 바늘처럼 뾰족해지는 극세사 다중 세로 올 풀림 줄기 생성
 				float RunVal = 0.0f;
 				if (bInRunV && std::fabs(DU) < CurRunW)
 				{
-					const float LatMask = std::clamp(1.0f - std::fabs(DU) / std::max(CurRunW, 1e-4f), 0.0f, 1.0f);
-					const float EndFade = std::clamp(1.0f - RunFracV * RunFracV, 0.0f, 1.0f);
-					const float WaleStreak = 0.52f + 0.48f * std::sin(U * 460.0f + Node.Seed);
-					RunVal = std::clamp(LatMask * EndFade * WaleStreak * 1.15f, 0.0f, 1.0f);
+					const float ColF = DU / LadderColSpacing;
+					const float ColIdx = std::floor(ColF + 0.5f);
+					const float ColFrac = std::fabs(ColF - ColIdx) * 2.0f;
+					const float HashRaw = std::sin(ColIdx * 12.9898f + Node.Seed * 78.233f) * 43758.5453f;
+					const float ColHash = HashRaw - std::floor(HashRaw);
+					const float EdgeRatio = std::fabs(DU) / std::max(RunW, 1e-4f);
+					const float NeedleProfile = std::exp(-EdgeRatio * EdgeRatio * 2.4f);
+					const float ColReach = std::clamp((0.28f + 0.72f * ColHash) * (0.35f + 0.78f * NeedleProfile), 0.10f, 1.0f);
+					if (RunFracV < ColReach)
+					{
+						const float TipFade = std::clamp((ColReach - RunFracV) / std::max(ColReach * 0.25f, 0.04f), 0.0f, 1.0f);
+						const float WaleCut = std::clamp((0.82f - ColFrac) / 0.22f, 0.0f, 1.0f);
+						RunVal = std::clamp(WaleCut * TipFade * (0.65f + 0.35f * ColHash), 0.0f, 1.0f);
+					}
 				}
 
-				if (HoleVal <= 0.002f && RunVal <= 0.002f && InnerRimVal <= 0.002f)
+				if (HoleVal <= 0.002f && RunVal <= 0.002f && InnerRimVal <= 0.002f && BridgeAllow <= 0.002f)
 				{
 					continue;
 				}
@@ -1208,20 +1286,21 @@ void UStockingComponent::RebuildTearMaskTexture()
 				const float PrevHole = static_cast<float>(TearMaskPixels[PixIdx]) / 255.0f;
 				const float PrevRun = static_cast<float>(TearMaskPixels[PixIdx + 1]) / 255.0f;
 				const float PrevInner = static_cast<float>(TearMaskPixels[PixIdx + 2]) / 255.0f;
-				const float PrevProg = static_cast<float>(TearMaskPixels[PixIdx + 3]) / 255.0f;
+				const float PrevBridge = static_cast<float>(TearMaskPixels[PixIdx + 3]) / 255.0f;
 
-				// 인접 타원 구멍이 닿을 때 부드럽게 합쳐지도록 소프트 유니온 합성
-				const float MergedHole = std::clamp(std::max(PrevHole, HoleVal) + std::min(PrevHole, HoleVal) * 0.24f, 0.0f, 1.0f);
+				const float MergedHole = std::max(PrevHole, HoleVal);
 				const float MergedRun = std::max(PrevRun, RunVal);
-				const float MergedInner = (MergedHole > 0.82f)
+				const float MergedInner = (MergedHole > 0.90f)
 					? std::min(PrevInner, InnerRimVal)
 					: std::max(PrevInner, InnerRimVal);
-				const float MergedProg = (HoleVal > 0.35f) ? std::max(PrevProg, OpenProg) : PrevProg;
+				const float MergedBridge = (MergedHole > 0.85f && HoleVal <= 0.5f)
+					? PrevBridge
+					: std::max(PrevBridge, BridgeAllow);
 
 				TearMaskPixels[PixIdx] = static_cast<uint8>(std::clamp(MergedHole * 255.0f, 0.0f, 255.0f));
 				TearMaskPixels[PixIdx + 1] = static_cast<uint8>(std::clamp(MergedRun * 255.0f, 0.0f, 255.0f));
 				TearMaskPixels[PixIdx + 2] = static_cast<uint8>(std::clamp(MergedInner * 255.0f, 0.0f, 255.0f));
-				TearMaskPixels[PixIdx + 3] = static_cast<uint8>(std::clamp(MergedProg * 255.0f, 0.0f, 255.0f));
+				TearMaskPixels[PixIdx + 3] = static_cast<uint8>(std::clamp(MergedBridge * 255.0f, 0.0f, 255.0f));
 			}
 		}
 	}

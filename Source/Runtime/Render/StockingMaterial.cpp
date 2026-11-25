@@ -431,38 +431,38 @@ UMaterial* FStockingMaterialLibrary::GetOrCreateStockingMasterMaterial()
 
 	// 좁은 구멍을 가로지르는 가는 가로 실과 세로 올 풀림 사다리 결 패턴
 	const int32 RungThreadId = AddCustomExprNode(*Mat, NextId,
-		"pow(saturate(0.5f + 0.5f * sin(A.y * 235.0f + sin(A.x * 48.0f) * 1.4f)), 10.0f) * B",
+		"(pow(saturate(0.5f + 0.5f * sin((A.y + A.x * 0.48f) * 760.0f + sin(A.x * 95.0f + A.y * 28.0f) * 1.6f)), 20.0f) + 0.80f * pow(saturate(0.5f + 0.5f * sin((A.y - A.x * 0.34f) * 1140.0f + sin(A.x * 72.0f) * 1.3f)), 24.0f)) * B",
 		EMaterialValueType::Scalar, FVector2(620.0f, 1460.0f));
 	ConnectGraphPins(*Mat, UvId, RungThreadId, 0);
 	ConnectGraphPins(*Mat, TearRungStrId, RungThreadId, 1);
 
 	const int32 BridgeThreadKeepId = AddCustomExprNode(*Mat, NextId,
-		"saturate(A * (1.0f - smoothstep(0.28f, 0.92f, B)))",
+		"saturate(A * smoothstep(0.15f, 0.80f, B))",
 		EMaterialValueType::Scalar, FVector2(820.0f, 1440.0f));
 	ConnectGraphPins(*Mat, RungThreadId, BridgeThreadKeepId, 0);
 	ConnectGraphPins(*Mat, TearOpenProgId, BridgeThreadKeepId, 1);
 
 	const int32 LadderPatternId = AddCustomExprNode(*Mat, NextId,
-		"(0.32f + 0.38f * saturate(0.5f + 0.5f * sin(A.x * 340.0f)) + 0.30f * pow(saturate(0.5f + 0.5f * sin(A.y * 620.0f)), 3.0f)) * B",
+		"(0.12f + 0.88f * pow(saturate(0.5f + 0.5f * sin((A.y + A.x * 0.14f) * 1380.0f + sin(A.x * 84.0f) * 0.9f)), 3.8f)) * B",
 		EMaterialValueType::Scalar, FVector2(820.0f, 1340.0f));
 	ConnectGraphPins(*Mat, UvId, LadderPatternId, 0);
 	ConnectGraphPins(*Mat, TearRunId, LadderPatternId, 1);
 
 	const int32 HoleOpenMaskId = AddCustomExprNode(*Mat, NextId,
-		"smoothstep(0.49f, 0.57f, A) * saturate(B + 1.0f)",
+		"smoothstep(0.495f, 0.518f, A + 0.008f * sin(B.y * 680.0f + sin(B.x * 130.0f) * 1.6f))",
 		EMaterialValueType::Scalar, FVector2(820.0f, 1280.0f));
 	ConnectGraphPins(*Mat, TearHoleId, HoleOpenMaskId, 0);
-	ConnectGraphPins(*Mat, TearOpenProgId, HoleOpenMaskId, 1);
+	ConnectGraphPins(*Mat, UvId, HoleOpenMaskId, 1);
 
 	const int32 HoleCutFactorId = AddCustomExprNode(*Mat, NextId,
-		"saturate(1.0f - A * (1.0f - B * 0.78f))",
+		"saturate(1.0f - A * (1.0f - B * 0.92f))",
 		EMaterialValueType::Scalar, FVector2(1020.0f, 1300.0f));
 	ConnectGraphPins(*Mat, HoleOpenMaskId, HoleCutFactorId, 0);
 	ConnectGraphPins(*Mat, BridgeThreadKeepId, HoleCutFactorId, 1);
 
 	// 구멍 바깥 말린 테두리 밴드와 밀착 시 안쪽 피부 접촉 음영 계산
 	const int32 TearRimBandId = AddCustomExprNode(*Mat, NextId,
-		"saturate(1.0f - abs(A - 0.47f) * 8.5f) * saturate(A * 4.5f) * B",
+		"saturate(1.0f - abs(A - 0.488f) * 32.0f) * saturate(A * 7.0f) * B",
 		EMaterialValueType::Scalar, FVector2(1020.0f, 1220.0f));
 	ConnectGraphPins(*Mat, TearHoleId, TearRimBandId, 0);
 	ConnectGraphPins(*Mat, TearRimStrId, TearRimBandId, 1);
@@ -474,13 +474,13 @@ UMaterial* FStockingMaterialLibrary::GetOrCreateStockingMasterMaterial()
 	ConnectGraphPins(*Mat, TearContactStrId, ContactWeightId, 1);
 
 	const int32 InnerSkinShadowId = AddCustomExprNode(*Mat, NextId,
-		"saturate(A * B * 0.44f)",
+		"saturate(A * B * 0.24f)",
 		EMaterialValueType::Scalar, FVector2(1020.0f, 1500.0f));
 	ConnectGraphPins(*Mat, TearInnerId, InnerSkinShadowId, 0);
 	ConnectGraphPins(*Mat, ContactWeightId, InnerSkinShadowId, 1);
 
 	const int32 RunAlphaModId = AddCustomExprNode(*Mat, NextId,
-		"clamp(1.0f - A * 0.58f + B * 0.28f, 0.28f, 1.0f)",
+		"clamp(1.0f - A * 0.84f + B * 0.36f, 0.08f, 1.0f)",
 		EMaterialValueType::Scalar, FVector2(1020.0f, 1380.0f));
 	ConnectGraphPins(*Mat, TearRunId, RunAlphaModId, 0);
 	ConnectGraphPins(*Mat, LadderPatternId, RunAlphaModId, 1);
@@ -490,7 +490,7 @@ UMaterial* FStockingMaterialLibrary::GetOrCreateStockingMasterMaterial()
 	ConnectGraphPins(*Mat, RunAlphaModId, AlphaWithRunId, 1);
 
 	const int32 AlphaWithRimId = AddCustomExprNode(*Mat, NextId,
-		"saturate(A + B * 0.30f)",
+		"saturate(A + B * 0.14f)",
 		EMaterialValueType::Scalar, FVector2(1360.0f, 1300.0f));
 	ConnectGraphPins(*Mat, AlphaWithRunId, AlphaWithRimId, 0);
 	ConnectGraphPins(*Mat, TearRimBandId, AlphaWithRimId, 1);
@@ -506,17 +506,17 @@ UMaterial* FStockingMaterialLibrary::GetOrCreateStockingMasterMaterial()
 	ConnectGraphPins(*Mat, InnerSkinShadowId, TearFinalAlphaId, 1);
 
 	const int32 RimShadeMulId = AddCustomExprNode(*Mat, NextId,
-		"clamp(1.0f - A * 0.36f - B * 0.14f, 0.52f, 1.0f)",
+		"clamp(1.0f - A * 0.38f + B * 0.10f, 0.56f, 1.12f)",
 		EMaterialValueType::Scalar, FVector2(1240.0f, 1200.0f));
 	ConnectGraphPins(*Mat, TearRimBandId, RimShadeMulId, 0);
-	ConnectGraphPins(*Mat, TearRunId, RimShadeMulId, 1);
+	ConnectGraphPins(*Mat, LadderPatternId, RimShadeMulId, 1);
 
 	const int32 RimShadedRgbId = AddGraphNode(*Mat, NextId, EMaterialExpressionType::Multiply, FVector2(1420.0f, 1180.0f));
 	ConnectGraphPins(*Mat, LitFabricRgbId, RimShadedRgbId, 0);
 	ConnectGraphPins(*Mat, RimShadeMulId, RimShadedRgbId, 1);
 
 	const int32 SkinContactRgbId = AddCustomExprNode(*Mat, NextId,
-		"A * 0.20f + float3(0.055f, 0.028f, 0.022f) * saturate(B + 1.0f)",
+		"A * 0.30f + float3(0.06f, 0.035f, 0.025f) * saturate(B + 1.0f)",
 		EMaterialValueType::Vector3, FVector2(1420.0f, 1460.0f));
 	ConnectGraphPins(*Mat, FabricRgbId, SkinContactRgbId, 0);
 	ConnectGraphPins(*Mat, InnerSkinShadowId, SkinContactRgbId, 1);

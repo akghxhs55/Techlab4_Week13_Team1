@@ -157,10 +157,10 @@ public:
 	float TearSpreadSpeed = 1.0f;
 
 	UPROPERTY(EditAnywhere)
-	float TearRunLength = 0.30f;
+	float TearRunLength = 0.48f;
 
 	UPROPERTY(EditAnywhere)
-	float TearBrushRadiusUV = 0.018f;
+	float TearBrushRadiusUV = 0.014f;
 
 protected:
 	virtual void RefreshBoneTransforms() override;
