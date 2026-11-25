@@ -29,7 +29,8 @@ void FStockingSceneProxy::UpdateRenderState()
 	for (int32 Slot = 0; Slot < SlotCount; ++Slot)
 	{
 		UMaterialInterface* SlotMat = Stocking->GetOverrideMaterial(Slot);
-		Materials.Add(SlotMat ? SlotMat : EffectiveMat);
+		const bool bValidSlotMat = SlotMat && SlotMat->GetBaseMaterial() != nullptr;
+		Materials.Add(bValidSlotMat ? SlotMat : EffectiveMat);
 	}
 	RenderState = Asset->GetRenderState(Materials);
 }
@@ -81,6 +82,7 @@ void FStockingSceneProxy::GetDynamicMeshElements(const FViewContext& View, FMesh
 		Batch.LODIndex = static_cast<uint8>(SafeLOD);
 		Batch.bCastShadow = bCastsShadow;
 		Batch.bUsesGPUScene = true;
+		Batch.bTwoSided = true;
 
 		FMeshBatchElement& Element = Batch.Elements.AddDefaulted_GetRef();
 		Element.Proxy = this;

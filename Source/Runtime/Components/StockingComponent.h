@@ -21,6 +21,7 @@ public:
 	virtual ~UStockingComponent() override;
 
 	virtual void TickComponent(float DeltaTime) override;
+	virtual void Serialize(FStructuredArchive::FRecord Record) override;
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 	virtual FBox CalcLocalBounds() const override;
 	virtual void PostEditChangeProperty(const FProperty& Property) override;
@@ -253,6 +254,9 @@ private:
 		TArray<FVector>& OutSimPos,
 		TArray<float>& OutCompression);
 	void ComputeGrabGeodesicDistances();
+	bool ShouldUsePostSkinDeform() const;
+	bool HasPoseOrPullChanged(const TArray<FMatrix>& SourceTransforms, FSkeletalMeshObject* MeshObject) const;
+	void RecordSyncedPoseState(const TArray<FMatrix>& SourceTransforms, FSkeletalMeshObject* MeshObject);
 	void BindDeformationCallback();
 	void StepPullState(float DeltaTime);
 	void ApplyStockingDeformation(TArray<FVertex>& InOutVertices, FBox& InOutBounds);
@@ -319,4 +323,32 @@ private:
 	float MaxCurrentStretchRatio = 1.0f;
 	float CachedBoundsExpansion = 0.0f;
 	float ReferenceScale = 1.0f;
+	float BakedSurfaceOffset = 0.0f;
+	float LastSyncedSurfaceOffset = 0.0f;
+
+	// 직전 프레임 동기화 상태 캐시
+	USkeletalMeshComponent* LastSyncedSourceComponent = nullptr;
+	FSkeletalMeshObject* LastSyncedMeshObject = nullptr;
+	TArray<FMatrix> LastSyncedSourceTransforms;
+	bool bHasSyncedPoseState = false;
+	bool bLastSyncedPulling = false;
+	bool bLastSyncedHasGrabAnchor = false;
+	bool bLastSyncedUseNvCloth = true;
+	uint32 LastSyncedGrabbedTriangleIndex = 0;
+	FVector LastSyncedPullTargetWorld = FVector::ZeroVector;
+	FVector LastSyncedPullOffsetLocal = FVector::ZeroVector;
+	FVector LastSyncedPullVelocityLocal = FVector::ZeroVector;
+
+	// 변형 루프 재사용 스크래치 버퍼
+	TArray<FVector> ScratchWeldedPos;
+	TArray<FVector> ScratchWeldedNormal;
+	TArray<int32> ScratchWeldedCounts;
+	TArray<FVector> ScratchNvSimPos;
+	TArray<float> ScratchNvCompression;
+	TArray<FVector> ScratchDeformedWeldedPos;
+	TArray<float> ScratchWeldedCrease;
+	TArray<float> ScratchOutwardBulge;
+	TArray<float> ScratchWeldedStretch;
+	TArray<float> ScratchRawCompression;
+	mutable TArray<FVector> ScratchAccumNormals;
 };

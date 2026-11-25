@@ -5,6 +5,7 @@
 #include "Render/SkeletalMeshObject.h"
 #include "Render/MaterialInstance.h"
 #include "Render/Texture2D.h"
+#include "Serialization/StructuredArchive.h"
 #include "UObject/UObjectGlobals.h"
 
 #include <algorithm>
@@ -109,6 +110,7 @@ void UStockingComponent::TickComponent(float DeltaTime)
 	}
 
 	StepPullState(DeltaTime);
+	BindDeformationCallback();
 
 	if (SourceSkeletalMeshComponent)
 	{
@@ -128,7 +130,13 @@ void UStockingComponent::TickComponent(float DeltaTime)
 			}
 		}
 
-		MarkBoneTransformsDirty();
+		const TArray<FMatrix>& SourceTransforms = SourceSkeletalMeshComponent->GetComponentSpaceTransform();
+		FSkeletalMeshObject* MeshObject = GetMeshObject();
+		if (HasPoseOrPullChanged(SourceTransforms, MeshObject))
+		{
+			MarkBoneTransformsDirty();
+			RecordSyncedPoseState(SourceTransforms, MeshObject);
+		}
 	}
 
 	Super::TickComponent(DeltaTime);
@@ -141,6 +149,39 @@ void UStockingComponent::TickComponent(float DeltaTime)
 	{
 		CachedBoundsExpansion = NeededExpansion;
 		OnTransformDirty();
+	}
+}
+
+void UStockingComponent::Serialize(FStructuredArchive::FRecord Record)
+{
+	Super::Serialize(Record);
+
+	if (Record.GetUnderlyingArchive().IsLoading())
+	{
+		UMaterialInterface* SlotMat = GetOverrideMaterial(0);
+		if (!SlotMat || !SlotMat->GetBaseMaterial())
+		{
+			SetMaterial(0, GetEffectiveStockingMaterial());
+		}
+
+		if (StockingRegion && SourceSkeletalMeshComponent && !GetSkeletalMesh() && SourceSkeletalMeshComponent->GetSkeletalMesh())
+		{
+			FString Error;
+			RebuildStockingMesh(Error);
+		}
+		else if (USkeletalMesh* Mesh = GetSkeletalMesh())
+		{
+			if (WeldedVertexCount == 0)
+			{
+				BuildRestAdjacency(*Mesh);
+				BuildCoveredBoneMask(*Mesh);
+			}
+			BindSourceImpactListener();
+		}
+
+		SyncTearMaskBinding();
+		bHasSyncedPoseState = false;
+		BindDeformationCallback();
 	}
 }
 
@@ -164,8 +205,15 @@ void UStockingComponent::PostEditChangeProperty(const FProperty& Property)
 	Super::PostEditChangeProperty(Property);
 
 	const FString& Name = Property.Name;
-	if (Name == "SourceSkeletalMeshComponent" || Name == "StockingRegion")
+	if (Name == "SourceSkeletalMeshComponent")
 	{
+		SetSourceSkeletalMeshComponent(SourceSkeletalMeshComponent);
+		FString Error;
+		RebuildStockingMesh(Error);
+	}
+	else if (Name == "StockingRegion")
+	{
+		SetStockingRegion(StockingRegion);
 		FString Error;
 		RebuildStockingMesh(Error);
 	}
@@ -186,6 +234,8 @@ void UStockingComponent::SetSourceSkeletalMeshComponent(USkeletalMeshComponent* 
 	UnbindSourceImpactListener();
 	SourceSkeletalMeshComponent = InSourceComponent;
 	BindSourceImpactListener();
+	bHasSyncedPoseState = false;
+	LastSyncedSourceTransforms.Reset();
 	MarkBoneTransformsDirty();
 }
 
@@ -220,6 +270,7 @@ void UStockingComponent::ResetClothSimulation()
 	bClothAwakeLastFrame = false;
 	PullReleaseEnvelope = 0.0f;
 	LastClothPullMag = 0.0f;
+	bHasSyncedPoseState = false;
 	MarkBoneTransformsDirty();
 }
 
@@ -292,9 +343,12 @@ void UStockingComponent::SetStockingRegion(UStockingRegion* InRegion)
 			ClothSelfCollisionStiffness = StockingRegion->SavedClothSelfCollisionStiffness;
 			bNvClothParamsDirty = true;
 		}
-		if (StockingRegion->bHasSavedMaterialParams && DefaultStockingMaterial && IsValid(DefaultStockingMaterial))
+		if (StockingRegion->bHasSavedMaterialParams)
 		{
-			FStockingMaterialLibrary::ApplyParameters(DefaultStockingMaterial, StockingRegion->SavedMaterialParams);
+			if (UMaterialInstanceDynamic* DefaultMat = GetDefaultStockingMaterialInstance())
+			{
+				FStockingMaterialLibrary::ApplyParameters(DefaultMat, StockingRegion->SavedMaterialParams);
+			}
 		}
 	}
 }
@@ -450,9 +504,12 @@ bool UStockingComponent::RebuildStockingMesh(FString& OutError)
 	}
 
 	GeneratedStockingMesh = NewStockingMesh;
+	BakedSurfaceOffset = StockingRegion->SurfaceOffset;
 	BuildRestAdjacency(*GeneratedStockingMesh);
 	BuildCoveredBoneMask(*GeneratedStockingMesh);
 	BindSourceImpactListener();
+	bHasSyncedPoseState = false;
+	LastSyncedSourceTransforms.Reset();
 	SetSkeletalMesh(GeneratedStockingMesh);
 	SetMaterial(0, GetEffectiveStockingMaterial());
 	RepairAllTears();
@@ -484,6 +541,7 @@ void UStockingComponent::BeginPull(uint32 TriangleIndex, const FVector& Barycent
 	bHasGrabAnchor = true;
 	bIsPulling = true;
 	ComputeGrabGeodesicDistances();
+	BindDeformationCallback();
 	MarkBoneTransformsDirty();
 }
 
@@ -558,8 +616,75 @@ void UStockingComponent::RefreshBoneTransforms()
 	ComponentSpaceTransforms = SourceTransforms;
 }
 
+bool UStockingComponent::ShouldUsePostSkinDeform() const
+{
+	const bool bNvClothActive = bUseNvClothSimulation && ClothSolver && ClothInstance && ClothFabric;
+	const bool bHasOffsetDelta = std::fabs(SurfaceOffset - BakedSurfaceOffset) > 1e-5f;
+	return bNvClothActive || HasActiveDeformation() || bHasOffsetDelta;
+}
+
+bool UStockingComponent::HasPoseOrPullChanged(const TArray<FMatrix>& SourceTransforms, FSkeletalMeshObject* MeshObject) const
+{
+	if (!bHasSyncedPoseState ||
+		LastSyncedSourceComponent != SourceSkeletalMeshComponent ||
+		LastSyncedMeshObject != MeshObject ||
+		bLastSyncedUseNvCloth != bUseNvClothSimulation ||
+		std::fabs(LastSyncedSurfaceOffset - SurfaceOffset) > 1e-6f ||
+		(bUseNvClothSimulation && ClothSolver && ClothInstance && ClothFabric && bNeedsClothTeleport) ||
+		bLastSyncedPulling != bIsPulling ||
+		bLastSyncedHasGrabAnchor != bHasGrabAnchor ||
+		LastSyncedGrabbedTriangleIndex != GrabbedTriangleIndex)
+	{
+		return true;
+	}
+
+	if ((CurrentPullOffsetLocal - LastSyncedPullOffsetLocal).SizeSquared() > 1e-10f ||
+		(PullVelocityLocal - LastSyncedPullVelocityLocal).SizeSquared() > 1e-10f)
+	{
+		return true;
+	}
+
+	if (bIsPulling && (PullTargetWorld - LastSyncedPullTargetWorld).SizeSquared() > 1e-10f)
+	{
+		return true;
+	}
+
+	const int32 TransformCount = SourceTransforms.Num();
+	if (LastSyncedSourceTransforms.Num() != TransformCount)
+	{
+		return true;
+	}
+
+	for (int32 i = 0; i < TransformCount; ++i)
+	{
+		if (!AreMatricesClose(SourceTransforms[i], LastSyncedSourceTransforms[i], 1e-5f))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void UStockingComponent::RecordSyncedPoseState(const TArray<FMatrix>& SourceTransforms, FSkeletalMeshObject* MeshObject)
+{
+	bHasSyncedPoseState = true;
+	LastSyncedSourceComponent = SourceSkeletalMeshComponent;
+	LastSyncedMeshObject = MeshObject;
+	LastSyncedSourceTransforms = SourceTransforms;
+	bLastSyncedPulling = bIsPulling;
+	bLastSyncedHasGrabAnchor = bHasGrabAnchor;
+	bLastSyncedUseNvCloth = bUseNvClothSimulation;
+	LastSyncedSurfaceOffset = SurfaceOffset;
+	LastSyncedGrabbedTriangleIndex = GrabbedTriangleIndex;
+	LastSyncedPullTargetWorld = PullTargetWorld;
+	LastSyncedPullOffsetLocal = CurrentPullOffsetLocal;
+	LastSyncedPullVelocityLocal = PullVelocityLocal;
+}
+
 void UStockingComponent::OnMeshObjectCreated()
 {
+	bHasSyncedPoseState = false;
 	BindDeformationCallback();
 }
 
@@ -570,10 +695,26 @@ void UStockingComponent::BindDeformationCallback()
 	{
 		return;
 	}
-	Object->SetPostSkinDeformCallback([this](TArray<FVertex>& InOutVertices, FBox& InOutBounds)
+
+	const bool bNeedCallback = ShouldUsePostSkinDeform();
+	const bool bHadCallback = Object->HasPostSkinDeformCallback();
+	if (bNeedCallback == bHadCallback)
 	{
-		ApplyStockingDeformation(InOutVertices, InOutBounds);
-	});
+		return;
+	}
+
+	if (bNeedCallback)
+	{
+		Object->SetPostSkinDeformCallback([this](TArray<FVertex>& InOutVertices, FBox& InOutBounds)
+		{
+			ApplyStockingDeformation(InOutVertices, InOutBounds);
+		});
+	}
+	else
+	{
+		Object->SetPostSkinDeformCallback(nullptr);
+	}
+	MarkBoneTransformsDirty();
 }
 
 void UStockingComponent::BuildRestAdjacency(const USkeletalMesh& Mesh)
@@ -1937,8 +2078,7 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	}
 
 	// 관절 굽힘에 따른 방향성 및 평균 에지 압축률을 계산
-	TArray<float> RawComp;
-	RawComp.SetNum(WeldedCount);
+	ScratchRawCompression.SetNum(WeldedCount, false);
 	float PeakComp = 0.0f;
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
@@ -1957,8 +2097,8 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 			}
 		}
 		const float AvgComp = Edges.IsEmpty() ? 0.0f : (CompSum / static_cast<float>(Edges.Num()));
-		RawComp[w] = 0.40f * AvgComp + 0.60f * MaxComp;
-		PeakComp = std::max(PeakComp, RawComp[w]);
+		ScratchRawCompression[w] = 0.40f * AvgComp + 0.60f * MaxComp;
+		PeakComp = std::max(PeakComp, ScratchRawCompression[w]);
 	}
 
 	// 관절이 펴진 상태이고 활성 주름이 없으면 솔버 스텝을 생략해 프레임 확보
@@ -1976,15 +2116,15 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	}
 
 	// 압축 영역 경계를 인접 정점으로 한 차례 부드럽게 확산
-	OutCompression.SetNum(WeldedCount);
+	OutCompression.SetNum(WeldedCount, false);
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		float Sum = RawComp[w] * 2.0f;
+		float Sum = ScratchRawCompression[w] * 2.0f;
 		float Weight = 2.0f;
 		const TArray<FNeighborEdge>& Edges = WeldedAdjacency[w];
 		for (int32 e = 0; e < Edges.Num(); ++e)
 		{
-			Sum += RawComp[static_cast<int32>(Edges[e].NeighborVertex)];
+			Sum += ScratchRawCompression[static_cast<int32>(Edges[e].NeighborVertex)];
 			Weight += 1.0f;
 		}
 		OutCompression[w] = Sum / Weight;
@@ -2000,6 +2140,7 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	const float FoldCurveY = 14.0f / SafeScale;
 	const float MaxTangentDrift = 0.0012f * SafeScale;
 
+	const float DynamicSurfaceOffset = SurfaceOffset - BakedSurfaceOffset;
 	bool bAnyCompressed = false;
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
@@ -2029,11 +2170,11 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 			AllowedRadius = BaseSlack + CompFactor * SafeSlack * 0.35f;
 		}
 
-		const FVector SkinTarget = P + N * (SurfaceOffset + CreaseLift);
+		const FVector SkinTarget = P + N * (DynamicSurfaceOffset + CreaseLift);
 
 		// 피부 밀착 백스톱 구와 타이트한 모션 제약 구로 붕뜸과 관통을 동시에 방지
 		const FVector BackstopCenter = P - N * BackstopR;
-		const float BackstopClearance = BackstopR + SurfaceOffset + CreaseLift + RidgeTargetH * 0.65f;
+		const float BackstopClearance = BackstopR + DynamicSurfaceOffset + CreaseLift + RidgeTargetH * 0.65f;
 		ClothSeparationConstraintsBuffer[w] = { BackstopCenter.X, BackstopCenter.Y, BackstopCenter.Z, BackstopClearance };
 
 		const FVector MotionCenter = SkinTarget + N * RidgeTargetH;
@@ -2047,7 +2188,7 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 	{
 		for (int32 w = 0; w < WeldedCount; ++w)
 		{
-			const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * SurfaceOffset;
+			const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * DynamicSurfaceOffset;
 			ClothParticlesBuffer[w] = { SkinTarget.X, SkinTarget.Y, SkinTarget.Z, 1.0f };
 		}
 		ClothBridge_WriteParticles(ClothInstance, ClothParticlesBuffer.GetData(), static_cast<uint32_t>(WeldedCount));
@@ -2067,7 +2208,7 @@ bool UStockingComponent::StepNvClothJointWrinkles(
 			? FMath::Clamp((OutCompression[w] - 0.015f) / 0.18f, 0.0f, 1.0f)
 			: 0.0f;
 		const float CreaseLift = CompFactor * (0.0022f * SafeScale);
-		const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * (SurfaceOffset + CreaseLift);
+		const FVector SkinTarget = SkinnedPos[w] + SkinnedNormal[w] * (DynamicSurfaceOffset + CreaseLift);
 		const FVector& N = SkinnedNormal[w];
 		FVector SimP(ClothParticlesBuffer[w].X, ClothParticlesBuffer[w].Y, ClothParticlesBuffer[w].Z);
 		if (!std::isfinite(SimP.X) || !std::isfinite(SimP.Y) || !std::isfinite(SimP.Z))
@@ -2218,40 +2359,37 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
 
 	// 심 정점이 같은 위치와 노멀을 공유하도록 용접 정점 기준 평균 위치와 노멀 계산
-	TArray<FVector> WeldedPos;
-	TArray<FVector> WeldedNormal;
-	TArray<int32> WeldedCounts;
-	WeldedPos.SetNum(WeldedCount);
-	WeldedNormal.SetNum(WeldedCount);
-	WeldedCounts.SetNum(WeldedCount);
+	ScratchWeldedPos.SetNum(WeldedCount, false);
+	ScratchWeldedNormal.SetNum(WeldedCount, false);
+	ScratchWeldedCounts.SetNum(WeldedCount, false);
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		WeldedPos[w] = FVector::ZeroVector;
-		WeldedNormal[w] = FVector::ZeroVector;
-		WeldedCounts[w] = 0;
+		ScratchWeldedPos[w] = FVector::ZeroVector;
+		ScratchWeldedNormal[w] = FVector::ZeroVector;
+		ScratchWeldedCounts[w] = 0;
 	}
 
 	for (int32 v = 0; v < VertexCount; ++v)
 	{
 		const int32 W = static_cast<int32>(WeldedVertexIds[v]);
-		WeldedPos[W] += InOutVertices[v].Position;
-		WeldedNormal[W] += InOutVertices[v].Normal;
-		WeldedCounts[W] += 1;
+		ScratchWeldedPos[W] += InOutVertices[v].Position;
+		ScratchWeldedNormal[W] += InOutVertices[v].Normal;
+		ScratchWeldedCounts[W] += 1;
 	}
 
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		if (WeldedCounts[w] > 0)
+		if (ScratchWeldedCounts[w] > 0)
 		{
-			WeldedPos[w] = WeldedPos[w] / static_cast<float>(WeldedCounts[w]);
+			ScratchWeldedPos[w] = ScratchWeldedPos[w] / static_cast<float>(ScratchWeldedCounts[w]);
 		}
-		if (WeldedNormal[w].SizeSquared() > 1e-10f)
+		if (ScratchWeldedNormal[w].SizeSquared() > 1e-10f)
 		{
-			WeldedNormal[w] = WeldedNormal[w].Normalized();
+			ScratchWeldedNormal[w] = ScratchWeldedNormal[w].Normalized();
 		}
 		else
 		{
-			WeldedNormal[w] = FVector(0.0f, 0.0f, 1.0f);
+			ScratchWeldedNormal[w] = FVector(0.0f, 0.0f, 1.0f);
 		}
 	}
 
@@ -2264,14 +2402,14 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 		const int32 W2 = static_cast<int32>(WeldedVertexIds[LOD.Indices[GrabbedTriangleIndex * 3 + 2]]);
 
 		LastAnchorLocal =
-			WeldedPos[W0] * GrabBarycentric.X +
-			WeldedPos[W1] * GrabBarycentric.Y +
-			WeldedPos[W2] * GrabBarycentric.Z;
+			ScratchWeldedPos[W0] * GrabBarycentric.X +
+			ScratchWeldedPos[W1] * GrabBarycentric.Y +
+			ScratchWeldedPos[W2] * GrabBarycentric.Z;
 
 		AnchorNormal =
-			WeldedNormal[W0] * GrabBarycentric.X +
-			WeldedNormal[W1] * GrabBarycentric.Y +
-			WeldedNormal[W2] * GrabBarycentric.Z;
+			ScratchWeldedNormal[W0] * GrabBarycentric.X +
+			ScratchWeldedNormal[W1] * GrabBarycentric.Y +
+			ScratchWeldedNormal[W2] * GrabBarycentric.Z;
 		if (AnchorNormal.SizeSquared() > 1e-10f)
 		{
 			AnchorNormal = AnchorNormal.Normalized();
@@ -2324,24 +2462,20 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 	const FVector AnchorTangentV = FVector::Cross(AnchorNormal, AnchorTangentU).Normalized();
 
 	// 관절 접힘부 물리 주름을 NvCloth 백스톱과 모션 제약으로 시뮬레이션
-	TArray<FVector> NvSimPos;
-	TArray<float> NvCompression;
-	const bool bUsedNvCloth = StepNvClothJointWrinkles(WeldedPos, WeldedNormal, AnchorNormal, NvSimPos, NvCompression);
+	const bool bUsedNvCloth = StepNvClothJointWrinkles(ScratchWeldedPos, ScratchWeldedNormal, AnchorNormal, ScratchNvSimPos, ScratchNvCompression);
 
-	TArray<FVector> DeformedWeldedPos;
-	TArray<float> WeldedCrease;
-	TArray<float> OutwardBulge;
-	DeformedWeldedPos.SetNum(WeldedCount);
-	WeldedCrease.SetNum(WeldedCount);
-	OutwardBulge.SetNum(WeldedCount);
+	ScratchDeformedWeldedPos.SetNum(WeldedCount, false);
+	ScratchWeldedCrease.SetNum(WeldedCount, false);
+	ScratchOutwardBulge.SetNum(WeldedCount, false);
 
+	const float DynamicSurfaceOffset = SurfaceOffset - BakedSurfaceOffset;
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		const FVector& BasePos = WeldedPos[w];
-		const FVector& SmoothN = WeldedNormal[w];
-		const FVector SkinSurfacePos = BasePos + SmoothN * SurfaceOffset;
-		FVector NewPos = bUsedNvCloth ? NvSimPos[w] : SkinSurfacePos;
-		OutwardBulge[w] = bUsedNvCloth ? (NewPos - SkinSurfacePos).Dot(SmoothN) : 0.0f;
+		const FVector& BasePos = ScratchWeldedPos[w];
+		const FVector& SmoothN = ScratchWeldedNormal[w];
+		const FVector SkinSurfacePos = BasePos + SmoothN * DynamicSurfaceOffset;
+		FVector NewPos = bUsedNvCloth ? ScratchNvSimPos[w] : SkinSurfacePos;
+		ScratchOutwardBulge[w] = bUsedNvCloth ? (NewPos - SkinSurfacePos).Dot(SmoothN) : 0.0f;
 		if (bUsedNvCloth)
 		{
 			MaxAppliedDisplacement = FMath::Max(MaxAppliedDisplacement, (NewPos - SkinSurfacePos).Size());
@@ -2420,14 +2554,14 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 			}
 		}
 
-		DeformedWeldedPos[w] = NewPos;
-		WeldedCrease[w] = CreaseSignal;
+		ScratchDeformedWeldedPos[w] = NewPos;
+		ScratchWeldedCrease[w] = CreaseSignal;
 	}
 
 	// 용접 정점 위치를 원본 정점에 일괄 반영해 심 갈라짐 방지
 	for (int32 v = 0; v < VertexCount; ++v)
 	{
-		InOutVertices[v].Position = DeformedWeldedPos[static_cast<int32>(WeldedVertexIds[v])];
+		InOutVertices[v].Position = ScratchDeformedWeldedPos[static_cast<int32>(WeldedVertexIds[v])];
 	}
 
 	if (bUsedNvCloth || bApplyPull)
@@ -2436,15 +2570,14 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 	}
 
 	// 인접 용접 정점 간 원래 길이 대비 늘어난 비율과 물리 주름 곡률을 정점 컬러에 기록
-	TArray<float> WeldedStretch;
-	WeldedStretch.SetNum(WeldedCount);
+	ScratchWeldedStretch.SetNum(WeldedCount, false);
 	MaxCurrentStretchRatio = 1.0f;
 	const float CurvatureNorm = std::max(ClothJointWrinkleSlack * 0.20f, 0.002f * ReferenceScale);
 
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
 		float RawRatio = 1.0f;
-		float NeighborAvgBulge = OutwardBulge[w];
+		float NeighborAvgBulge = ScratchOutwardBulge[w];
 		if (!WeldedAdjacency[w].IsEmpty())
 		{
 			const TArray<FNeighborEdge>& Edges = WeldedAdjacency[w];
@@ -2454,9 +2587,9 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 			{
 				const FNeighborEdge& Edge = Edges[e];
 				const int32 Nw = static_cast<int32>(Edge.NeighborVertex);
-				const float CurrentLen = (DeformedWeldedPos[w] - DeformedWeldedPos[Nw]).Size();
+				const float CurrentLen = (ScratchDeformedWeldedPos[w] - ScratchDeformedWeldedPos[Nw]).Size();
 				RatioSum += CurrentLen / Edge.RestLength;
-				BulgeSum += OutwardBulge[Nw];
+				BulgeSum += ScratchOutwardBulge[Nw];
 			}
 			const float InvCount = 1.0f / static_cast<float>(Edges.Num());
 			RawRatio = RatioSum * InvCount;
@@ -2466,23 +2599,23 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 		const float StretchRatio = std::clamp(RawRatio, 1.0f, 3.5f);
 		// NvCloth 물리 곡률과 실제 포즈 압축률을 합성해 매크로 주름과 픽셀 미세 주름 신호 전달
 		const float ClothCurvature = bUsedNvCloth
-			? std::clamp((OutwardBulge[w] - NeighborAvgBulge) / CurvatureNorm, -1.0f, 1.0f)
+			? std::clamp((ScratchOutwardBulge[w] - NeighborAvgBulge) / CurvatureNorm, -1.0f, 1.0f)
 			: 0.0f;
 		const float PoseComp = bUsedNvCloth
-			? std::clamp((NvCompression[w] - 0.012f) * 4.5f, 0.0f, 1.0f)
+			? std::clamp((ScratchNvCompression[w] - 0.012f) * 4.5f, 0.0f, 1.0f)
 			: std::clamp((1.0f - RawRatio) * 3.5f, 0.0f, 1.0f);
 		// 압축 관절에서는 음수 압축 신호를 유지해 픽셀 미세 주름이 곡률에 상쇄되지 않게 보존
 		const float JointSignal = (PoseComp > 0.05f)
 			? (-PoseComp * 0.95f)
 			: (ClothCurvature * 0.35f);
-		const float CombinedSignal = std::clamp(WeldedCrease[w] + JointSignal, -1.0f, 1.0f);
-		WeldedCrease[w] = std::clamp(0.5f + 0.5f * CombinedSignal, 0.0f, 1.0f);
+		const float CombinedSignal = std::clamp(ScratchWeldedCrease[w] + JointSignal, -1.0f, 1.0f);
+		ScratchWeldedCrease[w] = std::clamp(0.5f + 0.5f * CombinedSignal, 0.0f, 1.0f);
 
-		WeldedStretch[w] = StretchRatio;
+		ScratchWeldedStretch[w] = StretchRatio;
 		MaxCurrentStretchRatio = FMath::Max(MaxCurrentStretchRatio, StretchRatio);
 	}
 
-	UpdatePullTearing(LOD, DeformedWeldedPos, WeldedStretch);
+	UpdatePullTearing(LOD, ScratchDeformedWeldedPos, ScratchWeldedStretch);
 	if (bTearMaskDirty && TearMaskUploadCooldown <= 0.0f)
 	{
 		RebuildTearMaskTexture();
@@ -2495,8 +2628,8 @@ void UStockingComponent::ApplyStockingDeformation(TArray<FVertex>& InOutVertices
 		if (GetDebugWeightBone() < 0)
 		{
 			const int32 W = static_cast<int32>(WeldedVertexIds[v]);
-			InOutVertices[v].Color.Z = WeldedCrease[W];
-			InOutVertices[v].Color.W = WeldedStretch[W];
+			InOutVertices[v].Color.Z = ScratchWeldedCrease[W];
+			InOutVertices[v].Color.W = ScratchWeldedStretch[W];
 		}
 
 		const FVector& P = InOutVertices[v].Position;
@@ -2523,11 +2656,10 @@ void UStockingComponent::RecomputeDeformedNormals(TArray<FVertex>& InOutVertices
 	const TArray<uint32>& Indices = Mesh->GetRenderData().LODRenderData[0].Indices;
 	const int32 WeldedCount = static_cast<int32>(WeldedVertexCount);
 
-	TArray<FVector> AccumNormals;
-	AccumNormals.SetNum(WeldedCount);
+	ScratchAccumNormals.SetNum(WeldedCount, false);
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		AccumNormals[w] = FVector::ZeroVector;
+		ScratchAccumNormals[w] = FVector::ZeroVector;
 	}
 
 	for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
@@ -2539,23 +2671,23 @@ void UStockingComponent::RecomputeDeformedNormals(TArray<FVertex>& InOutVertices
 		const FVector FaceNormal = FVector::Cross(
 			InOutVertices[I1].Position - InOutVertices[I0].Position,
 			InOutVertices[I2].Position - InOutVertices[I0].Position);
-		AccumNormals[static_cast<int32>(WeldedVertexIds[I0])] += FaceNormal;
-		AccumNormals[static_cast<int32>(WeldedVertexIds[I1])] += FaceNormal;
-		AccumNormals[static_cast<int32>(WeldedVertexIds[I2])] += FaceNormal;
+		ScratchAccumNormals[static_cast<int32>(WeldedVertexIds[I0])] += FaceNormal;
+		ScratchAccumNormals[static_cast<int32>(WeldedVertexIds[I1])] += FaceNormal;
+		ScratchAccumNormals[static_cast<int32>(WeldedVertexIds[I2])] += FaceNormal;
 	}
 
 	for (int32 w = 0; w < WeldedCount; ++w)
 	{
-		if (AccumNormals[w].SizeSquared() > 1e-12f)
+		if (ScratchAccumNormals[w].SizeSquared() > 1e-12f)
 		{
-			AccumNormals[w] = AccumNormals[w].Normalized();
+			ScratchAccumNormals[w] = ScratchAccumNormals[w].Normalized();
 		}
 	}
 
 	const int32 VertexCount = InOutVertices.Num();
 	for (int32 v = 0; v < VertexCount; ++v)
 	{
-		const FVector& N = AccumNormals[static_cast<int32>(WeldedVertexIds[v])];
+		const FVector& N = ScratchAccumNormals[static_cast<int32>(WeldedVertexIds[v])];
 		if (N.SizeSquared() > 1e-12f)
 		{
 			InOutVertices[v].Normal = N;

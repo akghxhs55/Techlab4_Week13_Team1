@@ -62,7 +62,11 @@ public:
 	UPhysicsAsset* GetPhysicsAsset() const;
 	bool StartRagdoll();
 	void StopRagdoll();
+	bool SetRagdollSimulationEnabled(bool bEnable);
 	bool IsRagdollActive() const { return bRagdollActive; }
+
+	UPROPERTY()
+	bool bStartRagdollOnBeginPlay = false;
 	bool HasArticulatedBodies() const { return !Bodies.IsEmpty(); }
 	FBodyInstance* GetBodyInstance(const FString& BoneName) const;
 	void AddImpulseToBone(const FString& BoneName, const FVector& Impulse, bool bVelocityChange = false);

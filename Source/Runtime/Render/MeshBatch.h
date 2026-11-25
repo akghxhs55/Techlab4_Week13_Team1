@@ -173,6 +173,7 @@ struct FMeshBatch
 	float ParticleAlpha = 1.0f;
 	bool bCastShadow = true;
 	bool bUsesGPUScene = true;
+	bool bTwoSided = false;
 	TArray<FMeshBatchElement> Elements;
 
 	const FVertexFactory* ResolveVertexFactory() const

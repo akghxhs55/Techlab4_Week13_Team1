@@ -958,6 +958,52 @@ namespace
 			InOutVertices[v].UV = FVector2(AtlasU, VertexLocalV[v]);
 		}
 	}
+
+	// 용접 정점의 평균 노멀 방향으로 표면 오프셋을 미리 반영
+	void ApplySurfaceOffsetToVertices(TArray<FVertex>& InOutVertices, float Offset)
+	{
+		if (Offset <= 1e-6f || InOutVertices.IsEmpty())
+		{
+			return;
+		}
+
+		TArray<uint32> WeldedIds;
+		BuildWeldedVertexIds(InOutVertices, WeldedIds);
+		const int32 VertCount = InOutVertices.Num();
+		uint32 WeldedCount = 0;
+		for (int32 v = 0; v < VertCount; ++v)
+		{
+			WeldedCount = std::max(WeldedCount, WeldedIds[v] + 1u);
+		}
+
+		TArray<FVector> SmoothNormals;
+		SmoothNormals.SetNum(static_cast<int32>(WeldedCount));
+		for (uint32 w = 0; w < WeldedCount; ++w)
+		{
+			SmoothNormals[static_cast<int32>(w)] = FVector::ZeroVector;
+		}
+		for (int32 v = 0; v < VertCount; ++v)
+		{
+			SmoothNormals[static_cast<int32>(WeldedIds[v])] += InOutVertices[v].Normal;
+		}
+		for (uint32 w = 0; w < WeldedCount; ++w)
+		{
+			FVector& N = SmoothNormals[static_cast<int32>(w)];
+			if (N.SizeSquared() > 1e-10f)
+			{
+				N = N.Normalized();
+			}
+		}
+
+		for (int32 v = 0; v < VertCount; ++v)
+		{
+			const FVector& N = SmoothNormals[static_cast<int32>(WeldedIds[v])];
+			if (N.SizeSquared() > 1e-10f)
+			{
+				InOutVertices[v].Position += N * Offset;
+			}
+		}
+	}
 }
 
 uint64 UStockingRegion::ComputeMeshTopologyHash(const USkeletalMesh& SourceMesh, int32 LODIndex)
@@ -1940,6 +1986,7 @@ bool UStockingRegion::BuildStockingMesh(const USkeletalMesh& SourceMesh, USkelet
 
 	WriteStockingVertexMasks(SubVertices, SubIndices, BoundaryFeatherDistance);
 	GenerateStockingAtlasUVs(SubVertices, SubWeights, SubIndices);
+	ApplySurfaceOffsetToVertices(SubVertices, SurfaceOffset);
 
 	FSkeletalMeshData MeshData;
 	MeshData.BindVertices = std::move(SubVertices);

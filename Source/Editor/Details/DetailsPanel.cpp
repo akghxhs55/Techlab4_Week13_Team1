@@ -13,6 +13,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SkinnedMeshComponent.h"
+#include "Components/StockingComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "Editor/EditorUI/ImGuiRenderer.h"
@@ -43,8 +44,10 @@
 #include "Render/Material.h"
 #include "Render/Texture2D.h"
 #include "Render/SkeletalMesh.h"
+#include "Render/StockingRegion.h"
 #include "Text/Font.h"
 #include "UObject/UObjectIterator.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Core/EngineLog.h"
 
@@ -342,6 +345,212 @@ namespace
 		if (FPaths::FromUtf8(Key).is_absolute())
 			KRS_LOG(Warning, "[Lua] {} is outside the project. It is saved as an absolute path and will not be packaged.", Key);
 		return Key;
+	}
+
+	// 저장된 스타킹 영역 파일 목록을 프로젝트 콘텐츠 폴더에서 수집
+	void CollectStockingRegionFiles(TArray<FString>& OutPaths)
+	{
+		OutPaths.Reset();
+		std::error_code Ec;
+		const fs::path ContentDir = fs::absolute(FPaths::ProjectContentDir(), Ec);
+		if (!fs::exists(ContentDir, Ec))
+		{
+			return;
+		}
+		for (const fs::directory_entry& Entry : fs::recursive_directory_iterator(ContentDir, fs::directory_options::skip_permission_denied, Ec))
+		{
+			if (!Entry.is_regular_file(Ec))
+			{
+				continue;
+			}
+			if (Entry.path().extension() == ".stockingregion")
+			{
+				OutPaths.Add(FPaths::ToUtf8(Entry.path()));
+			}
+		}
+		std::sort(OutPaths.begin(), OutPaths.end());
+	}
+
+	// 파일 대화상자로 스타킹 영역 파일을 선택
+	bool PickStockingRegionFile(FString& OutFilePath)
+	{
+		wchar_t Buffer[MAX_PATH] = {};
+		std::error_code Ec;
+		const fs::path ContentDir = fs::absolute(FPaths::ProjectContentDir(), Ec);
+		const std::wstring InitialDir = ContentDir.wstring();
+
+		OPENFILENAMEW Dialog = {};
+		Dialog.lStructSize = sizeof(Dialog);
+		Dialog.hwndOwner = GetActiveWindow();
+		Dialog.lpstrFile = Buffer;
+		Dialog.nMaxFile = static_cast<DWORD>(std::size(Buffer));
+		Dialog.lpstrFilter = L"Stocking Region (*.stockingregion)\0*.stockingregion\0";
+		Dialog.lpstrDefExt = L"stockingregion";
+		Dialog.lpstrInitialDir = InitialDir.c_str();
+		Dialog.lpstrTitle = L"Load Stocking Region";
+		Dialog.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST;
+
+		if (!GetOpenFileNameW(&Dialog))
+		{
+			return false;
+		}
+
+		OutFilePath = FPaths::ToUtf8(fs::path(Buffer));
+		return true;
+	}
+
+	// 액터 내부의 스켈레탈 메시 컴포넌트를 선택
+	bool DrawSkeletalMeshComponentRefSlot(UObject* Object, USkeletalMeshComponent** CompPtr, const char* Label)
+	{
+		if (!CompPtr)
+		{
+			return false;
+		}
+
+		bool bChanged = false;
+		UActorComponent* OwnerComp = Cast<UActorComponent>(Object);
+		AActor* OwnerActor = OwnerComp ? OwnerComp->GetOwner() : nullptr;
+
+		FString Preview = "None";
+		if (*CompPtr)
+		{
+			Preview = (*CompPtr)->GetName();
+			if (USkeletalMesh* Mesh = (*CompPtr)->GetSkeletalMesh())
+			{
+				const FString MeshName = fs::path(Mesh->GetPath()).stem().string();
+				if (!MeshName.empty())
+				{
+					Preview += " (" + MeshName + ")";
+				}
+			}
+		}
+
+		ImGui::PushID(Label);
+		ImGui::SetNextItemWidth(-1.0f);
+		if (ImGui::BeginCombo("##SkelCompRefCombo", Preview.c_str()))
+		{
+			if (ImGui::Selectable("None", *CompPtr == nullptr))
+			{
+				*CompPtr = nullptr;
+				bChanged = true;
+			}
+			if (OwnerActor)
+			{
+				for (UActorComponent* ActorComp : OwnerActor->GetComponents())
+				{
+					USkeletalMeshComponent* SkelComp = Cast<USkeletalMeshComponent>(ActorComp);
+					if (!SkelComp || SkelComp == OwnerComp)
+					{
+						continue;
+					}
+					FString ItemLabel = SkelComp->GetName();
+					if (USkeletalMesh* Mesh = SkelComp->GetSkeletalMesh())
+					{
+						const FString MeshName = fs::path(Mesh->GetPath()).stem().string();
+						if (!MeshName.empty())
+						{
+							ItemLabel += " (" + MeshName + ")";
+						}
+					}
+					if (ImGui::Selectable(ItemLabel.c_str(), *CompPtr == SkelComp))
+					{
+						*CompPtr = SkelComp;
+						bChanged = true;
+					}
+				}
+			}
+			ImGui::EndCombo();
+		}
+		ImGui::PopID();
+		return bChanged;
+	}
+
+	// 저장된 스타킹 영역 파일 목록 또는 파일 탐색기로 영역을 적용
+	bool DrawStockingRegionSlot(UObject* Object, UStockingRegion** RegionPtr, const char* Label)
+	{
+		if (!RegionPtr)
+		{
+			return false;
+		}
+
+		bool bChanged = false;
+		FString Preview = "None";
+		if (*RegionPtr)
+		{
+			const FString& RegionPath = (*RegionPtr)->GetRegionFilePath();
+			if (!RegionPath.empty())
+			{
+				Preview = FPaths::ToUtf8(fs::path(RegionPath).filename());
+			}
+			else
+			{
+				Preview = "Region (" + std::to_string((*RegionPtr)->GetSelectedTriangleCount()) + " tris)";
+			}
+		}
+
+		ImGui::PushID(Label);
+		const float LoadButtonWidth = EditorStyle::Scale(56.0f);
+		const float Spacing = ImGui::GetStyle().ItemSpacing.x;
+		ImGui::SetNextItemWidth(std::max(EditorStyle::Scale(60.0f), ImGui::GetContentRegionAvail().x - LoadButtonWidth - Spacing));
+
+		if (ImGui::BeginCombo("##StockingRegionCombo", Preview.c_str()))
+		{
+			if (ImGui::Selectable("None", *RegionPtr == nullptr))
+			{
+				*RegionPtr = nullptr;
+				bChanged = true;
+			}
+
+			static TArray<FString> CachedRegionFiles;
+			if (ImGui::IsWindowAppearing())
+			{
+				CollectStockingRegionFiles(CachedRegionFiles);
+			}
+
+			for (const FString& FilePath : CachedRegionFiles)
+			{
+				const fs::path PathObj = FPaths::FromUtf8(FilePath);
+				const FString DisplayName = FPaths::ToUtf8(PathObj.stem()) + " (" + FPaths::ToUtf8(PathObj.parent_path().filename()) + ")";
+				const bool bSelected = (*RegionPtr && (*RegionPtr)->GetRegionFilePath() == FilePath);
+				if (ImGui::Selectable(DisplayName.c_str(), bSelected))
+				{
+					UStockingRegion* NewRegion = NewObject<UStockingRegion>(Object);
+					FString LoadError;
+					if (NewRegion && NewRegion->LoadFromFile(FilePath, LoadError))
+					{
+						*RegionPtr = NewRegion;
+						bChanged = true;
+					}
+					else if (!LoadError.empty())
+					{
+						KRS_LOG(Warning, "StockingRegion load failed: {}", LoadError);
+					}
+				}
+			}
+			ImGui::EndCombo();
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Load...", ImVec2(LoadButtonWidth, 0.0f)))
+		{
+			FString PickedPath;
+			if (PickStockingRegionFile(PickedPath))
+			{
+				UStockingRegion* NewRegion = NewObject<UStockingRegion>(Object);
+				FString LoadError;
+				if (NewRegion && NewRegion->LoadFromFile(PickedPath, LoadError))
+				{
+					*RegionPtr = NewRegion;
+					bChanged = true;
+				}
+				else if (!LoadError.empty())
+				{
+					KRS_LOG(Warning, "StockingRegion load failed: {}", LoadError);
+				}
+			}
+		}
+		ImGui::PopID();
+		return bChanged;
 	}
 
 	// 선택한 ScriptComponent의 스크립트 경로 입력과 파일 연결 버튼.
@@ -2070,6 +2279,14 @@ namespace
 				UTexture2D** TexturePtr = reinterpret_cast<UTexture2D**>(ObjPtr);
 				return DrawTexturePicker(*TexturePtr, Label,
 					[TexturePtr](UTexture2D* Picked) { *TexturePtr = Picked; });
+			}
+			else if (PropertyClass == USkeletalMeshComponent::StaticClass())
+			{
+				return DrawSkeletalMeshComponentRefSlot(Object, reinterpret_cast<USkeletalMeshComponent**>(ObjPtr), Label);
+			}
+			else if (PropertyClass == UStockingRegion::StaticClass())
+			{
+				return DrawStockingRegionSlot(Object, reinterpret_cast<UStockingRegion**>(ObjPtr), Label);
 			}
 			return false;
 		}
@@ -3997,6 +4214,62 @@ void FDetailsPanel::OnRender()
 							ImGui::TableSetColumnIndex(1);
 							ImGui::TextWrapped("Choose None in Animation Blueprint to use a single animation.");
 						}
+
+						ImGui::TableNextRow();
+						ImGui::TableSetColumnIndex(0);
+						DrawPropertyGridLabel("Ragdoll");
+						ImGui::TableSetColumnIndex(1);
+						ImGui::Checkbox("Start On BeginPlay", &SkelComp->bStartRagdollOnBeginPlay);
+						const bool bHasPhysicsAsset = (SkelComp->GetPhysicsAsset() != nullptr);
+						const UWorld* CompWorld = SkelComp->GetWorld();
+						const bool bInGameWorld = (CompWorld && CompWorld->IsGameWorld());
+						const bool bRagdollActive = SkelComp->IsRagdollActive();
+						ImGui::BeginDisabled(!bHasPhysicsAsset || !bInGameWorld);
+						if (ImGui::Button(bRagdollActive ? "Stop Ragdoll" : "Start Ragdoll", ImVec2(-1.0f, 0.0f)))
+						{
+							SkelComp->SetRagdollSimulationEnabled(!bRagdollActive);
+						}
+						ImGui::EndDisabled();
+						if (!bHasPhysicsAsset)
+						{
+							ImGui::TextDisabled("No PhysicsAsset");
+						}
+						else if (!bInGameWorld)
+						{
+							ImGui::TextDisabled("Live toggle available in PIE");
+						}
+						else
+						{
+							ImGui::TextDisabled(bRagdollActive ? "State: Active" : "State: Inactive");
+						}
+					}
+					EndPropertyGridTable();
+				}
+			}
+			if (UStockingComponent* StockingComp = Cast<UStockingComponent>(TargetComponent))
+			{
+				if (BeginPropertyGridTable("StockingActions"))
+				{
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					DrawPropertyGridLabel("Stocking Mesh");
+					ImGui::TableSetColumnIndex(1);
+					if (ImGui::Button("Rebuild Stocking Mesh", ImVec2(-1.0f, 0.0f)))
+					{
+						if (StockingComp->GetStockingRegion())
+						{
+							StockingComp->SetStockingRegion(StockingComp->GetStockingRegion());
+						}
+						FString BuildError;
+						StockingComp->RebuildStockingMesh(BuildError);
+					}
+					if (!StockingComp->GetLastErrorMessage().empty())
+					{
+						ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1.0f), "%s", StockingComp->GetLastErrorMessage().c_str());
+					}
+					else if (UStockingRegion* Region = StockingComp->GetStockingRegion())
+					{
+						ImGui::TextDisabled("Region Tris: %d", Region->GetSelectedTriangleCount());
 					}
 					EndPropertyGridTable();
 				}

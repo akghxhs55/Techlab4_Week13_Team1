@@ -455,6 +455,25 @@ void USkeletalMeshComponent::StopRagdoll()
 	UpdateKinematicBonesToAnim();
 }
 
+bool USkeletalMeshComponent::SetRagdollSimulationEnabled(bool bEnable)
+{
+	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
+	const bool bIsOwnerCharacterMesh = OwnerCharacter && OwnerCharacter->GetSkeletalMeshComponent() == this;
+	if (bEnable)
+	{
+		return bIsOwnerCharacterMesh ? OwnerCharacter->StartRagdoll() : StartRagdoll();
+	}
+	if (bIsOwnerCharacterMesh)
+	{
+		OwnerCharacter->StopRagdoll();
+	}
+	else
+	{
+		StopRagdoll();
+	}
+	return false;
+}
+
 void USkeletalMeshComponent::SyncPhysicsToBones()
 {
 	if (Bodies.IsEmpty() || !IsAnyBodySimulatingPhysics())

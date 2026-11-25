@@ -24,6 +24,7 @@
 #include "GameFramework/TestCharacter.h"
 #include "GameFramework/TestCharacter1d.h"
 #include "GameFramework/Actor/ZombieActor.h"
+#include "GameFramework/Actor/StockingActor.h"
 #include "GameFramework/Actor/ParticleEventManager.h"
 #include "GameFramework/Actor/ParticleHitEffectActor.h"
 #include "Core/StatOverlay.h"
@@ -463,6 +464,7 @@ void FViewportsPanel::DrawSpawnMenu(FEditorViewportClient& Client)
     Spawn("Test Character", ATestCharacter::StaticClass());
     Spawn("Test Character 1D", ATestCharacter1d::StaticClass());
     Spawn("Zombie", AZombieActor::StaticClass());
+	Spawn("Stocking Actor", AStockingActor::StaticClass());
     Spawn("Text", ATextRenderActor::StaticClass());
     ImGui::SeparatorText("Meshes");
     Spawn("Skeletal Mesh", ASkeletalMeshActor::StaticClass());

@@ -13,6 +13,7 @@
 #include "UObject/Casts.h"
 #include "UObject/UObjectIterator.h"
 #include "Render/LineBatcher.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace1D.h"
@@ -69,6 +70,11 @@ void USkeletalMeshComponent::BeginPlay()
 				Instance->SetPlaying(true);
 			}
 		}
+	}
+
+	if (bStartRagdollOnBeginPlay && GetWorld() && GetWorld()->IsGameWorld())
+	{
+		SetRagdollSimulationEnabled(true);
 	}
 }
 
