@@ -1297,6 +1297,5 @@ void USkeletalMeshComponent::UpdateComponentToRootBody()
 	AActor* Owner = GetOwner();
 	USceneComponent* Target = (Owner && Owner->GetRootComponent()) ? Owner->GetRootComponent() : this;
 
-	const FTransform NewTransform(GetWorldRotation(), GetWorldLocation() + Delta, GetWorldScale3D());
-	Target->SetWorldTransform(NewTransform.GetLocalMatrix(), false, ETeleportType::None);
+	Target->SetWorldLocation(Target->GetWorldLocation() + Delta, false, ETeleportType::None);
 }

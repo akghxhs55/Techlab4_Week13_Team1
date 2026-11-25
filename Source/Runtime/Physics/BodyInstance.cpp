@@ -17,6 +17,8 @@ namespace
 {
 	constexpr float DefaultDensity = 1000.0f;
 
+	constexpr float RaiseMassToPower = 0.75f;
+
 	const PxQuat SphylBasis(PxHalfPi, PxVec3(0.0f, 1.0f, 0.0f));
 
 	FVector Abs(const FVector& V) { return { std::abs(V.X), std::abs(V.Y), std::abs(V.Z) }; }
@@ -118,6 +120,11 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 	else
 	{
 		PxRigidBodyExt::updateMassAndInertia(*Dynamic, DefaultDensity);
+		const float DensityMass = Dynamic->getMass();
+		if (DensityMass > 0.0f)
+		{
+			PxRigidBodyExt::setMassAndUpdateInertia(*Dynamic, std::pow(DensityMass, RaiseMassToPower));
+		}
 	}
 
 	Dynamic->setLinearDamping(LinearDamping);
