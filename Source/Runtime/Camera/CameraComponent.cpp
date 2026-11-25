@@ -198,4 +198,23 @@ void UCameraComponent::GetCameraView(float DeltaTime, FMinimalViewInfo& OutPOV) 
     OutPOV.NearClip = NearClipPlane;
     OutPOV.FarClip = FarClipPlane;
     OutPOV.bIsOrthogonal = bIsOrthogonal;
+	OutPOV.DepthOfField = GetDepthOfFieldSettings();
+}
+
+FDepthOfFieldSettings UCameraComponent::GetDepthOfFieldSettings() const
+{
+	FDepthOfFieldSettings Settings{};
+	Settings.bEnabled = bEnableDepthOfField;
+	Settings.FocalDistance = FocalDistance;
+	Settings.ApertureFStop = ApertureFStop;
+	Settings.MinimumFStop = MinimumFStop;
+	Settings.DiaphragmBladeCount = DiaphragmBladeCount;
+	Settings.SensorWidthMM = SensorWidthMM;
+	Settings.DepthBlurKmFor50Percent = DepthBlurKmFor50Percent;
+	Settings.DepthBlurRadius = DepthBlurRadius;
+	Settings.NearBlurScale = NearBlurScale;
+	Settings.FarBlurScale = FarBlurScale;
+	Settings.NearMaxBlurRadius = NearMaxBlurRadius;
+	Settings.FarMaxBlurRadius = FarMaxBlurRadius;
+	return Settings;
 }

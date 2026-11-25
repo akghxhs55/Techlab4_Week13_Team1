@@ -137,6 +137,10 @@ void FSkeletalMeshObjectCPUSkin::Update(const TArray<FMatrix>& ComponentSpaceTra
 		SCOPE_CYCLE_COUNTER(SkinningStats::STAT_CpuSkinning);
 		SkinVerticesCPU(SkinnedVertices, SkinnedBounds);
 	}
+	if (PostSkinDeformCallback)
+	{
+		PostSkinDeformCallback(SkinnedVertices, SkinnedBounds);
+	}
 	UploadVertices();
 }
 
@@ -176,7 +180,36 @@ void FSkeletalMeshObjectGPUSkin::Update(const TArray<FMatrix>& ComponentSpaceTra
 	UpdateRefToLocalMatrices(ComponentSpaceTransforms);
 	UpdateSkinnedBoundsFromBones();
 	UploadBoneMatrices();
-	bCPUVerticesDirty = true;
+	if (PostSkinDeformCallback)
+	{
+		const FSkeletalMeshLODRenderData& LOD = SkeletalMesh->GetRenderData().LODRenderData[0];
+		const int32 VertexCount = LOD.BindVertices.Num();
+		if (CPUVertices.Num() != VertexCount)
+		{
+			CPUVertices.SetNum(VertexCount);
+		}
+		SkinVerticesCPU(CPUVertices, SkinnedBounds);
+		BaseSkinnedScratch = CPUVertices;
+		PostSkinDeformCallback(CPUVertices, SkinnedBounds);
+
+		EnsureDeformDeltaBuffer();
+		DeformDeltas.SetNum(VertexCount);
+		for (int32 i = 0; i < VertexCount; ++i)
+		{
+			DeformDeltas[i].PositionOffset = CPUVertices[i].Position - BaseSkinnedScratch[i].Position;
+			DeformDeltas[i].NormalOffset = CPUVertices[i].Normal - BaseSkinnedScratch[i].Normal;
+			DeformDeltas[i].StretchDelta = CPUVertices[i].Color.W - LOD.BindVertices[i].Color.W;
+			DeformDeltas[i].CreaseDelta = CPUVertices[i].Color.Z - LOD.BindVertices[i].Color.Z;
+		}
+		UploadDeformDeltas();
+		VertexFactory.SetDeformBuffer(DeformDeltaBuffer.get());
+		bCPUVerticesDirty = false;
+	}
+	else
+	{
+		VertexFactory.SetDeformBuffer(nullptr);
+		bCPUVerticesDirty = true;
+	}
 }
 
 const TArray<FVertex>* FSkeletalMeshObjectGPUSkin::GetCPUSkinnedVertices() const
@@ -213,6 +246,34 @@ void FSkeletalMeshObjectGPUSkin::UploadBoneMatrices()
 	if (!Dst) return;
 	std::memcpy(Dst, RefToLocal.GetData(), sizeof(FMatrix) * RefToLocal.Num());
 	RenderCommand::Unmap(BoneMatrixBuffer.get());
+}
+
+void FSkeletalMeshObjectGPUSkin::EnsureDeformDeltaBuffer()
+{
+	const uint32 VertexCount = static_cast<uint32>(SkeletalMesh->GetRenderData().LODRenderData[0].BindVertices.Num());
+	if (VertexCount == 0)
+	{
+		return;
+	}
+	if (!DeformDeltaBuffer || DeformDeltaBuffer->GetCapacity() != VertexCount)
+	{
+		DeformDeltaBuffer = RenderCommand::CreateDynamicStructuredBuffer(VertexCount, sizeof(FSkinVertexDeformDelta));
+	}
+}
+
+void FSkeletalMeshObjectGPUSkin::UploadDeformDeltas()
+{
+	if (!DeformDeltaBuffer || DeformDeltas.IsEmpty())
+	{
+		return;
+	}
+	void* Dst = RenderCommand::MapWriteDiscard(DeformDeltaBuffer.get());
+	if (!Dst)
+	{
+		return;
+	}
+	std::memcpy(Dst, DeformDeltas.GetData(), sizeof(FSkinVertexDeformDelta) * static_cast<size_t>(DeformDeltas.Num()));
+	RenderCommand::Unmap(DeformDeltaBuffer.get());
 }
 
 

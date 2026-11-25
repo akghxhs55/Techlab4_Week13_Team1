@@ -46,6 +46,8 @@ public:
 	virtual bool CanJump() const;
 	bool IsFalling() const;
 	void LaunchCharacter(const FVector& Direction, float Strength);
+	bool StartRagdoll();
+	void StopRagdoll();
 	virtual void Attack() {}
 	float PlayAnimMontage(const FString& MontagePath, float InPlayRate = 1.0f, const FString& StartSection = "");
 	void SetDeathDissolveParams(float InDuration, const FVector4& InEdgeColor);
@@ -64,6 +66,12 @@ protected:
 	float DissolveDuration = 1.45f;
 
 private:
+	friend class USkeletalMeshComponent;
+	void RestoreRagdollMovementAndCollision();
+	bool bMovementTickBeforeRagdoll = false;
+	bool bCapsuleOverlapBeforeRagdoll = false;
+	bool bCapsuleBlockBeforeRagdoll = false;
+	uint8 CapsuleCollisionBeforeRagdoll = 0;
 	void EnsureDeathDissolveSetup();
 	UParticleSystemComponent* DeathParticleComponent = nullptr;
 	TArray<UMaterialInstanceDynamic*> DissolveMaterials;

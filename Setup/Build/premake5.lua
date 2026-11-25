@@ -124,6 +124,7 @@ IncludeDir["DDSLoader"] = ProjectRoot .. "/Source/ThirdParty/DDSLoader"
 IncludeDir["lua"]   = ProjectRoot .. "/Source/ThirdParty/lua/src"
 IncludeDir["sol2"]  = ProjectRoot .. "/Source/ThirdParty/sol2/include"
 IncludeDir["miniaudio"]  = ProjectRoot .. "/Source/ThirdParty/miniaudio"
+IncludeDir["NvClothBridge"] = ProjectRoot .. "/Source/ThirdParty/NvClothBridge"
 
 -- premake의 filter는 project()를 만나면 초기화된다.
 -- 두 프로젝트가 같은 런타임(/MDd vs /MD)으로 컴파일되지 않으면 링크가 실패하므로
@@ -205,6 +206,103 @@ project "KurisuHeaderTool"
 		ProjectRoot .. "/Source/Programs/KurisuHeaderTool/**.cpp",
 	}
 
+project "NvCloth"
+	location (ProjectRoot .. "/Build/Projects")
+	kind     "SharedLib"
+	language "C++"
+	cppdialect "C++17"
+	staticruntime "off"
+	characterset "Unicode"
+	multiprocessorcompile "On"
+
+	targetdir (ProjectRoot .. "/Build/Bin/" .. outputdir)
+	objdir    (ProjectRoot .. "/Build/Intermediate/" .. outputdir .. "/%{prj.name}")
+
+	local NvClothRoot = ProjectRoot .. "/Source/ThirdParty/NvCloth/NvCloth"
+	local NvPxSharedRoot = ProjectRoot .. "/Source/ThirdParty/NvCloth/PxShared"
+	local NvClothBridgeRoot = ProjectRoot .. "/Source/ThirdParty/NvClothBridge"
+
+	includedirs
+	{
+		NvClothBridgeRoot,
+		NvPxSharedRoot .. "/include",
+		NvPxSharedRoot .. "/src/foundation/include",
+		NvClothRoot .. "/include",
+		NvClothRoot .. "/extensions/include",
+		NvClothRoot .. "/src",
+		NvClothRoot .. "/extensions/src",
+	}
+
+	files
+	{
+		NvClothBridgeRoot .. "/ClothBridge.h",
+		NvClothBridgeRoot .. "/NvClothBridge.cpp",
+		NvClothRoot .. "/include/NvCloth/*.h",
+		NvClothRoot .. "/include/NvCloth/ps/*.h",
+		NvClothRoot .. "/include/NvCloth/ps/PsAllocator.cpp",
+		NvClothRoot .. "/src/*.h",
+		NvClothRoot .. "/src/*.cpp",
+		NvClothRoot .. "/src/avx/SwSolveConstraints.cpp",
+		NvClothRoot .. "/src/NvSimd/*.h",
+		NvClothRoot .. "/src/NvSimd/scalar/*.h",
+		NvClothRoot .. "/src/NvSimd/sse2/*.h",
+		NvClothRoot .. "/src/scalar/*.h",
+		NvClothRoot .. "/src/sse2/*.h",
+		NvClothRoot .. "/src/ps/*.h",
+		NvClothRoot .. "/src/ps/windows/PsWindowsAtomic.cpp",
+		NvClothRoot .. "/src/ps/windows/PsWindowsFPU.h",
+		NvClothRoot .. "/src/ps/windows/PsWindowsInclude.h",
+		NvClothRoot .. "/extensions/include/NvClothExt/*.h",
+		NvClothRoot .. "/extensions/src/*.cpp",
+	}
+
+	vpaths
+	{
+		["Bridge/*"] = NvClothBridgeRoot .. "/*",
+		["NvCloth/Include/*"] = NvClothRoot .. "/include/**",
+		["NvCloth/Src/*"] = NvClothRoot .. "/src/**",
+		["NvCloth/Extensions/*"] = NvClothRoot .. "/extensions/**",
+	}
+
+	defines
+	{
+		"WIN32",
+		"WIN64",
+		"_CRT_SECURE_NO_DEPRECATE",
+		"_CRT_NONSTDC_NO_DEPRECATE",
+		"_WINSOCK_DEPRECATED_NO_WARNINGS",
+		"NV_CLOTH_IMPORT=PX_DLL_EXPORT",
+		"NV_CLOTH_ENABLE_DX11=0",
+		"NV_CLOTH_ENABLE_CUDA=0",
+		"NVCLOTH_BRIDGE_EXPORTS",
+	}
+
+	filter "system:windows"
+		systemversion "latest"
+		buildoptions { "/utf-8" }
+
+	filter "files:**/src/avx/SwSolveConstraints.cpp"
+		vectorextensions "AVX"
+
+	filter "configurations:Debug"
+		defines { "_DEBUG", "PX_DEBUG=1", "PX_CHECKED=1" }
+		runtime "Debug"
+		symbols "on"
+
+	filter "configurations:Release"
+		defines { "NDEBUG", "PX_PROFILE=1" }
+		runtime "Release"
+		optimize "on"
+		symbols "on"
+
+	filter "configurations:Shipping"
+		defines { "NDEBUG" }
+		runtime "Release"
+		optimize "speed"
+		symbols "on"
+
+	filter {}
+
 -- 런타임. 에디터를 모른다. include 경로에 Source/Editor가 없는 것이 그 방벽이다.
 project "KurisuEngine"
 	location (ProjectRoot .. "/Build/Projects")
@@ -234,6 +332,7 @@ project "KurisuEngine"
 		"%{IncludeDir.miniaudio}",
 		"%{IncludeDir.lua}",
 		"%{IncludeDir.sol2}",
+		"%{IncludeDir.NvClothBridge}",
 	}
 
 	-- Lua는 엔진에 포함한다. 인터프리터/컴파일러 실행 파일의 main은 제외한다.
@@ -299,7 +398,7 @@ project "KurisuEditor"
 	pchheader "EnginePCH.h"
 	pchsource (ProjectRoot .. "/Source/Editor/EditorPCH.cpp")
 
-	links { "KurisuEngine" }
+	links { "KurisuEngine", "NvCloth" }
 
 	-- ImGui와 NodeEditor는 에디터에서만 컴파일하고 엔진 PCH를 사용하지 않는다.
 	files
@@ -362,6 +461,7 @@ project "KurisuEditor"
 		"%{IncludeDir.json}",
 		"%{IncludeDir.lua}",
 		"%{IncludeDir.sol2}",
+		"%{IncludeDir.NvClothBridge}",
 	}
 
 	links
@@ -393,7 +493,7 @@ function ConfigureGameRuntime()
 	pchheader "EnginePCH.h"
 	pchsource (ProjectRoot .. "/Source/Game/GamePCH.cpp")
 
-	links { "KurisuEngine" }
+	links { "KurisuEngine", "NvCloth" }
 
 	-- 에디터와 같은 이유로 엔진 .obj를 직접 링크한다. 게임 코드는 라이트 액터 등을 직접 참조하지 않아 특히 빠지기 쉽다.
 	ConfigureSourceLink()
@@ -417,6 +517,7 @@ function ConfigureGameRuntime()
 		"%{IncludeDir.json}",
 		"%{IncludeDir.lua}",
 		"%{IncludeDir.sol2}",
+		"%{IncludeDir.NvClothBridge}",
 	}
 
 	links

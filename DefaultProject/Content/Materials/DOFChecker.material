@@ -1,0 +1,53 @@
+{
+	"Class": "UMaterial",
+	"Object": {
+		"BaseColor": {
+			"W": 1.0,
+			"X": 1.0,
+			"Y": 1.0,
+			"Z": 1.0
+		},
+		"BlendState": "Opaque",
+		"EmissiveColor": {
+			"X": 0.0,
+			"Y": 0.0,
+			"Z": 0.0
+		},
+		"EmissiveFactor": 1.0,
+		"ExpressionConnections": [],
+		"ExpressionNodes": [],
+		"FlipNormalY": false,
+		"OutputNodeId": 0,
+		"OverrideShadingModel": false,
+		"PSOType": 0,
+		"Properties": {},
+		"SamplerState": "LinearWrap",
+		"ShadingModel": 2,
+		"Shininess": 32.0,
+		"SpecularColor": {
+			"X": 0.35,
+			"Y": 0.35,
+			"Z": 0.35
+		},
+		"SpecularFactor": 0.35,
+		"Textures": [
+			"Textures/Common/Checker.png",
+			"FlatNormalTexture"
+		],
+		"UVScrollSpeed": [
+			0.0,
+			0.0
+		],
+		"UVTiling": [
+			1.0,
+			1.0
+		],
+		"UsageFlags": 3,
+		"WorldUVLocalSpace": false,
+		"WorldUVTileSize": [
+			1.0,
+			1.0
+		]
+	},
+	"Version": 1
+}

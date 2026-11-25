@@ -5,6 +5,8 @@
 
 class AZombieActor;
 class UCameraComponent;
+class UClothComponent;
+class UMaterialInstanceDynamic;
 class UParticleSystemComponent;
 class USpringArmComponent;
 class UStaticMeshComponent;
@@ -28,13 +30,17 @@ public:
 	int32 GetHealth() const { return Health; }
 	USpringArmComponent* GetSpringArmComponent() const { return SpringArmComponent; }
 	UCameraComponent* GetCameraComponent() const { return CameraComponent; }
+	UClothComponent* GetCapeClothComponent() const { return CapeClothComponent; }
 
 private:
 	bool IsPlayingFullBodyMontage() const;
+	void EnsureCapeSetup();
 	USpringArmComponent* SpringArmComponent = nullptr;
 	UCameraComponent* CameraComponent = nullptr;
 	UStaticMeshComponent* SwordMeshComponent = nullptr;
 	UParticleSystemComponent* SwordRibbonComponent = nullptr;
+	UClothComponent* CapeClothComponent = nullptr;
+	UMaterialInstanceDynamic* CapeMaterialInstance = nullptr;
 	TMap<AZombieActor*, float> ZombieHitCooldowns;
 	float ElapsedTime = 0.0f;
 	UPROPERTY(EditAnywhere)

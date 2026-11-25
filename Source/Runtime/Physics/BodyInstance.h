@@ -59,6 +59,7 @@ struct FBodyInstance
 	void SetBodyTransform(const FTransform& WorldTransform, ETeleportType TeleportType);
 	FTransform GetUnrealWorldTransform() const;
 	void SetInstanceSimulatePhysics(bool bSimulate);
+	void SetCollisionEnabled(ECollisionEnabled InCollisionEnabled);
 	void AddImpulse(const FVector& Impulse, bool bVelocityChange);
 	void AddForce(const FVector& Force);
 	void SetLinearVelocity(const FVector& Velocity);

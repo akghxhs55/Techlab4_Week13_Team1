@@ -44,6 +44,7 @@ public:
 	void OpenAnimBlueprintPreview(const FString& PreviewMeshPath);
 	// .physics.json은 해당 문서를 열고, 스켈레탈 메시는 독립된 새 Physics Asset 문서를 만듭니다.
 	void OpenPhysicsAssetEditor(const FString& AssetPath);
+	void OpenClothingEditor(const FString& MeshAssetPath);
 
 	// 이 문서 키를 연 에디터. 기본 에디터의 문서 키는 에셋 경로입니다.
 	FAssetEditor* FindEditor(const FString& Path) const;
@@ -67,4 +68,6 @@ private:
 	TArray<FString> PendingAnimBlueprintPreviews;
 	void CreatePhysicsAssetEditor(const FString& AssetPath);
 	TArray<FString> PendingPhysicsAssetOpens;
+	void CreateClothingEditor(const FString& MeshAssetPath);
+	TArray<FString> PendingClothingEditors;
 };

@@ -27,13 +27,15 @@ struct FEditorSettings
 	bool bDrawBatchLine = true;
 	bool bDrawCascadeBounds = false;
 	bool bEnableFXAA = false;
+	bool bEnableDOF = true;
+	bool bVisualizeDOF = false;
 	bool bDrawDecals = true;
 	bool bDecalCulling = true;
 	bool bDecalNarrowCulling = true;
 	bool bDecalBVHCulling = true;
 	bool bDecalOBBTree = true;
 	ELightCullingMode LightCullingMode = ELightCullingMode::Tiled;
-	ELightingModel LightingModel = ELightingModel::Gouraud;
+	ELightingModel LightingModel = ELightingModel::Phong;
 
 	// Values
 	float SceneDepthMaxRange = 50.0f;

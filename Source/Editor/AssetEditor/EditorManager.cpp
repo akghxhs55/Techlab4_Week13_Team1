@@ -24,6 +24,9 @@
 #include "Editor/ParticleSystemEditor/ParticleSystemEditor.h"
 #include "Particles/ParticleSystemFile.h"
 #include "Physics/PhysicsAssetFile.h"
+#include "Editor/ClothingEditor/ClothingEditor.h"
+#include "Render/StockingRegion.h"
+#include "UObject/UObjectGlobals.h"
 
 #include <filesystem>
 #include <cctype>
@@ -32,6 +35,7 @@
 namespace
 {
 	constexpr int32 PhysicsAssetEditorLauncherIndex = 7;
+	constexpr int32 ClothingEditorLauncherIndex = 8;
 	struct FEditorLauncher
 	{
 		const char* Label;
@@ -48,6 +52,7 @@ namespace
 		{ "UI Editor...", L"Open UI Editor", L"Widget (*.widget)\0*.widget\0" },
 		{ "Particle System Editor...", L"Open Particle System Editor", L"Particle System (*.particle)\0*.particle\0" },
 		{ "Physics Asset Editor...", L"Open Physics Asset or Select Mesh to Create New", L"Physics Asset / Skeletal Mesh\0*.physics.json;*.fbx.bin\0Physics Asset\0*.physics.json\0Skeletal Mesh\0*.fbx.bin\0" },
+		{ "Clothing Editor...", L"Open Clothing Editor", L"Skeletal Mesh / Stocking Region (*.fbx.bin;*.stockingregion)\0*.fbx.bin;*.stockingregion\0" },
 	};
 }
 
@@ -88,6 +93,7 @@ void FEditorManager::ShowEditorAssetPicker(int32 EditorType)
 	}
 
 	const FString Path = FPaths::ToUtf8(std::filesystem::path(FilePath));
+	const bool bIsStockingRegion = Path.ends_with(".stockingregion");
 	const bool bMatchesType =
 		(EditorType == 0 && (std::filesystem::path(FilePath).extension() == L".obj" || FFbxMeshBake::IsBakedPath(Path))) ||
 		(EditorType == 1 && FFbxMeshBake::IsBakedPath(Path)) ||
@@ -95,13 +101,15 @@ void FEditorManager::ShowEditorAssetPicker(int32 EditorType)
 		(EditorType == 3 && AnimBlueprintFile::IsAnimBlueprintPath(Path)) ||
 		(EditorType == 4 && BlendSpaceFile::IsBlendSpacePath(Path)) ||
 		(EditorType == 5 && FUIEditor::IsWidgetPath(Path)) ||
-		(EditorType == PhysicsAssetEditorLauncherIndex && (FFbxMeshBake::IsBakedPath(Path) || PhysicsAssetFile::IsPhysicsAssetPath(Path)));
+		(EditorType == 6 && ParticleSystemFile::IsParticleSystemPath(Path)) ||
+		(EditorType == PhysicsAssetEditorLauncherIndex && (FFbxMeshBake::IsBakedPath(Path) || PhysicsAssetFile::IsPhysicsAssetPath(Path))) ||
+		(EditorType == ClothingEditorLauncherIndex && (FFbxMeshBake::IsBakedPath(Path) || bIsStockingRegion));
 	if (!bMatchesType)
 	{
 		MessageBoxW(Dialog.hwndOwner, L"Select an asset matching the editor type.", Launcher.Title, MB_OK | MB_ICONWARNING);
 		return;
 	}
-	if ((EditorType <= 1 || EditorType == PhysicsAssetEditorLauncherIndex) && FFbxMeshBake::IsBakedPath(Path))
+	if ((EditorType <= 1 || EditorType == PhysicsAssetEditorLauncherIndex || EditorType == ClothingEditorLauncherIndex) && FFbxMeshBake::IsBakedPath(Path))
 	{
 		FFbxBakedMesh Mesh;
 		FString Error;
@@ -120,6 +128,8 @@ void FEditorManager::ShowEditorAssetPicker(int32 EditorType)
 	}
 	if (EditorType == PhysicsAssetEditorLauncherIndex)
 		OpenPhysicsAssetEditor(Path);
+	else if (EditorType == ClothingEditorLauncherIndex && !bIsStockingRegion)
+		OpenClothingEditor(Path);
 	else
 		OpenEditor(Path);
 }
@@ -324,6 +334,46 @@ void FEditorManager::CreateEditor(const FString& AssetPath)
 		return;
 	}
 
+	// 스타킹 영역 파일은 원본 스켈레탈 메시와 함께 클로딩 에디터로 열기
+	if (AssetPath.ends_with(".stockingregion"))
+	{
+		const FString RegionFile = FAssetUtils::ResolveAssetFilePath(AssetPath);
+		const FString ResolvedRegionFile = RegionFile.empty() ? AssetPath : RegionFile;
+		UStockingRegion* TempRegion = NewObject<UStockingRegion>();
+		FString RegionError;
+		if (!TempRegion || !TempRegion->LoadFromFile(ResolvedRegionFile, RegionError))
+		{
+			KRS_LOG(Warning, "Failed to read stocking region: {} ({})", AssetPath, RegionError);
+			return;
+		}
+		const FString MeshPath = TempRegion->SourceMeshPath;
+		const FString MeshFile = FAssetUtils::ResolveAssetFilePath(MeshPath);
+		URenderAsset* MeshAsset = UAssetManager::GetAssetByPath<USkeletalMesh>(MeshPath);
+		if (!MeshAsset && !MeshFile.empty() && FFbxMeshBake::IsBakedPath(MeshFile))
+		{
+			FString LoadError;
+			MeshAsset = UAssetManager::LoadFbxMesh(MeshFile, LoadError);
+		}
+		USkeletalMesh* SkelMesh = Cast<USkeletalMesh>(MeshAsset);
+		if (!SkelMesh)
+		{
+			KRS_LOG(Warning, "Stocking region source skeletal mesh not found: {}", MeshPath);
+			return;
+		}
+
+		TUniquePtr<FAssetEditor> Editor = MakeUnique<FClothingEditor>(
+			EditorEngine, *this, AssetPath, MeshPath, *SkelMesh, ResolvedRegionFile);
+		if (!Editor->Initialize())
+		{
+			Editor->Shutdown();
+			KRS_LOG(Warning, "Clothing editor initialization failed: {}", AssetPath);
+			return;
+		}
+		Editors.Add(std::move(Editor));
+		KRS_LOG(Info, "Opened clothing editor for region: {}", AssetPath.c_str());
+		return;
+	}
+
 	// 애셋을 불러온다
 	URenderAsset* Asset = UAssetManager::GetAssetByPath<URenderAsset>(AssetPath);
 	
@@ -473,6 +523,13 @@ void FEditorManager::LateTick()
 	{
 		CreatePhysicsAssetEditor(Path);
 	}
+
+	TArray<FString> ClothingRequests = std::move(PendingClothingEditors);
+	PendingClothingEditors = {};
+	for (const FString& Path : ClothingRequests)
+	{
+		CreateClothingEditor(Path);
+	}
 }
 
 void FEditorManager::Shutdown()
@@ -487,6 +544,7 @@ void FEditorManager::Shutdown()
 	PendingOpens.Empty();
 	PendingAnimBlueprintPreviews.Empty();
 	PendingPhysicsAssetOpens.Empty();
+	PendingClothingEditors.Empty();
 
 	for (auto& Editor : Editors)
 	{
@@ -630,4 +688,67 @@ void FEditorManager::CreatePhysicsAssetEditor(const FString& AssetPath)
 	}
 	Editors.Add(std::move(Editor));
 	KRS_LOG(Info, "Opened Physics Asset Editor: {} (mesh: {})", DocumentPath, PreviewMeshPath);
+}
+
+void FEditorManager::OpenClothingEditor(const FString& MeshAssetPath)
+{
+	if (bShuttingDown)
+	{
+		return;
+	}
+
+	const FString Path = FAssetUtils::GetAssetKey(MeshAssetPath);
+	if (Path.empty())
+	{
+		return;
+	}
+
+	PendingClothingEditors.Add(Path);
+}
+
+void FEditorManager::CreateClothingEditor(const FString& MeshAssetPath)
+{
+	const FString DocumentKey = MeshAssetPath + ".clothing";
+	if (FAssetEditor* Existing = FindEditor(DocumentKey))
+	{
+		Existing->Activate();
+		return;
+	}
+
+	URenderAsset* Asset = UAssetManager::GetAssetByPath<URenderAsset>(MeshAssetPath);
+	const FString FilePath = FAssetUtils::ResolveAssetFilePath(MeshAssetPath);
+	if (!Asset && !FilePath.empty())
+	{
+		const FString ProjectPath = std::filesystem::path(FilePath)
+			.lexically_relative(std::filesystem::current_path()).generic_string();
+		Asset = UAssetManager::GetAssetByPath<URenderAsset>(ProjectPath);
+		if (!Asset)
+		{
+			Asset = UAssetManager::GetAssetByPath<URenderAsset>(FilePath);
+		}
+	}
+	if (!Asset && !FilePath.empty() && FFbxMeshBake::IsBakedPath(FilePath))
+	{
+		FString Error;
+		Asset = UAssetManager::LoadFbxMesh(FilePath, Error);
+	}
+
+	USkeletalMesh* SkelMesh = Cast<USkeletalMesh>(Asset);
+	if (!SkelMesh)
+	{
+		KRS_LOG(Warning, "Clothing editor requires a skeletal mesh: {}", MeshAssetPath);
+		return;
+	}
+
+	TUniquePtr<FAssetEditor> Editor = MakeUnique<FClothingEditor>(
+		EditorEngine, *this, DocumentKey, MeshAssetPath, *SkelMesh);
+	if (!Editor->Initialize())
+	{
+		Editor->Shutdown();
+		KRS_LOG(Warning, "Clothing editor initialization failed: {}", MeshAssetPath);
+		return;
+	}
+
+	Editors.Add(std::move(Editor));
+	KRS_LOG(Info, "Opened clothing editor: {}", MeshAssetPath.c_str());
 }

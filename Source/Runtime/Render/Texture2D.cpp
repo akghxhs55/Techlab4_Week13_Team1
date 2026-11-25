@@ -2,6 +2,7 @@
 #include "Texture2D.h"
 
 #include "RenderCommand.h"
+#include "UObject/UObjectGlobals.h"
 
 
 FTexture2D::FTexture2D(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& InDesc, const FImageData& Image)
@@ -101,6 +102,50 @@ UTexture2D::UTexture2D()
 }
 UTexture2D::~UTexture2D()
 {
+}
+
+UTexture2D* UTexture2D::CreateDynamicTexture(uint32 InWidth, uint32 InHeight, const void* InitialData)
+{
+	if (InWidth == 0 || InHeight == 0)
+	{
+		return nullptr;
+	}
+
+	UTexture2D* NewTex = NewObject<UTexture2D>();
+	if (!NewTex)
+	{
+		return nullptr;
+	}
+
+	FTextureDesc Desc{};
+	Desc.Width = InWidth;
+	Desc.Height = InHeight;
+	Desc.MipLevels = 1;
+	Desc.ArraySize = 1;
+	Desc.Format = ETextureFormat::R8G8B8A8_UNorm;
+	Desc.BindFlags = ETextureBindFlags::ShaderResource;
+	Desc.Usage = ETextureUsage::Default;
+	Desc.bGenerateMips = false;
+
+	TUniquePtr<FTexture2D> Resource = RenderCommand::CreateTexture2D(Desc, InitialData);
+	if (!Resource || !Resource->GetSRV())
+	{
+		return nullptr;
+	}
+
+	NewTex->SetResource(std::move(Resource));
+	return NewTex;
+}
+
+void UTexture2D::UpdateDynamicPixels(const void* PixelData, uint32 RowPitch)
+{
+	if (!Texture || !PixelData || GetWidth() == 0 || GetHeight() == 0)
+	{
+		return;
+	}
+
+	const uint32 EffectivePitch = (RowPitch > 0) ? RowPitch : (GetWidth() * 4u);
+	RenderCommand::UpdateTextureSubregion(Texture.get(), 0, 0, GetWidth(), GetHeight(), PixelData, EffectivePitch);
 }
 
 FTexture2DArray::FTexture2DArray(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& InDesc, const void* InitialData, uint32 RowPitch)

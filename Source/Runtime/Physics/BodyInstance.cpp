@@ -111,7 +111,13 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 		KRS_LOG(Error, "[PhysX] createRigidDynamic failed");
 		return;
 	}
-	Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics);
+	Dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, !bSimulatePhysics); // 두번째 인자가 true면 물리에 의해 움직임, false면 게임 로직에 의해 움직임
+	if (BoneIndex != INDEX_NONE)
+	{
+		Dynamic->setSolverIterationCounts(12, 4);
+		Dynamic->setMaxDepenetrationVelocity(2.0f);
+		Dynamic->setMaxAngularVelocity(12.0f);
+	}
 
 	if (CreateShapes(*Dynamic, InBodySetup->AggGeom, WorldTransform.Scale, CollisionEnabled) == 0)
 	{
@@ -133,8 +139,8 @@ void FBodyInstance::InitBody(UBodySetup* InBodySetup, const FTransform& WorldTra
 		}
 	}
 
-	Dynamic->setLinearDamping(LinearDamping);
-	Dynamic->setAngularDamping(AngularDamping);
+	Dynamic->setLinearDamping(LinearDamping); // 선속도 감쇠 계수
+	Dynamic->setAngularDamping(AngularDamping); // 각속도 감쇠 계수
 	Dynamic->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, !bEnableGravity);
 
 	Dynamic->userData = this;
@@ -300,6 +306,20 @@ void FBodyInstance::SetInstanceSimulatePhysics(bool bSimulate)
 	{
 		Dynamic->wakeUp();
 	}
+}
+
+void FBodyInstance::SetCollisionEnabled(ECollisionEnabled InCollisionEnabled)
+{
+	CollisionEnabled = InCollisionEnabled;
+	if (!RigidActor)
+		return;
+
+	const PxU32 ShapeCount = RigidActor->getNbShapes();
+	TArray<PxShape*> Shapes;
+	Shapes.SetNum(static_cast<int32>(ShapeCount));
+	RigidActor->getShapes(Shapes.GetData(), ShapeCount);
+	for (PxShape* Shape : Shapes)
+		ApplyCollisionFlags(Shape, CollisionEnabled);
 }
 
 void FBodyInstance::AddImpulse(const FVector& Impulse, bool bVelocityChange)

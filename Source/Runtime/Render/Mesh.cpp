@@ -16,6 +16,14 @@ UStaticMesh::~UStaticMesh()
 	IndexBuffer = nullptr;
 }
 
+void UStaticMesh::ClearBodySetup(const UBodySetup* InBodySetup)
+{
+	if (BodySetup == InBodySetup)
+	{
+		BodySetup = nullptr;
+	}
+}
+
 UBodySetup* UStaticMesh::GetBodySetup()
 {
     if (BodySetup)

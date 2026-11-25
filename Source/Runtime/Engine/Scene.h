@@ -120,7 +120,7 @@ private:
 
 	bool bHasCachedOptions = false;
 	uint64 CachedMaterialRevision = 0;
-	ELightingModel CachedLightingModel = ELightingModel::Gouraud;
+	ELightingModel CachedLightingModel = ELightingModel::Phong;
 
 	void RecordShadowInvalidation(const FAABB& Bounds);
 	void InvalidateAllShadows();

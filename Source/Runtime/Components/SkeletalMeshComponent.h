@@ -2,9 +2,14 @@
 
 #include "SkinnedMeshComponent.h"
 #include "Animation/AnimInstance.h"
+#include <functional>
 #include "SkeletalMeshComponent.generated.h"
 
 struct FConstraintInstance;
+struct FBodyInstance;
+struct FPhysicsContactImpact;
+struct FHitResult;
+struct FRay;
 class UAnimInstance;
 class UAnimSequence;
 class UBlendSpace1D;
@@ -15,6 +20,19 @@ namespace physx
 {
 	class PxAggregate;
 }
+
+struct FSkeletalPhysicsImpact
+{
+	int32 BoneIndex = -1;
+	FVector WorldLocation = FVector::ZeroVector;
+	FVector WorldNormal = FVector(0.0f, 0.0f, 1.0f);
+	FVector WorldImpulse = FVector::ZeroVector;
+	FVector WorldSlideVelocity = FVector::ZeroVector;
+	float ImpulseMagnitude = 0.0f;
+	bool bFromExternalImpulse = false;
+};
+
+using FSkeletalPhysicsImpactCallback = std::function<void(const FSkeletalPhysicsImpact&)>;
 
 // World의 SkeletalMeshComponent마다 root 디버그를 그린다 (DrawCollisionShapes와 같은 방식). PIE의 Show Root에서 호출
 void DrawSkeletalRootDebug(UWorld* World, FLineBatcher* LineBatcher);
@@ -66,6 +84,28 @@ public:
 	void TermArticulated();
 	void UpdateKinematicBonesToAnim(ETeleportType TeleportType);
 	void BlendInPhysics();
+
+	void SetPhysicsAsset(UPhysicsAsset* InAsset);
+	UPhysicsAsset* GetPhysicsAsset() const;
+	bool StartRagdoll();
+	void StopRagdoll();
+	bool SetRagdollSimulationEnabled(bool bEnable);
+	bool IsRagdollActive() const;
+
+	UPROPERTY(EditAnywhere)
+	bool bStartRagdollOnBeginPlay = false;
+
+	FBodyInstance* GetBodyInstance(const FString& BoneName) const;
+	void AddImpulseToBone(const FString& BoneName, const FVector& Impulse, bool bVelocityChange = false);
+	void SetRagdollLinearVelocity(const FVector& Velocity);
+	bool IsAnyBodySimulatingPhysics() const;
+	void AddPhysicsImpactListener(const void* ListenerKey, FSkeletalPhysicsImpactCallback Callback);
+	void RemovePhysicsImpactListener(const void* ListenerKey);
+	void NotifyPhysicsContactImpact(const FPhysicsContactImpact& ContactImpact);
+	int32 FindBoneIndexForBody(const FBodyInstance* Body) const;
+	bool HasArticulatedBodies() const;
+	bool RaycastPhysicsBodies(const FRay& WorldRay, FHitResult& OutHit) const;
+	bool SweepPhysicsBodies(const FRay& WorldRay, float MaxDistance, float Radius, FHitResult& OutHit) const;
 
 	const TArray<FBoneInfo>& GetBones() const;
 	int32 FindBoneIndex(const FString& Name) const;
@@ -136,9 +176,18 @@ protected:
 	void OnSkeletalMeshChanged() override;
 
 private:
+	FBodyInstance* FindArticulatedBody(const FString& BoneName) const;
 	void InitConstraints(const UPhysicsAsset& Asset);
 	bool IsSimulatingRagdoll() const;
 	void UpdateComponentToRootBody();
+
+	struct FPhysicsImpactListenerEntry
+	{
+		const void* Key = nullptr;
+		FSkeletalPhysicsImpactCallback Callback;
+	};
+	UPhysicsAsset* PhysicsAssetOverride = nullptr;
+	TArray<FPhysicsImpactListenerEntry> PhysicsImpactListeners;
 
     UPROPERTY()
     FString AnimBlueprintPath;

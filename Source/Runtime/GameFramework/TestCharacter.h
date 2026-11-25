@@ -5,6 +5,8 @@
 
 class ARifleActor;
 class UCameraComponent;
+class UClothComponent;
+class UMaterialInstanceDynamic;
 class UParticleSystemComponent;
 class USpringArmComponent;
 class UUserWidget;
@@ -29,6 +31,7 @@ public:
 	int32 GetHealth() const { return Health; }
 	USpringArmComponent* GetSpringArmComponent() const { return SpringArmComponent; }
 	UCameraComponent* GetCameraComponent() const { return CameraComponent; }
+	UClothComponent* GetSkirtClothComponent() const { return SkirtClothComponent; }
 	bool SetCameraTuning(float InNormalArmLength, float InNormalFOV, float InAimArmLength, float InAimFOV);
 	bool SetAimBlendAlphaOverride(float Alpha);
 	void ClearAimBlendAlphaOverride() { bAimBlendAlphaOverridden = false; }
@@ -42,9 +45,12 @@ protected:
 
 private:
 	void FireRifle();
+	void EnsureSkirtSetup();
 	USpringArmComponent* SpringArmComponent = nullptr;
 	UCameraComponent* CameraComponent = nullptr;
 	ARifleActor* EquippedRifle = nullptr;
+	UClothComponent* SkirtClothComponent = nullptr;
+	UMaterialInstanceDynamic* SkirtMaterialInstance = nullptr;
 	int32 RightHandBoneIndex = -1;
 	int32 LeftHandBoneIndex = -1;
 	UPROPERTY(EditAnywhere)

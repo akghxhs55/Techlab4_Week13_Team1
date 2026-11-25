@@ -20,6 +20,8 @@ public:
 	bool SetCombatTuning(float InDetectionRadius, float InAttackRadius,
 		float InAttackCooldown, float InWalkSpeed);
 	ACharacter* GetTarget() const { return Target; }
+	float GetBulletHitLaunchStrength() const { return BulletHitLaunchStrength; }
+	float GetRagdollBulletImpulseStrength() const { return RagdollBulletImpulseStrength; }
 
 private:
 	void OnRightHandOverlap(UPrimitiveComponent* Self, AActor* OtherActor, UPrimitiveComponent* OtherComponent);
@@ -36,4 +38,9 @@ private:
 	float AttackRadius = 2.0f;
 	UPROPERTY(EditAnywhere)
 	float AttackCooldown = 1.8f;
+	UPROPERTY(EditAnywhere)
+	float BulletHitLaunchStrength = 10.0f;
+
+	UPROPERTY(EditAnywhere)
+	float RagdollBulletImpulseStrength = 3.0f;
 };

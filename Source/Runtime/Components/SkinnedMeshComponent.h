@@ -56,6 +56,7 @@ protected:
 	virtual void RefreshBoneTransforms();
 	void SendRenderDynamicData();
 	virtual void OnSkeletalMeshChanged() {};
+	virtual void OnMeshObjectCreated() {};
 
 	TArray<FMatrix> ComponentSpaceTransforms;
 private:

@@ -164,6 +164,9 @@ void UEditorEngine::TickPIEInput(float DeltaTime)
 		ActiveViewIdx == PIEViewIndex &&
 		ViewportsPanel->IsHovered() &&
 		!ImGui::GetIO().WantTextInput && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup));
+	if (FInputSystem::IsKeyPressed(EKeyCode::K) || FInputSystem::IsKeyPressed(EKeyCode::L))
+		KRS_LOG(Info, "[RagdollInput] PIE key pressed; focused={}, captured={}, simulating={}",
+			bFocused, bGameMouseCaptured, bIsSimulatingInEditor);
 	if (!bFocused) { GameViewport.LostFocus(); return; }
 	if (!bGameMouseCaptured && !IsPIEInWindow() && bClickPressed && !bMouseOverPIE)
 	{

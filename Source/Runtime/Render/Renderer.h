@@ -14,6 +14,7 @@
 
 class FHeightFogRenderer;
 class FFXAARenderer;
+class FDepthOfFieldRenderer;
 class FCameraOverlayRenderer;
 
 class FTextRenderer;
@@ -41,6 +42,7 @@ public:
 	// FSceneRenderer::Render가 쓰는 상주 패스 객체. UE에서는 렌더러 모듈의 글로벌 자원에 해당한다.
 	FHeightFogRenderer* GetHeightFog() const { return HeightFog.get(); }
 	FFXAARenderer* GetFXAA() const { return FXAA.get(); }
+	FDepthOfFieldRenderer* GetDepthOfField() const { return DepthOfField.get(); }
 	FCameraOverlayRenderer* GetCameraOverlay() const { return CameraOverlay.get(); }
 	FTextRenderer* GetSceneText() const { return SceneText.get(); }
 	FSkyboxRenderer* GetSkybox() const { return Skybox.get(); }
@@ -78,6 +80,7 @@ private:
 
 	TUniquePtr<FHeightFogRenderer> HeightFog;
 	TUniquePtr<FFXAARenderer> FXAA;
+	TUniquePtr<FDepthOfFieldRenderer> DepthOfField;
 	TUniquePtr<FCameraOverlayRenderer> CameraOverlay;
 	TUniquePtr<FTextRenderer> SceneText;
 	TUniquePtr<FSkyboxRenderer> Skybox;

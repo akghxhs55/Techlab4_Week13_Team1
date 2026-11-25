@@ -27,6 +27,7 @@ class UAnimSequence;
 class UBlendSpace1D;
 class UBlendSpace2D;
 class UParticleSystem;
+class UPhysicsAsset;
 struct FSkeletalMaterialSlot;
 
 namespace fs = std::filesystem;
@@ -93,6 +94,8 @@ public:
 	static UBlendSpace1D* LoadBlendSpace(const FString& Path);
 	static UBlendSpace2D* LoadBlendSpace2D(const FString& Path);
 	static UParticleSystem* LoadParticleSystem(const FString& Path);
+	static UPhysicsAsset* LoadPhysicsAsset(const FString& Path, FString& OutError);
+	static void RegisterPhysicsAsset(const FString& Path, UPhysicsAsset* Asset);
 	static UMaterialInterface* LoadMaterialAsset(const FString& AssetPath);
 	static bool SaveMaterialAsset(const FString& AssetPath, const UMaterialInterface& Material);
 	static void RegisterMaterialAsset(const FString& AssetPath, UMaterialInterface* Material);
@@ -118,6 +121,12 @@ private:
 	TMap<FString, UBlendSpace1D*> BlendSpaceMap;
 	TMap<FString, UBlendSpace2D*> BlendSpace2DMap;
 	TMap<FString, UParticleSystem*> ParticleSystemMap;
+	struct FLoadedPhysicsAsset
+	{
+		UPhysicsAsset* Asset = nullptr;
+		fs::file_time_type LastWriteTime{};
+	};
+	TMap<FString, FLoadedPhysicsAsset> PhysicsAssetMap;
 
 	//TMap<FString, UStaticMesh*> MeshMap;	// KEY: FILE NAME OR 쉐입 첫글자 대문자
 	TMap<FString, TUniquePtr<FShader>> ShaderMap;	// KEY: FILE NAME

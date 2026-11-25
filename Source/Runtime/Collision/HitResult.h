@@ -1,5 +1,6 @@
 #pragma once
 #include "Core/Types.h"
+#include "Core/EngineString.h"
 #include "Math/Vector.h"
 
 class UPrimitiveComponent;
@@ -25,6 +26,7 @@ struct FHitResult
 	bool bStartPenetrating = false;
 
 	UPrimitiveComponent* HitComponent = nullptr;
+	FString BoneName;
 
 	FHitResult()
 	{

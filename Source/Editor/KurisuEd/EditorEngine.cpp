@@ -549,6 +549,10 @@ void UEditorEngine::InitPanels()
 	);
 
 	DetailsPanel->SetWorld(GetActiveWorld());
+	DetailsPanel->SetOpenPhysicsAssetCallback([this](const FString& Path)
+	{
+		if (EditorManager) EditorManager->OpenPhysicsAssetEditor(Path);
+	});
 
 	WorldSettingsPanel = LevelEditorTab->AddPanel<FWorldSettingsPanel>();
 	WorldSettingsPanel->SetWorld(GetActiveWorld());
@@ -1124,6 +1128,8 @@ void UEditorEngine::Tick(const float DeltaTime)
 					const FEditorSettings& S = EditorSettings->GetSettings();
 					FSceneRenderOptions& ShowFlags = Context->GameViewport->EngineShowFlags;
 					ShowFlags.bEnableFXAA = S.bEnableFXAA;
+					ShowFlags.bEnableDOF = S.bEnableDOF;
+					ShowFlags.bVisualizeDOF = S.bVisualizeDOF;
 					ShowFlags.bCacheShadows = S.bCacheShadows;
 					ShowFlags.PcfMode = S.PcfMode;
 					ShowFlags.LightingModel = S.LightingModel;

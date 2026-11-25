@@ -9,6 +9,7 @@ class FIndexBuffer;
 class FStructuredBuffer;
 
 inline constexpr uint32 BoneMatrixBufferSlot = 14; // GpuSkinCommon.hlsli의 t14
+inline constexpr uint32 SkinDeformBufferSlot = 15; // 정점 변형 델타 버퍼 슬롯
 
 enum class EVertexFactoryType : uint8
 {
@@ -64,11 +65,13 @@ public:
 		IndexBuffer = IB;
 		BoneBuffer = Bones;
 	}
+	void SetDeformBuffer(const FStructuredBuffer* InDeformBuffer) { DeformBuffer = InDeformBuffer; }
 	EVertexFactoryType GetType() const override { return EVertexFactoryType::GpuSkin; }
 	void Bind() const override;
 
 private:
 	const FStructuredBuffer* BoneBuffer = nullptr;
+	const FStructuredBuffer* DeformBuffer = nullptr;
 };
 
 class FInstancedVertexFactory : public FVertexFactory

@@ -5,9 +5,12 @@
 #include "GameFramework/Actor/DecalActor.h"
 #include "GameFramework/Actor/ParticleSystemActor.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/ParticleSystemComponent.h"
 #include "Components/ProjectileMovementComponent.h"
+#include "Physics/BodySetup.h"
+#include "Physics/PhysicsAsset.h"
 #include "Particles/ParticleSystem.h"
 #include "Asset/AssetManager.h"
 #include "Collision/HitResult.h"
@@ -28,6 +31,7 @@ AProjectileActor::AProjectileActor()
 	StaticMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>("ProjectileMeshComponent");
 	// 이동용 루트는 표시 상태와 분리한다
 	StaticMeshComponent->SetupAttachment(GetRootComponent());
+	StaticMeshComponent->BodyInstance.CollisionEnabled = ECollisionEnabled::NoCollision;
 	StaticMeshComponent->SetStaticMesh(UAssetManager::GetAssetByPath<UStaticMesh>("Sphere"));
 
 	static UMaterial* VisibleBulletMaterial = nullptr;
@@ -66,6 +70,7 @@ AProjectileActor::AProjectileActor()
 	// 라이트는 눈에 보이지 않으므로 발광체 구체를 함께 움직인다
 	FireBallMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>("FireBallMeshComponent");
 	FireBallMeshComponent->SetupAttachment(GetRootComponent());
+	FireBallMeshComponent->BodyInstance.CollisionEnabled = ECollisionEnabled::NoCollision;
 	FireBallMeshComponent->SetStaticMesh(UAssetManager::GetAssetByPath<UStaticMesh>("Sphere"));
 	FireBallMeshComponent->SetRelativeScale3D(FVector(FireBallLightComponent->GetAttenuationRadius() * 0.5f));
 	FireBallMeshComponent->SetVisibility(false);
@@ -202,7 +207,29 @@ void AProjectileActor::HandleProjectileImpact(AActor* OtherActor, const FHitResu
 		if (!Zombie->IsDead())
 		{
 			Zombie->ReactToHit();
-			if (!Zombie->IsDead()) Zombie->LaunchCharacter(-Hit.ImpactNormal, 10.0f);
+			if (!Zombie->IsDead()) Zombie->LaunchCharacter(-Hit.ImpactNormal, Zombie->GetBulletHitLaunchStrength());
+			else if (USkeletalMeshComponent* Mesh = Zombie->GetSkeletalMeshComponent(); Mesh && Mesh->IsRagdollActive())
+			{
+				FString BoneName = Hit.BoneName;
+				if (!Mesh->GetBodyInstance(BoneName))
+				{
+					float NearestDistanceSquared = FLT_MAX;
+					if (const UPhysicsAsset* Asset = Mesh->GetPhysicsAsset())
+						for (const UBodySetup* Setup : Asset->BodySetups)
+							if (const FBodyInstance* Body = Setup ? Mesh->GetBodyInstance(Setup->BoneName) : nullptr; Body && Body->IsDynamic())
+							{
+								const float DistanceSquared = (Body->GetUnrealWorldTransform().Location - Hit.ImpactPoint).SizeSquared();
+								if (DistanceSquared < NearestDistanceSquared)
+								{
+									NearestDistanceSquared = DistanceSquared;
+									BoneName = Setup->BoneName;
+								}
+							}
+				}
+				const FVector Direction = ProjectileMovementComponent->Velocity.GetSafeNormal();
+				if (Mesh->GetBodyInstance(BoneName) && Direction.SizeSquared() > SMALL_NUMBER)
+					Mesh->AddImpulseToBone(BoneName, Direction * Zombie->GetRagdollBulletImpulseStrength(), true);
+			}
 			EnsureBloodParticleActor();
 			if (IsValid(BloodParticleActor))
 			{

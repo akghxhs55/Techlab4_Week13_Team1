@@ -57,11 +57,10 @@ void AZombieActor::Tick(float DeltaTime)
 	UAnimGraphInstance* Anim = Cast<UAnimGraphInstance>(MeshComponent->GetAnimInstance());
 	if (IsDead())
 	{
+		if (!MeshComponent->IsRagdollActive())
+			StartRagdoll();
 		GetCharacterMovement()->StopMovementImmediately();
 		RightHandHitCapsule->bGenerateOverlapEvents = false;
-		UpdateDeathDissolve(DeltaTime);
-		if (IsDeathDissolveFinished())
-			Destroy();
 		return;
 	}
 	RightHandHitCapsule->bGenerateOverlapEvents = Anim && Anim->IsStateActiveOrPending("Attack") &&
@@ -135,18 +134,14 @@ void AZombieActor::ReactToHit()
 {
 	if (IsDead()) return;
 	--Health;
-	if (UAnimGraphInstance* Anim = Cast<UAnimGraphInstance>(GetSkeletalMeshComponent()->GetAnimInstance()))
-	{
-		if (IsDead()) Anim->RequestDeath();
-		else Anim->RequestHit();
-	}
 	if (IsDead())
 	{
 		RightHandHitCapsule->bGenerateOverlapEvents = false;
-		GetCapsuleComponent()->bBlockComponent = false;
-		GetCapsuleComponent()->bGenerateOverlapEvents = false;
-		GetCharacterMovement()->StopMovementImmediately();
+		if (!StartRagdoll())
+			KRS_LOG(Warning, "Failed to start zombie ragdoll");
 	}
+	else if (UAnimGraphInstance* Anim = Cast<UAnimGraphInstance>(GetSkeletalMeshComponent()->GetAnimInstance()))
+		Anim->RequestHit();
 }
 
 bool AZombieActor::SetHealth(int32 InHealth)
